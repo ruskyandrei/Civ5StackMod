@@ -263,11 +263,14 @@ local function buildRows()
     if active then updateHover() end
 end
 -- Diagnostics is independent of the selected stack and starts no Lua observer.
--- Use the existing Additional Information menu so the normal roster stays unchanged.
+-- A standalone control avoids hidden EUI dropdowns and listener-order dependencies.
 local diagnosticsVisible = false
 local diagnosticNames = { [0] = "Off", [1] = "Summary", [2] = "Verbose" }
 local function diagnosticsAvailable()
     return Game.GetStackingDiagnosticsLevel and Game.SetStackingDiagnosticsLevel and Game.GetStackingDiagnosticsStatus
+end
+local function updateDiagnosticsAccess()
+    Controls.StackDiagnosticsOpen:SetHide(inCityScreen or not diagnosticsAvailable())
 end
 local function refreshDiagnostics()
     if not diagnosticsAvailable() then
@@ -307,21 +310,12 @@ local function setDiagnostics(level)
     Game.SetStackingDiagnosticsLevel(level)
     refreshDiagnostics()
 end
-local function gatherDiagnostics(entries)
-    if diagnosticsAvailable() then
-        entries[#entries + 1] = {
-            text = "Stack diagnostics", art = "",
-            tip = "Choose Off, Summary or Verbose diagnostic logging.",
-            call = openDiagnostics
-        }
-    end
-end
 Controls.StackDiagnosticsOff:RegisterCallback(Mouse.eLClick, function() setDiagnostics(0) end)
 Controls.StackDiagnosticsSummary:RegisterCallback(Mouse.eLClick, function() setDiagnostics(1) end)
 Controls.StackDiagnosticsVerbose:RegisterCallback(Mouse.eLClick, function() setDiagnostics(2) end)
 Controls.StackDiagnosticsClose:RegisterCallback(Mouse.eLClick, closeDiagnostics)
-LuaEvents.AdditionalInformationDropdownGatherEntries.Add(gatherDiagnostics)
-LuaEvents.RequestRefreshAdditionalInformationDropdownEntries()
+Controls.StackDiagnosticsOpen:RegisterCallback(Mouse.eLClick, openDiagnostics)
+updateDiagnosticsAccess()
 ContextPtr:SetInputHandler(function(uiMsg, wParam)
     if diagnosticsVisible and uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_ESCAPE then
         closeDiagnostics()
@@ -375,8 +369,8 @@ Events.SerialEventUnitInfoDirty.Add(function() refreshNeeded = true end)
 Events.UnitVisibilityChanged.Add(function() refreshNeeded = true end)
 Events.UnitStateChangeDetected.Add(function() refreshNeeded = true end)
 Events.HexFOWStateChanged.Add(function() refreshNeeded = true end)
-Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); stopMode(); refreshNeeded = true end)
-Events.SerialEventExitCityScreen.Add(function() inCityScreen = false; refreshNeeded = true end)
+Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); refreshNeeded = true end)
+Events.SerialEventExitCityScreen.Add(function() inCityScreen = false; updateDiagnosticsAccess(); refreshNeeded = true end)
 Events.UnitSelectionChanged.Add(function(ownerID, unitID, x, y, z, isSelected)
     if active and isSelected and (ownerID ~= Game.GetActivePlayer() or unitID ~= selectedID) then
         stopMode(); status = ""
@@ -388,7 +382,7 @@ Events.InterfaceModeChanged.Add(function(oldMode, newMode)
     if active and newMode ~= InterfaceModeTypes.INTERFACEMODE_SELECTION then stopMode(); status = "" end
 end)
 Events.UnitMoveQueueChanged.Add(function() refreshNeeded = true end)
-Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); stopMode(); pending = nil; status = ""; refreshNeeded = true end)
+Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); pending = nil; status = ""; refreshNeeded = true end)
 Events.ActivePlayerTurnEnd.Add(function() stopMode(); pending = nil; status = "" end)
 ContextPtr:SetUpdate(function(delta)
     if refreshNeeded then refreshNeeded = false; buildRows() end
@@ -418,5 +412,4 @@ print("Stack roster and tile-local movement UI loaded")
 
 ContextPtr:SetShutdown(function()
     if active then LuaEvents.StackMoveModeChanged(false) end
-    LuaEvents.AdditionalInformationDropdownGatherEntries.Remove(gatherDiagnostics)
 end)

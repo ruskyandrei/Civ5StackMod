@@ -62,7 +62,7 @@ Aircraft keep their normal rebase commands. Cargo travels with an eligible carri
 
 ## Diagnostics
 
-Open the top-right **Additional Information** menu and choose **Stack diagnostics**. The control is available without selecting a unit or opening a stack roster. Choose **Off**, **Summary** or **Verbose**; the panel shows the current level and the native logger's status, including the log location or an output error. Escape or Close dismisses the panel.
+Click **Diagnostics** near the top center of the map. The control is available without selecting a unit or opening a stack roster. Choose **Off**, **Summary** or **Verbose**; the panel shows the current level and the native logger's status, including the log location or an output error. Escape or Close dismisses the panel.
 
 Logging defaults to Off. Summary records turn diagnostics; Verbose adds detail. This changes logging only and works during normal play or autoplay without injecting a Lua observer. Files use the normal Civ V Logs directory and rotate within configured limits (by default, eight segments of up to 4 MB). Turning logging off keeps files already written.
 

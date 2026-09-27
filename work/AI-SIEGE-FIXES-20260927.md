@@ -16,7 +16,7 @@ This checkpoint modifies only `CvGameCoreDLL_Expansion2/CvTacticalAI.cpp`. It do
 
 `RECRUIT` records input, usable, recruited, kept and budget-dropped counts; level2 `RECRUIT_FILTER` and `RECRUIT_DROP` identify units and actual filter stage. `PLAN` reports selected-plan counts, search states and existing elapsed time; level2 `PLAN_ASSIGN` includes IDs, from/to plot indices, action type, moves and score components. None of these rows recomputes danger or consumes RNG solely for logging.
 
-`LONG_PLAN` reports history length/capacity, generation, current and preceding action, unit IDs, coordinates, movement and remaining attacks **before** the history push. `DiagnosticsLongPlanThreshold` defaults to256, with0 disabling this anomaly check; repeats occur only at threshold multiples and remain subject to the logger's per-turn budget. No plan is truncated. Crash245's failed allocation and2074-entry history are evidence; a zero-cost cycle or cause of that length has not been proved from the incomplete dump.
+`LONG_PLAN` reports history length/capacity, generation, current and preceding action, unit IDs, coordinates, movement and remaining attacks **before** the history push. `DiagnosticsLongPlanThreshold` defaults to256, with0 disabling this anomaly check; repeats occur only at threshold multiples and remain subject to the logger's per-turn budget. No plan is truncated. Crash245's failed allocation and2074-entry history are evidence. Its incomplete dump does not identify the unit or full prior action sequence. The subsequent instrumented replay now directly demonstrates the stationary-move loop described below.
 
 ## Focused validation
 
@@ -34,3 +34,21 @@ Use a disposable natural map and record the loaded DLL/configuration. Enable dia
 4. Jakarta-style diagnosis: compare `CITY_GATE`, `ATTACK_GATE`, `RECRUIT` and `PLAN` on an unedited saved turn. A 7-unit plan is not evidence of hitting the13-unit limit; record upstream candidates and rejection reasons.
 
 Do not infer optimal strategy, completed crash repair or long-run stability from these helper checks.
+
+
+## Instrumented replay: stationary move loop and correction
+
+The native093917 replay from the unchanged turn240 save exposed a concrete non-progress loop on turn244, Spain player0, target103:20. `LONG_PLAN` repeatedly recorded unit7508, A_MOVE/type1, from2040 to2040, moves120 to120, one attack left, with the previous assignment identical. Length increased256,512,...,3072 while generation increased249,...,3065. The operation log identifies7508 as a Tercio assigned to army7564. The parent stopped the game through its external guard after rapid memory growth; this run did not create a new crash dump. See [native diagnostics live evidence](NATIVE-DIAGNOSTICS-LIVE-20260927.md) and `work/test-runs/turn240-replay-20260927/Logs`.
+
+Source diagnosis: `ScorePlotForNonFightingUnitMove` initialized every result as A_MOVE, including a request to remain on the current tile. The current-tile candidate branch reoffers this action; the previous-A_MOVE restriction applies only to different-tile choices. `addAssignment` consequently kept the unit available with unchanged movement and appended another action. This scorer behavior exists in unmodified VP5.4.6 (`dcb33a6`); the stacking campaign exposed it. Nonfighting movement strategy includes embarked units and some units assigned that strategy for a non-native target, so the correction is not restricted to the live `isEmbarked` flag.
+
+The minimal correction has two parts:
+
+- Classify a stationary intermediate nonfighting choice as A_FINISH_TEMP; use A_INITIAL and A_FINISH for the respective evaluation modes, matching the combat scorer.
+- Reject same-from/to movement, forced movement and swap bookkeeping types at the start of `CvTacticalPosition::addAssignment`, before any copy-on-write state mutation or history append. The guard does not reject stationary ranged/melee attack, heal, pillage, power, wait, finish or initial types. Distinct-tile movement remains unchanged.
+
+There is no plan-length cap, movement-budget relaxation or change to search limits. The separate support scorer's meaningful WAIT semantics are unchanged. The original245 dump confirms failed allocation during A_MOVE history growth but lacks the unit/history needed to prove it was exactly the same unit and target as this replay.
+
+Run `python work/test-ai-noop.py`. The native VC9 harness compiles the actual nonfighting scorer, admission guard and existing terminal-action switch cases. Its in-memory pre-fix negative control reproduces3072 same-tile actions with120 movement; the fixed branch terminates with one finish assignment.39 checks pass, including both nonfighting strategies, initial/final/power behavior, enemy rejection, real movement, guard-before-mutation ordering, and permitted stationary actions. The existing41 siege helper checks also pass. These are controlled engine-stub regressions; the full DLL build and identical turn240 live replay of this correction remain pending.
+
+Frozen tactical source SHA256: `2D5F5CD402F31DC721CA6518A12AFF80126107F5CCB02CDCD8B27F7A928D48A0`. Root reviewed the small correction and owns the next build/deployment/replay. No later runtime success is implied here.

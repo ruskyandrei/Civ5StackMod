@@ -16,7 +16,10 @@
     </ScrollPanel>
     <Label ID="StackSummary" Anchor="L,T" Offset="16,148" WrapWidth="326" Font="TwCenMT16"/>
   </Grid>
-  <Grid ID="StackDiagnostics" Anchor="R,T" Offset="22,150" Size="342,278" Padding="0,0" Style="Grid9FrameBlack" ConsumeMouse="1" Hidden="1">
+  <GridButton ID="StackDiagnosticsOpen" Anchor="C,T" Offset="0,36" Size="156,28" Style="SmallButton" ConsumeMouse="1" Hidden="1" ToolTip="Stack diagnostics: Off, Summary or Verbose. Logging only.">
+    <Label Anchor="C,C" String="Diagnostics"/>
+  </GridButton>
+  <Grid ID="StackDiagnostics" Anchor="C,T" Offset="0,72" Size="342,278" Padding="0,0" Style="Grid9FrameBlack" ConsumeMouse="1" Hidden="1">
     <Label Anchor="L,T" Offset="16,12" String="Stack diagnostics"/>
     <GridButton ID="StackDiagnosticsClose" Anchor="R,T" Offset="10,8" Size="30,28" Style="SmallButton"><Label Anchor="C,C" String="X"/></GridButton>
     <Label ID="StackDiagnosticsState" Anchor="L,T" Offset="16,42" Font="TwCenMT16" String="Current: Off"/>

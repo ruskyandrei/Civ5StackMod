@@ -69,8 +69,8 @@
     <File md5="A832E556B1146BB64409DD813B700ECF" import="1">ImprovedTopPanel/TopPanel.xml</File>
     <File md5="89DFD821D1490765D53497CDD3DB3FC0" import="1">ImprovedTechTree/TechTree.lua</File>
     <File md5="C702A3B952BEA1E8D6F98BB0F178D789" import="1">ImprovedTechTree/TechTree.xml</File>
-    <File md5="E5B7167D51AF4D5536CCEDF7B9CA4A0D" import="1">LUA/StackPanel.lua</File>
-    <File md5="7FA66465054A623DB183E128341C824F" import="0">LUA/StackPanel.xml</File>
+    <File md5="53A0D497C0747802D4FC443C615B419E" import="1">LUA/StackPanel.lua</File>
+    <File md5="DE991C13D627922C27712EB1C5BCA508" import="0">LUA/StackPanel.xml</File>
   </Files>
   <Actions>
     <OnModActivated>

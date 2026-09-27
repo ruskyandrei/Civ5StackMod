@@ -9096,6 +9096,14 @@ static STacticalAssignment* ScorePlotForNonFightingUnitMove(const SUnitStats& un
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
 	result->init(unit.iPlotIndex,testPlot->getPlotIndex(), unit.iUnitID, unit.iMovesLeft, unit.eMoveStrategy, A_MOVE, GetPrevPlotScore(unit.iUnitID, assumedPosition));
+	// Staying put is a terminal choice, just as for fighting units. An embarked
+	// unit otherwise receives A_MOVE to its own plot with unchanged moves forever.
+	if (unit.iPlotIndex == testPlot->getPlotIndex())
+		result->eAssignmentType = A_FINISH_TEMP;
+	if (evalMode == EM_INITIAL)
+		result->eAssignmentType = A_INITIAL;
+	else if (evalMode == EM_FINAL)
+		result->eAssignmentType = A_FINISH;
 	int iScore = 0;
 		
 	//the plot we're checking right now
@@ -11266,6 +11274,14 @@ pair<int,int> CvTacticalPosition::doVisibilityUpdate(const STacticalAssignment& 
 
 CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const STacticalAssignment& newAssignment)
 {
+	// A movement assignment must change plots. Same-tile attacks, pillaging,
+	// healing and finish/initial markers have their own types and remain valid.
+	if (newAssignment.iFromPlotIndex == newAssignment.iToPlotIndex &&
+		(newAssignment.eAssignmentType == A_MOVE || newAssignment.eAssignmentType == A_MOVE_FORCED ||
+		 newAssignment.eAssignmentType == A_MOVE_DOUBLE || newAssignment.eAssignmentType == A_MOVE_SWAP ||
+		 newAssignment.eAssignmentType == A_MOVE_SWAP_REVERSE))
+		return RESULT_NOT_ADDED;
+
 	//if we killed an enemy ZOC will change
 	bool bRecomputeAllMoves = false;
 	//newly visible plots, newly visible enemies
@@ -11276,6 +11292,7 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 
 	if (itUnit == availableUnits_w.end() || itUnit->iPlotIndex != newAssignment.iFromPlotIndex)
 		return RESULT_NOT_ADDED;
+
 
 	//tactical plots are only touched for "real" moves. blocked units may be on invalid plots.
 	//a unit may also start out on an invalid plot (eg. too far away)
