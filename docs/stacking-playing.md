@@ -78,3 +78,7 @@ Edit these source files, then stage/deploy and restart Civ V into a fresh test g
 No DLL rebuild is needed for those XML changes. The default base capacity plus technology bonuses totals nine; changing only `MaximumCapacity` to ten does not grant an additional slot. Change the base or a technology bonus as well when configuring ten combat units.
 
 The detailed reference describes role precedence, permitted values, special unit exclusions and rounding. The local native build/deployment workflow is documented in `work/BUILD-LOCAL.md`. Fully restart after changing UI Lua/XML; the full UI reload event is not a reliable VP/EUI testing shortcut in this installation.
+
+## Observer notification cleanup
+
+The VP EUI panel automatically dismisses ordinary observer/autoplay notifications after three game turns, using their original creation turn even after a reload. Newer messages in a notification bundle remain visible. Normal-play notifications and native mandatory-choice protections are preserved. Set `UIObserverNotificationLifetimeTurns` in `StackingConfig.xml` to another turn count, or 0 to disable. This UI change requires restarting the game; it does not require a new DLL.

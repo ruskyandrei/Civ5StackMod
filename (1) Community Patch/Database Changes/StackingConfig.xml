@@ -48,6 +48,8 @@
     <Row Name="AIStackConcentrationFreeUnits" Value="2" />
     <Row Name="AIStackPairRecruitRange" Value="1" />
     <Row Name="UIStackResultDelayMilliseconds" Value="250" />
+    <!-- UI only: observer/autoplay notification age; 0 disables automatic dismissal. -->
+    <Row Name="UIObserverNotificationLifetimeTurns" Value="3" />
   </Stacking_Settings>
   <Stacking_Technologies>
     <Row TechType="TECH_IRON_WORKING" CapacityBonus="1" />

@@ -33,3 +33,9 @@ Release20260927-105159 (`Release-5.4.6-8-gef54698 Clean`) compiled 176 translati
 Final replay memory: peak private2,423.832MiB, peak committed+reserved3,218.863MiB, minimum free877.012MiB and minimum largest block724.312MiB across176 samples. These values describe one bounded run; no overhead or leak-free claim is made. Evidence: `work/test-runs/turn240-final-20260927/native-summary.json`, `memory.out`, `provenance.json` and `independent-readout.json`.
 
 The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an earlier structural-data tool, not a requirement for the native logger. See the [configuration reference](stacking-configuration.md), [core review](../work/DIAGNOSTICS-CORE-REVIEW.md), [UI checks](../work/DIAGNOSTICS-UI-REGRESSION.md), [memory watcher](../work/MEMORY-WATCH.md) and [crash investigation](../work/CRASH-245-20260927.md) for evidence and limits.
+
+## Military allocation follow-up (2026-09-27)
+
+- [ ] Implement the staged [military AI plan](military-ai-plan.md), beginning with bounded diagnostics and confirmed placement/garrison/muster/progress defects. AI changes are proposed only; no new AI policy was deployed by the planning task.
+- [ ] Compare rear-city surplus, operation assembly delays and actual front arrivals against the Danish replay and independent offensive/defensive scenarios before tuning broader policy.
+- [ ] Live-validate observer notification expiry at the configured turn boundary, save/reload and normal-play preservation. The source uses VP's existing notification creation turns and ordinary UI dismissal; offline boundary/event tests are recorded separately.

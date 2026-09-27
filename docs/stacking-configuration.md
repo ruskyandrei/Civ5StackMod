@@ -166,3 +166,11 @@ The native logger writes immediately flushed, live-readable `Stacking-<UTC>-p<PI
 Summary includes unit/stack statistics, memory measurements, city-attack gates, recruitment counts, chosen-plan size/search time and long-history anomalies. Verbose adds unit/city identities, recruitment rejections, chosen assignments and score components, operation messages, and before/after combat participants with explicit inflicted-versus-received damage labels. Combat uses saved owner/ID lookups after resolution so captured/deleted units are handled safely. Unit composition is not a forecast of safety, an attempted-city-attack message is not proof an attack occurred, and missing units can have non-combat removal causes. No extra danger calculation is performed solely to populate logs.
 
 Record timing and sampling duration include diagnostic overhead; bounded output can omit events, and TRUNCATED must be treated as incomplete evidence. Rotated records are not recoverable from the current session. The logger does not retain a whole-game history in memory and has no injected Lua observer. These limits control diagnostics only.
+
+## Observer notification lifetime
+
+`UIObserverNotificationLifetimeTurns` in `Stacking_Settings` defaults to **3**; **0** disables automatic dismissal. The VP EUI notification panel clamps it to an integer from 0 to 10000. This is a UI-only setting, not a DLL tuning value. It operates independently of the stack roster toggle.
+
+In observer mode or autoplay, displayed notifications become eligible for ordinary dismissal when the current game turn minus their saved creation turn reaches the configured lifetime. A message from turn 280 is eligible at turn 283. Reloading a save or switching the observed view does not renew a message's age. Individual older entries are removed from bundles while newer entries remain. The notification history is retained by VP's ordinary notification system.
+
+Normal play is unaffected. Native mandatory-choice notifications retain the same restrictions as manual right-click dismissal. The check is event-driven and throttled by active player/game turn; it sends no gameplay orders. Restart into the modded game after changing the XML/UI files. The implementation targets this prototype's tested VP EUI compatibility panel; non-EUI and network observer behavior have not been validated.
