@@ -116,7 +116,13 @@ function Get-ValidatedStage {
     Assert-NoReparsePoints $script:StageRoot -Tree
     $path = Join-Path $script:StageRoot 'deploy-manifest.json'
     $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($manifest.schema -ne 1 -or $manifest.version -ne '5.4.6' -or $manifest.component -ne 'FullEUI' -or $manifest.source_commit -ne 'dcb33a654cd9e8efb038a0733b4025e19cbcd8ba') { throw 'Wrong staging manifest version/component/commit.' }
+    if ($manifest.schema -ne 1 -or $manifest.version -ne '5.4.6' -or $manifest.component -ne 'FullEUI') { throw 'Wrong staging manifest version/component.' }
+    if ($manifest.source_commit -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Invalid staging source commit.' }
+    # Local implementation checkpoints must retain the verified upstream release.
+    & git -C $script:ProjectRoot merge-base --is-ancestor dcb33a654cd9e8efb038a0733b4025e19cbcd8ba $manifest.source_commit
+    if ($LASTEXITCODE -ne 0) { throw 'Staged source is not a descendant of the verified VP 5.4.6 release.' }
+    & git -C $script:ProjectRoot merge-base --is-ancestor $manifest.source_commit HEAD
+    if ($LASTEXITCODE -ne 0) { throw 'Staged source is not part of the current project history.' }
     Assert-SamePath $manifest.stage_root $script:StageRoot
     $expected = @(Get-ExpectedMappings)
     if (@($manifest.mappings).Count -ne $expected.Count) { throw 'Staging mappings count mismatch.' }
