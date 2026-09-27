@@ -11,6 +11,8 @@ local function setting(name, default)
 end
 local active, snapshot, source, selectedID, preview, hoverPlot, pending, inspectPlot
 local collapsed, inCityScreen = false, false
+local rosterDismissed = false
+local dismissedOwner, dismissedUnitID
 local rowInstances, rowByID = {}, {}
 local displayedRowCount = 0
 local width = math.max(260, setting("UIStackRosterWidth", 360))
@@ -173,7 +175,7 @@ local function updateHover()
         preview.Moving > 0 and Vector4(0.2, 0.9, 0.5, 1) or Vector4(1, 0.25, 0.2, 1))
 end
 local function buildRows()
-    if inCityScreen then Controls.StackPanel:SetHide(true); return end
+    if inCityScreen or rosterDismissed then Controls.StackPanel:SetHide(true); return end
     local selected = UI.GetHeadSelectedUnit()
     if not selected and inspectPlot then
         for _, visibleUnit in ipairs(members(inspectPlot, false)) do selected = visibleUnit; break end
@@ -238,6 +240,7 @@ local function buildRows()
         instance.Row:RegisterCallback(Mouse.eLClick, function()
             if active then stopMode() end
             inspectPlot = nil
+            rosterDismissed = false
             Events.SerialEventUnitFlagSelected(ownerID, unitID)
             status = ""
             refreshNeeded = true
@@ -269,8 +272,22 @@ local diagnosticNames = { [0] = "Off", [1] = "Summary", [2] = "Verbose" }
 local function diagnosticsAvailable()
     return Game.GetStackingDiagnosticsLevel and Game.SetStackingDiagnosticsLevel and Game.GetStackingDiagnosticsStatus
 end
+local diagnosticsAccess
+local function diagnosticsModeAllowed()
+    local current = Players[Game.GetActivePlayer()]
+    return (Game.GetAIAutoPlay and Game.GetAIAutoPlay() > 0) or
+        (current and current.IsObserver and current:IsObserver()) or false
+end
 local function updateDiagnosticsAccess()
-    Controls.StackDiagnosticsOpen:SetHide(inCityScreen or not diagnosticsAvailable())
+    local allowed = not inCityScreen and diagnosticsAvailable() and diagnosticsModeAllowed() or false
+    if allowed ~= diagnosticsAccess then
+        diagnosticsAccess = allowed
+        Controls.StackDiagnosticsOpen:SetHide(not allowed)
+    end
+    if not allowed and diagnosticsVisible then
+        diagnosticsVisible = false
+        Controls.StackDiagnostics:SetHide(true)
+    end
 end
 local function refreshDiagnostics()
     if not diagnosticsAvailable() then
@@ -299,14 +316,16 @@ local function closeDiagnostics()
     Controls.StackDiagnostics:SetHide(true)
 end
 local function openDiagnostics()
-    if not diagnosticsAvailable() or inCityScreen then return end
+    updateDiagnosticsAccess()
+    if not diagnosticsAccess then return end
     if active then stopMode(); status = "" end
     diagnosticsVisible = true
     refreshDiagnostics()
     Controls.StackDiagnostics:SetHide(false)
 end
 local function setDiagnostics(level)
-    if not diagnosticsAvailable() then return end
+    updateDiagnosticsAccess()
+    if not diagnosticsAccess then return end
     Game.SetStackingDiagnosticsLevel(level)
     refreshDiagnostics()
 end
@@ -332,6 +351,7 @@ local function beginMove()
     snapshot = {}
     for _, member in ipairs(members(source, true)) do snapshot[#snapshot + 1] = member:GetID() end
     if #snapshot < moveMinimum then return end
+    rosterDismissed = false
     status = "Choose destination. Right-click to move; left-click or Esc cancels."
     pending = nil
     setMode(true)
@@ -354,12 +374,45 @@ LuaEvents.StackMoveInput.Add(function(uiMsg, wParam)
         stopMode(); status = ""
     end
 end)
+-- Only WorldView forwards map clicks; button/row clicks do not reach this bridge.
+-- Treat invisible units like an empty tile so dismissal reveals no hidden occupants.
+LuaEvents.StackRosterMapLeftClick.Add(function(x, y)
+    if active or inCityScreen then return end
+    local plot = Map.GetPlot(x, y)
+    if not plot then return end
+    local visible = members(plot, false)
+    if #visible == 0 then
+        local selected = UI.GetHeadSelectedUnit()
+        dismissedOwner = selected and selected:GetOwner()
+        dismissedUnitID = selected and selected:GetID()
+        inspectPlot = nil
+        rosterDismissed = true
+        status = ""
+        Controls.StackPanel:SetHide(true)
+        refreshNeeded = true
+    else
+        -- Clicking our visible units is an explicit selection gesture, including
+        -- selecting the same unit again after an empty-map dismissal.
+        for _, unit in ipairs(visible) do
+            if unit:GetOwner() == Game.GetActivePlayer() then
+                rosterDismissed = false
+                refreshNeeded = true
+                break
+            end
+        end
+    end
+end)
+Events.SerialEventUnitFlagSelected.Add(function()
+    rosterDismissed = false
+    refreshNeeded = true
+end)
 LuaEvents.StackRosterOpen.Add(function(ownerID, unitID)
     local unit = Players[ownerID]:GetUnitByID(unitID)
     if unit and isVisible(unit, unit:GetPlot()) then
         if active then stopMode() end
         if ownerID == Game.GetActivePlayer() then Events.SerialEventUnitFlagSelected(ownerID, unitID) end
         inspectPlot = unit:GetPlot()
+        rosterDismissed = false
         collapsed = false
         refreshNeeded = true
     end
@@ -372,6 +425,9 @@ Events.HexFOWStateChanged.Add(function() refreshNeeded = true end)
 Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); refreshNeeded = true end)
 Events.SerialEventExitCityScreen.Add(function() inCityScreen = false; updateDiagnosticsAccess(); refreshNeeded = true end)
 Events.UnitSelectionChanged.Add(function(ownerID, unitID, x, y, z, isSelected)
+    if isSelected and (not rosterDismissed or ownerID ~= dismissedOwner or unitID ~= dismissedUnitID) then
+        rosterDismissed = false
+    end
     if active and isSelected and (ownerID ~= Game.GetActivePlayer() or unitID ~= selectedID) then
         stopMode(); status = ""
     end
@@ -382,9 +438,12 @@ Events.InterfaceModeChanged.Add(function(oldMode, newMode)
     if active and newMode ~= InterfaceModeTypes.INTERFACEMODE_SELECTION then stopMode(); status = "" end
 end)
 Events.UnitMoveQueueChanged.Add(function() refreshNeeded = true end)
-Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); pending = nil; status = ""; refreshNeeded = true end)
+Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); rosterDismissed = false; pending = nil; status = ""; refreshNeeded = true end)
 Events.ActivePlayerTurnEnd.Add(function() stopMode(); pending = nil; status = "" end)
 ContextPtr:SetUpdate(function(delta)
+    -- Mode can change during autoplay without a selection/turn event. Poll only
+    -- these cheap mode flags; native diagnostic sampling remains in the DLL.
+    updateDiagnosticsAccess()
     if refreshNeeded then refreshNeeded = false; buildRows() end
     if pending then
         pending.elapsed = pending.elapsed + delta

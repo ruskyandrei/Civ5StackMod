@@ -146,7 +146,7 @@ The Lua UI reads raw database values rather than the DLL's clamped settings cach
 
 ## Built-in autoplay diagnostics
 
-Click Diagnostics near the top center of the map for Off, Summary or Verbose. Runtime overrides apply to the loaded session; after loading/restarting, XML defaults apply. Logging does not issue orders, consume RNG, or change gameplay search budgets. Existing VP AI logging remains a separate facility.
+In observer mode or during autoplay, click Diagnostics near the top center of the map for Off, Summary or Verbose. The button hides during normal play; XML DiagnosticsLevel or the Game Lua bindings can still enable logging there. Returning to normal play does not change the logging level. Runtime overrides apply to the loaded session; after loading/restarting, XML defaults apply. Logging does not issue orders, consume RNG, or change gameplay search budgets. Existing VP AI logging remains a separate facility.
 
 | XML setting | Default | Valid values | Meaning |
 |---|---:|---:|---|

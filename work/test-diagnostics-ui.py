@@ -5,7 +5,7 @@ from lupa.lua51 import LuaRuntime
 p=r/'(3a) VP - EUI Compatibility Files/LUA/StackPanel.lua';source=p.read_text(encoding='utf-8-sig')
 lua=LuaRuntime(unpack_returned_tuples=True)
 lua.execute(r'''
-checks=0;sets=0;level=0;refreshes=0
+checks=0;sets=0;level=0;refreshes=0;autoTurns=0;observer=false;activeOwner=0
 function expect(a,b,msg)checks=checks+1;assert(a==b,msg..': '..tostring(a)..' != '..tostring(b))end
 function include()end
 print=function()end
@@ -32,8 +32,8 @@ function control()
 end
 Controls=setmetatable({},{__index=function(t,k)local c=control();rawset(t,k,c);return c end})
 GameInfo={Stacking_Settings=function()local rows={{Name='UIStackEnabled',Value=0},{Name='DiagnosticsLevel',Value=0}};local i=0;return function()i=i+1;return rows[i]end end}
-Game={GetActivePlayer=function()return 0 end,GetActiveTeam=function()return 0 end,GetStackingDiagnosticsLevel=function()return level end,SetStackingDiagnosticsLevel=function(n)assert(n==0 or n==1 or n==2);sets=sets+1;level=n;return n end,GetStackingDiagnosticsStatus=function()return logError or (level==0 and 'Disabled' or 'Logging: C:/Users/Test/Documents/My Games/Civ V/Logs/StackingDiagnostics-session-1.csv')end}
-Players={[0]={IsTurnActive=function()return true end}}
+Game={GetActivePlayer=function()return activeOwner end,GetAIAutoPlay=function()return autoTurns end,GetActiveTeam=function()return 0 end,GetStackingDiagnosticsLevel=function()return level end,SetStackingDiagnosticsLevel=function(n)assert(n==0 or n==1 or n==2);sets=sets+1;level=n;return n end,GetStackingDiagnosticsStatus=function()return logError or (level==0 and 'Disabled' or 'Logging: C:/Users/Test/Documents/My Games/Civ V/Logs/StackingDiagnostics-session-1.csv')end}
+Players={[0]={IsTurnActive=function()return true end,IsObserver=function()return observer end}}
 UI={GetHeadSelectedUnit=function()return nil end}
 Mouse={eLClick=1};MouseEvents={RButtonUp=2,LButtonUp=3};KeyEvents={KeyDown=4};Keys={VK_ESCAPE=27};InterfaceModeTypes={INTERFACEMODE_SELECTION=0}
 ContextPtr={SetInputHandler=function(self,f)self.input=f end,SetUpdate=function(self,f)self.update=f end,SetShutdown=function(self,f)self.shutdown=f end}
@@ -57,7 +57,9 @@ lua.execute(notification[a:b])
 lua.execute(source)
 lua.execute(r"""
 expect(sets,0,'load never enables logging');expect(refreshes,0,'no dependency on EUI dropdown refresh')
-expect(Controls.StackDiagnosticsOpen.hidden,false,'standalone button visible without selected unit and roster disabled')
+expect(Controls.StackDiagnosticsOpen.hidden,true,'normal play hides diagnostics access')
+Controls.StackDiagnosticsOpen.callbacks[1]();expect(Controls.StackDiagnostics.hidden,true,'hidden normal-play button cannot open panel');expect(sets,0,'normal play access does not change logging')
+autoTurns=5;ContextPtr.update(0.1);expect(Controls.StackDiagnosticsOpen.hidden,false,'autoplay shows access without selection or enabled roster')
 local ev=LuaEvents.AdditionalInformationDropdownGatherEntries;local consume=ev.handlers[1]
 local function emptyArt(entries)entries[#entries+1]={text='Legacy empty-art entry',art='',call=function()end}end
 local function lateEntry(entries)entries[#entries+1]={text='Legacy late entry',call=function()end}end
@@ -76,6 +78,14 @@ Controls.StackDiagnosticsOff.callbacks[1]();expect(level,0,'off selection');expe
 local calls=sets;expect(ContextPtr.input(KeyEvents.KeyDown,Keys.VK_ESCAPE),true,'escape consumed while open');expect(Controls.StackDiagnostics.hidden,true,'escape closes');expect(sets,calls,'closing never changes level');expect(ContextPtr.input(KeyEvents.KeyDown,Keys.VK_ESCAPE),false,'escape passes through when closed')
 level=2;Controls.StackDiagnosticsOpen.callbacks[1]();expect(Controls.StackDiagnosticsState.text,'Current: Verbose','external native change read on open')
 Controls.StackDiagnosticsClose.callbacks[1]();expect(Controls.StackDiagnostics.hidden,true,'close button');Controls.StackDiagnosticsOpen.callbacks[1]();Events.SerialEventEnterCityScreen();expect(Controls.StackDiagnostics.hidden,true,'city screen closes panel');expect(Controls.StackDiagnosticsOpen.hidden,true,'city screen hides access button');Controls.StackDiagnosticsOpen.callbacks[1]();expect(Controls.StackDiagnostics.hidden,true,'does not open over city screen');Events.SerialEventExitCityScreen();expect(Controls.StackDiagnosticsOpen.hidden,false,'button returns after city screen');Controls.StackDiagnosticsOpen.callbacks[1]();expect(Controls.StackDiagnostics.hidden,false,'opens after city screen');Events.GameplaySetActivePlayer();expect(Controls.StackDiagnostics.hidden,true,'active player switch closes')
+Controls.StackDiagnosticsOpen.callbacks[1]();local savedSets=sets;autoTurns=0;ContextPtr.update(0.1)
+expect(Controls.StackDiagnosticsOpen.hidden,true,'autoplay end hides button without turn event');expect(Controls.StackDiagnostics.hidden,true,'autoplay end closes panel');expect(sets,savedSets,'mode exit does not disable native logging');expect(level,2,'chosen logging level preserved in normal play')
+Controls.StackDiagnosticsSummary.callbacks[1]();expect(sets,savedSets,'stale hidden callback cannot change level')
+observer=true;ContextPtr.update(0.1);expect(Controls.StackDiagnosticsOpen.hidden,false,'actual observer visible with autoplay0')
+observer=false;ContextPtr.update(0.1);expect(Controls.StackDiagnosticsOpen.hidden,true,'leaving observer hides access')
+activeOwner=-1;ContextPtr.update(0.1);expect(Controls.StackDiagnosticsOpen.hidden,true,'no active player handled safely')
+autoTurns=3;ContextPtr.update(0.1);expect(Controls.StackDiagnosticsOpen.hidden,false,'positive autoplay remains sufficient without active player')
+activeOwner=0;autoTurns=5
 Game.GetStackingDiagnosticsStatus=nil;Events.GameplaySetActivePlayer();expect(Controls.StackDiagnosticsOpen.hidden,true,'old DLL without API hides button')
 ContextPtr.shutdown();expect(#ev.handlers,1,'diagnostics never registers EUI menu handler')
 """)
@@ -96,7 +106,7 @@ assert 'luaL_checknumber(L, 1)' in setter and 'level != 0 && level != 1 && level
 assert setter.index('luaL_error')<setter.index('CvStackingDiagnostics::SetLevel')
 assert 'GetInstance(' not in setter and 'PushMission' not in setter and 'Rand' not in setter
 files=[p,xml,r/'CvGameCoreDLL_Expansion2/Lua/CvLuaGame.cpp',r/'CvGameCoreDLL_Expansion2/Lua/CvLuaGame.h']
-result={'lua51_checks':lua.globals().checks,'failures':0,'xml_parse':True,'actual_eui_empty_art_and_order_regressions':True,'binding_declarations_and_level_guard_checked':True,'source_sha256':{str(x.relative_to(r)):hashlib.sha256(x.read_bytes()).hexdigest().upper() for x in files},'scope':'Actual full StackPanel Lua with deterministic UI/native-service stubs; checks standalone access/state/input/read-only behavior and actual EUI consumer failure cases and source registration. No DLL compile, live UI rendering or engine logging proof.'}
+result={'lua51_checks':lua.globals().checks,'failures':0,'xml_parse':True,'actual_eui_empty_art_and_order_regressions':True,'observer_autoplay_visibility_regressions':True,'binding_declarations_and_level_guard_checked':True,'source_sha256':{str(x.relative_to(r)):hashlib.sha256(x.read_bytes()).hexdigest().upper() for x in files},'scope':'Actual full StackPanel Lua with deterministic UI/native-service stubs; checks standalone access/state/input/read-only behavior and actual EUI consumer failure cases and source registration. No DLL compile, live UI rendering or engine logging proof.'}
 (r/'work/diagnostics-ui-regression').mkdir(exist_ok=True)
 (r/'work/diagnostics-ui-regression/result.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
 print(json.dumps(result,indent=2))

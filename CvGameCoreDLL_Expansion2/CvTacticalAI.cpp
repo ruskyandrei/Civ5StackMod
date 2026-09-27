@@ -3451,24 +3451,29 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 		if (!bHaveNavalEscort && pUnit->getDomainType()==DOMAIN_LAND)
 			iFlags |= CvUnit::MOVEFLAG_NO_EMBARK;
 
-		//since we know the unit was far out originally, this is guaranteed to be actual movement
+		// Try to approach the target; approximate paths may already be in range.
 		if (!pUnit->GeneratePath(pTarget, iFlags, GetRecruitRange()))
+			continue;
+		// An approximate path can succeed with no nodes when already in range.
+		// Keep the checked endpoint stable across danger/protection queries.
+		CvPlot* pApproachEndPlot = pUnit->GetPathEndFirstTurnPlot();
+		if (!pApproachEndPlot)
 			continue;
 
 		//we are not here to fight or flee, let other moves take over
-		int iDanger = pUnit->GetDanger(pUnit->GetPathEndFirstTurnPlot());
+		int iDanger = pUnit->GetDanger(pApproachEndPlot);
 		int iDangerLimit = (pUnit->IsCanAttack() && pUnit->AI_getUnitAIType()!=UNITAI_CITY_BOMBARD) ? pUnit->GetCurrHitPoints() / 2 : 0;
 		//generals and siege should not even be in fog danger
 		const bool bProtectedApproach = iDanger > iDangerLimit && pUnit->AI_getUnitAIType() == UNITAI_CITY_BOMBARD &&
-			CanApproachInProtectedStack(pUnit, pUnit->GetPathEndFirstTurnPlot(), iDanger);
+			CanApproachInProtectedStack(pUnit, pApproachEndPlot, iDanger);
 		if (pUnit->AI_getUnitAIType() == UNITAI_CITY_BOMBARD && iDanger > iDangerLimit)
 			CvStackingDiagnostics::Record(1, pUnit->getOwner(), "SIEGE_APPROACH", "unit=%d from=%d destination=%d danger=%d limit=%d protectedAccepted=%d",
-				pUnit->GetID(), pUnit->plot()->GetPlotIndex(), pUnit->GetPathEndFirstTurnPlot()->GetPlotIndex(), iDanger, iDangerLimit, bProtectedApproach ? 1 : 0);
+				pUnit->GetID(), pUnit->plot()->GetPlotIndex(), pApproachEndPlot->GetPlotIndex(), iDanger, iDangerLimit, bProtectedApproach ? 1 : 0);
 		if (iDanger > iDangerLimit && !bProtectedApproach)
 			continue;
 
 		//embark only when it's safe
-		CvTacticalDominanceZone* pZone = GetTacticalAnalysisMap()->GetZoneByPlot(pUnit->GetPathEndFirstTurnPlot());
+		CvTacticalDominanceZone* pZone = GetTacticalAnalysisMap()->GetZoneByPlot(pApproachEndPlot);
 		if (pZone && pZone->GetOverallDominanceFlag() != TACTICAL_DOMINANCE_FRIENDLY && !pUnit->isEmbarked())
 			iFlags |= CvUnit::MOVEFLAG_NO_EMBARK;
 

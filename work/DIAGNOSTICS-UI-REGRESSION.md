@@ -9,3 +9,11 @@ Validation: work/test-diagnostics-ui.py executes the complete current StackPanel
 The existing work/test-stack-ui.py regression also passes its roster, capacity/HP/moves, selected row, preview reasons, protector/fog warning, frozen membership, result counts, visible-only badges, combat summary, cargo, late-arrival and stationary-dirty refresh checks. Only input-handler and event-removal mock support were added to that scaffold.
 
 The coordinator subsequently verified the standalone button and panel in the actual DX11 game, including observer mode, all three levels, readable native status/path, Escape and Close. Off/On continued the same native log ring, and a fresh load restored Off. See [live evidence](NATIVE-DIAGNOSTICS-LIVE-20260927.md) for the separate runtime tests and their exact DLL identity.
+
+## Requested observer visibility and empty-hex dismissal
+
+The subsequent UI revision restricts the button to active-player observer mode or positive AI autoplay. The actual VP player `IsObserver()` API and `Game.GetAIAutoPlay()` are checked without enumerating the world; returning to normal play hides the panel without changing the chosen logging level. XML and native Lua bindings remain available for normal-play logging without a button.
+
+Both existing WorldView input bridges forward left-button release in ordinary selection mode. A visibly empty map tile dismisses the stack roster until a different selection or explicit unit/stack reopening. Dismissal survives dirty refreshes and redundant same-unit selection events. Invisible units do not change the dismissal result. Stack-order cancellation remains handled first and issues no movement order.
+
+The final revision passes 55 diagnostics Lua checks and the complete roster suite, including tests through both actual input bridges. Final hashes are recorded in `work/diagnostics-ui-regression/observer-dismiss-source-hashes.json`. Live validation of this additional revision remains pending at this checkpoint.

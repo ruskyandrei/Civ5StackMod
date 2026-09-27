@@ -45,7 +45,7 @@ Normal purchases require an available legal placement. Civilian, aircraft and sp
 
 ## Reading and moving a stack
 
-Select a stacked unit to open the roster. Each row shows health, movement and combat role. Click an owned row to select that unit; click the stack title to collapse or reopen the list. Large rosters scroll. Compact map flags show a count badge once the configured threshold is reached.
+Select a stacked unit to open the roster. Each row shows health, movement and combat role. Click an owned row to select that unit; click the stack title to collapse or reopen the list. Left-click an empty map hex to dismiss the roster, then select a unit or click its stack badge to reopen it. Large rosters scroll. Compact map flags show a count badge once the configured threshold is reached.
 
 To move a group:
 
@@ -62,11 +62,11 @@ Aircraft keep their normal rebase commands. Cargo travels with an eligible carri
 
 ## Diagnostics
 
-Click **Diagnostics** near the top center of the map. The control is available without selecting a unit or opening a stack roster. Choose **Off**, **Summary** or **Verbose**; the panel shows the current level and the native logger's status, including the log location or an output error. Escape or Close dismisses the panel.
+In observer mode or during autoplay, click **Diagnostics** near the top center of the map. The control is available without selecting a unit or opening a stack roster, and hides during normal play. Choose **Off**, **Summary** or **Verbose**; the panel shows the current level and the native logger's status, including the log location or an output error. Escape or Close dismisses the panel.
 
 Logging defaults to Off. Summary records turn diagnostics; Verbose adds detail. This changes logging only and works during normal play or autoplay without injecting a Lua observer. Files use the normal Civ V Logs directory and rotate within configured limits (by default, eight segments of up to 4 MB). Turning logging off keeps files already written.
 
-The selection applies to the currently loaded game session. Loading or reopening a game restores the XML `DiagnosticsLevel` default, so check the displayed level after loading. The panel reports that configured default. Developer console equivalents are `Game.SetStackingDiagnosticsLevel(0)`, `(1)` or `(2)`, `Game.GetStackingDiagnosticsLevel()` and `Game.GetStackingDiagnosticsStatus()`.
+The selection applies to the currently loaded game session. Returning to normal play hides the controls but keeps the chosen logging level. Loading or reopening a game restores the XML `DiagnosticsLevel` default, so check the level after loading. To enable logging during normal play without displaying a button, set that XML default to 1 or 2 before loading. Developer console equivalents are `Game.SetStackingDiagnosticsLevel(0)`, `(1)` or `(2)`, `Game.GetStackingDiagnosticsLevel()` and `Game.GetStackingDiagnosticsStatus()`.
 
 ## Editing the rules
 

@@ -254,3 +254,65 @@ local refreshed=Controls.StackSummary.values.SetText[1]:find("6 move; 4 stay")~=
 print("UIREG|dirty state refreshes preview under stationary cursor|"..tostring(refreshed))
 assert(outside and refreshed,"stack targeting state refresh regressions")
 """)
+
+
+# Map-only roster dismissal uses each real current input bridge, not a synthetic
+# global mouse event. Native default handlers are still called for ordinary clicks.
+for relative in ("UI_bc1/Improvements/WorldView.lua", "(2) Vox Populi/Core Files/Overrides/WorldView.lua"):
+    bridge=(src.parents[2]/relative).read_text(encoding="utf-8-sig")
+    a=bridge.index("local stackMoveMode = false")
+    b=bridge.index("ContextPtr:SetInputHandler( InputHandler );",a)+len("ContextPtr:SetInputHandler( InputHandler );")
+    lua.execute(r"""
+sourcePlot.units[11]=nil
+sourcePlot.units[3].GetStackMovePreview=sourcePlot.units[1].GetStackMovePreview
+for _,u in ipairs(sourcePlot.units) do u.x=1;u.y=1 end
+local selected=sourcePlot.units[3]
+UI.GetHeadSelectedUnit=function()return selected end
+emptyPlot={GetX=function()return 2 end,GetY=function()return 1 end,GetNumUnits=function()return 0 end}
+clickedPlot=emptyPlot
+Map.GetPlot=function(x,y)return clickedPlot end
+UI.GetMouseOverHex=function()return clickedPlot:GetX(),clickedPlot:GetY()end
+UI.IsTouchScreenEnabled=function()return false end
+inputMode=InterfaceModeTypes.INTERFACEMODE_SELECTION;UI.GetInterfaceMode=function()return inputMode end
+nativeLeft=0;DefaultMessageHandler={[MouseEvents.LButtonUp]=function()nativeLeft=nativeLeft+1;return false end}
+InterfaceModeMessageHandler={[InterfaceModeTypes.INTERFACEMODE_SELECTION]={},[99]={}}
+PanelContext=ContextPtr;ContextPtr={SetInputHandler=function(self,f)self.input=f end}
+""")
+    lua.execute(bridge[a:b])
+    lua.execute(r"""
+bridgeInput=ContextPtr.input;ContextPtr=PanelContext
+LuaEvents.StackMoveInput(KeyEvents.KeyDown,Keys.VK_ESCAPE)
+LuaEvents.StackRosterOpen(0,3);ContextPtr.update(0.1)
+assert(Controls.StackPanel.values.SetHide[1]==false,"explicit inspection opens")
+local movedCalls=0;local nativeMove=sourcePlot.units[3].DoStackMove
+sourcePlot.units[3].DoStackMove=function(self,...)movedCalls=movedCalls+1;return nativeMove(self,...)end
+assert(bridgeInput(MouseEvents.LButtonUp,0,0)==false and nativeLeft==1,"empty map click keeps native handler")
+assert(Controls.StackPanel.values.SetHide[1]==true,"empty map click immediately hides roster")
+Events.SerialEventUnitInfoDirty();ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==true,"dirty updates cannot reopen dismissed old selection")
+Events.UnitSelectionChanged(0,3,1,1,0,false);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==true,"deselection cannot reopen")
+Events.UnitSelectionChanged(0,3,1,1,0,true);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==true,"redundant same-unit selected event cannot reopen")
+Events.UnitSelectionChanged(0,2,1,1,0,true);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"different-unit selection reopens")
+bridgeInput(MouseEvents.LButtonUp,0,0);Events.SerialEventUnitFlagSelected(0,3);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"explicit same-unit flag selection reopens")
+bridgeInput(MouseEvents.LButtonUp,0,0);clickedPlot=sourcePlot;bridgeInput(MouseEvents.LButtonUp,0,0);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"explicit own-unit map reselection reopens")
+clickedPlot=sourcePlot;bridgeInput(MouseEvents.LButtonUp,0,0);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"nonempty visible tile does not dismiss")
+local enemy={GetOwner=function()return 1 end,GetID=function()return 42 end,IsInvisible=function()return false end}
+local fogPlot={GetX=function()return 7 end,GetY=function()return 7 end,GetNumUnits=function()return 1 end,GetUnit=function()return enemy end,IsVisible=function()return false end}
+clickedPlot=fogPlot;bridgeInput(MouseEvents.LButtonUp,0,0);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==true,"fog-hidden enemy behaves as visually empty; no occupancy leak")
+LuaEvents.StackRosterOpen(0,3);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"explicit reopen after dismissal")
+fogPlot.IsVisible=function()return true end;enemy.IsInvisible=function()return true end
+bridgeInput(MouseEvents.LButtonUp,0,0);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==true,"invisible unit behaves as empty")
+LuaEvents.StackRosterOpen(0,3);ContextPtr.update(0.1);enemy.IsInvisible=function()return false end
+bridgeInput(MouseEvents.LButtonUp,0,0);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"visible foreign unit prevents empty-click dismissal")
+clickedPlot=emptyPlot;inputMode=99;bridgeInput(MouseEvents.LButtonUp,0,0);ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"other map modes do not dismiss")
+inputMode=InterfaceModeTypes.INTERFACEMODE_SELECTION
+created[2].Row.callback();ContextPtr.update(0.1);assert(Controls.StackPanel.values.SetHide[1]==false,"row selection stays visible")
+Controls.StackMove.callback();ContextPtr.update(0.1);local before=nativeLeft
+assert(bridgeInput(MouseEvents.LButtonUp,0,0)==true,"stack-order left click remains consumed cancellation")
+ContextPtr.update(0.1);assert(nativeLeft==before and movedCalls==0,"cancel issues no native selection or stack movement")
+assert(Controls.StackPanel.values.SetHide[1]==false,"cancel does not masquerade as empty-map dismissal")
+Controls.StackMove.callback();ContextPtr.update(0.1)
+assert(bridgeInput(MouseEvents.RButtonUp,0,0)==true and movedCalls==1,"real stack-order bridge still executes once")
+ContextPtr.update(0.3);ContextPtr.update(0.1)
+sourcePlot.units[3].DoStackMove=nativeMove
+""")
+    print("PASS: real input bridge empty/fog/invisible/nonempty/other-mode dismissal, dirty persistence, reopen, row selection and stack cancel/execute:",relative)

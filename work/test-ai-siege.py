@@ -3,7 +3,8 @@ from pathlib import Path
 import os, subprocess, hashlib, json, sys
 root=Path(__file__).resolve().parents[1]
 out=root/'work/ai-siege-regression';out.mkdir(exist_ok=True)
-s=(root/'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp').read_text(encoding='utf-8-sig')
+raw=(root/'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp').read_bytes()
+s=raw.decode('utf-8-sig').replace('\r\n','\n')
 def extract(start):
  a=s.index(start); b=s.index('{',a); depth=1;i=b+1
  while depth:
@@ -120,5 +121,5 @@ c=subprocess.run([str(vc/'Vc7/bin/cl.exe'),'/nologo','/EHsc','/MT','/O2',str(cpp
 (out/'compile.log').write_text(c.stdout+c.stderr,encoding='utf-8')
 if c.returncode:print(c.stdout+c.stderr);sys.exit(c.returncode)
 r=subprocess.run([str(exe)],cwd=out,capture_output=True,text=True,timeout=30);print(r.stdout+r.stderr,end='')
-(out/'result.json').write_text(json.dumps({'source_sha256':hashlib.sha256(s.encode()).hexdigest().upper(),'extracted_sha256':hashlib.sha256(actual.encode()).hexdigest().upper(),'returncode':r.returncode,'output':r.stdout+r.stderr,'scope':'Actual helper functions compiled with VC9, deterministic engine/forecast stubs; not game combat validation.'},indent=2),encoding='utf-8')
+(out/'result.json').write_text(json.dumps({'source_sha256':hashlib.sha256(raw).hexdigest().upper(),'extracted_sha256':hashlib.sha256(actual.encode()).hexdigest().upper(),'returncode':r.returncode,'output':r.stdout+r.stderr,'scope':'Actual helper functions compiled with VC9, deterministic engine/forecast stubs; not game combat validation.'},indent=2),encoding='utf-8')
 sys.exit(r.returncode)

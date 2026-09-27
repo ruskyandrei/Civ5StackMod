@@ -1130,6 +1130,10 @@ function InputHandler( uiMsg, wParam, lParam )
             return true
         end
     end
+    if uiMsg == MouseEvents.LButtonUp and UI.GetInterfaceMode() == InterfaceModeTypes.INTERFACEMODE_SELECTION then
+        local x, y = UI.GetMouseOverHex()
+        LuaEvents.StackRosterMapLeftClick(x, y)
+    end
 	if uiMsg == MouseEvents.RButtonDown then
 		rButtonDown = true;
 	elseif uiMsg == MouseEvents.RButtonUp then

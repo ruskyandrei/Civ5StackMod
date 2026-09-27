@@ -14,7 +14,7 @@ Two fresh DX11 processes loaded the original `auto_test_1.Civ5Save` (SHA256 `5C2
 
 At settled human turn 1, all captured fields for **60 units and 30 cities matched**, with no units reporting illegal positions. Fields include owner/ID/type, position, HP/max HP, movement, stacking capacity/legality, city population/damage/max HP and garrison identity. This is not a complete internal-state/RNG equivalence proof or a precise performance benchmark.
 
-Evidence: `work/test-runs/diagnostics-live-20260927/off-on-comparison.json`, the two archived `Lua.log` files and `verbose/provenance.json`. The pre-fixture native log contains 395 retained records, including structural summaries, units, cities, configuration, memory and sampling duration. No truncation was needed in that short run.
+Evidence: `work/test-runs/diagnostics-live-20260927/off-on-comparison.json`, the two archived `Lua.log` files and `verbose/provenance.json`. The pre-fixture native log contains 395 retained records, including structural summaries (with city counts), unit details, configuration, memory and sampling duration. No truncation was needed in that short run.
 
 ## Actual combat trace
 
@@ -24,11 +24,19 @@ Evidence: `work/test-runs/diagnostics-live-20260927/combat`, `final`, and `final
 
 ## Bounded pre-crash replay
 
-A fresh DX11 process loaded the original post-turn-240 autosave, SHA256 `CC9D87490A5D7F4EA392C71294A9806F0C5A4DDAB350DA699B9E10E986D96574`. Its saved observer/autoplay state resumed automatically. Verbose was enabled during turn 241; the first part of turn 240 was therefore not captured by native logging. At turn 244 the console verified `StackAutoplayObserver == nil`, then bounded autoplay to return as Spain at turn 246. A separately verified process-identity memory guard remained active throughout.
+A fresh DX11 process loaded the original post-turn-240 autosave, SHA256 `CC9D87490A5D7F4EA392C71294A9806F0C5A4DDAB350DA699B9E10E986D96574`. Its saved observer/autoplay state resumed automatically. Verbose was enabled during turn 241; the retained native trace covers turns 241–244, with turn 240 absent. At turn 244 the console verified `StackAutoplayObserver == nil`, then bounded autoplay to return as Spain at turn 246. A separately verified process-identity memory guard remained active throughout.
 
-The replay exposed a repeated **same-tile A_MOVE** by Spain's Tercio 7508 toward target (103,20): from/to plot 2040, movement 120→120, repeated through 3,072 assignments. It generated 12 LONG_PLAN warnings. Over roughly four seconds, sampled private bytes rose from 2,375,831,552 to 3,371,323,392, with only 38,780,928 bytes of virtual free space in the final sample. At 115.888 seconds the guard terminated exactly the test process because it crossed the configured memory limit. This was a deliberate safety stop, not another recorded crash.
+The replay exposed a repeated **same-tile A_MOVE** by Spain's Tercio 7508 toward target (103,20): from/to plot 2040, movement 120→120, repeated through 3,072 assignments. It generated 12 LONG_PLAN warnings. Over roughly four seconds, sampled private bytes rose from 2,375,831,552 to 3,371,323,392, with only 38,780,928 bytes of virtual free space in the final sample. At 115.888 seconds the guard terminated exactly the test process because it crossed the configured memory limit. Later inspection of crashes.log and a new dump confirmed that the game had already crashed at 10:18:46 BST, before the guard closed it. The initial assumption that the guard had prevented a crash was incorrect. This replay dump is archived under the run's crash directory.
 
-Evidence: `work/test-runs/turn240-replay-20260927/{Logs,memory,memory.out,native-summary.json,provenance.json}`. The original crash's failed allocation and this repeatable assignment loop are consistent, but the minidump does not establish that the original crashing unit had the same identity. A narrow stationary-assignment fix and same-save replay are the next validation step.
+Evidence: `work/test-runs/turn240-replay-20260927/{Logs,memory,memory.out,native-summary.json,provenance.json,crash}`. The original crash's failed allocation and this repeatable assignment loop are consistent, but the original minidump does not establish the same unit identity.
+
+## Stationary-loop fix replay: separate crash remains
+
+The reviewed stationary-assignment correction was built as Release `20260927-102519` (`Release-5.4.6-7-g13252af Clean`), DLL SHA256 `C6FC9A64C422C231D03E40A8F438B8DF3C3E4B2C5F653C11E7D5423454752125`, matching PDB `77D283C251FE26D86953E21E2890BDF6B5868E525359563E62465DE6ECED5255`. Deployment archive: `deployment-replaced-20260927-102730-5faa4c91`. The same original turn-240 bytes were restored and verified before loading; Civ V's test-generated autosave was preserved separately.
+
+The exact Spain target (103,20) now completes with 24 assignments; unit 7508 receives a finish action, and no LONG_PLAN warning occurs. However, the game then crashes at turn 244, 10:36:44 BST, at DLL RVA `0x0064a660`, with 999,032 KiB of free virtual address space and a 910,592 KiB largest free region. This is a separate fault from the allocation failure. The three-minute guard later closes the crash dialog process; its duration-stop record must not be interpreted as a crash-free replay.
+
+Evidence: `work/test-runs/turn240-fixed-20260927`, including `crash/CvMiniDump_20260927_103644_5.4.6-7-g13252af_Release.dmp` (SHA256 `D874C2A67ADD84C070312E0E7AF8412E3F48D2BD8A1ABEFF39143D51836C9D0C`). Investigation of the separate fault is pending. Turn 246 has not been reached.
 
 ## Limits
 
