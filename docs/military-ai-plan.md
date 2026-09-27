@@ -2,6 +2,14 @@
 
 Status: implementation authorized on 2026-09-27. Work will use offline validation followed by at most one final game launch for smoke testing; broader autoplay comparison will be run by the user. Reviewed against stacking source checkpoint `1600bef` / DLL source `ef54698`, based on VP 5.4.6. The user reports the previous build reached turn 330 without an observed crash and the three-turn observer notification cleanup works in game.
 
+## Implementation checkpoint — 2026-09-27
+
+The first bounded implementation is complete in source, with final native build/deployment/smoke evidence to be recorded in `work/MILITARY-AI-IMPLEMENTATION.md`. Phases 0–4 have a usable initial implementation: shared city retention, placement/muster/garrison fixes, ETA-1 recovery, domain reserve budgets, bounded reserve transfers, role/strength readiness, assembly deadlines and gather-space/cohesion corrections. Phase 5 adds missing-siege reinforcement, reduced healthy rear-city preference and patrol reassignment; existing stack combat simulation remains in use. Configuration/defaults are now documented in [stacking configuration](stacking-configuration.md#military-allocation-settings).
+
+This is not completion of every research/tuning item below. The current city assessment uses immediate reach plus discounted visible proximity, not a full two/four-turn threat planner. Strategic demand uses health-adjusted base strength and broad roles, not full promotion-aware combat simulation. Specialized last-city/production/route importance, ocean invasion/air force coordination, skirmish pinning, role substitutions, and comprehensive multi-front/congestion fixtures remain follow-up work. New long-range transfer paths intentionally do not embark; ordinary VP invasion operations retain that responsibility. Outcome/turn-time calibration and matched campaign comparisons are pending the user's fresh autoplay.
+
+Offline coverage now includes 135 actual-source native allocation checks, 44 diagnostic policy/IO checks, 16 summarizer scenarios and existing movement/siege/placement/cache/notification regressions. These use controlled stubs for engine services; they do not establish real pathfinding behavior or campaign effectiveness. The one final live smoke session is a release sanity check, not the 100-turn/multiple-seed acceptance study proposed below.
+
 ## Objective and constraints
 
 Use available military units to accomplish specific offensive and defensive objectives, with explicit reasons for retaining, moving, healing or releasing each unit. Stacking is an option that improves force concentration and protection; filling every city or every tile to its capacity is not an objective.
@@ -138,9 +146,9 @@ Use several map layouts/civilizations/eras and a stacking-disabled control. Begi
 
 Do not claim a long-run win-rate or performance improvement from one campaign. If a change weakens defense or increases turn time materially, adjust or revert that phase before combining further changes.
 
-## Proposed XML controls (not implemented AI settings)
+## Original design controls and follow-up scope
 
-Names/defaults below are starting design values, to be finalized and clamped alongside the implementation. Domain/city-role overrides can use dedicated tables instead of proliferating unrelated globals. Keep existing combat settings as the source of truth.
+The table below records the original design directions; it is not the current setting list. Current exact names/defaults/ranges are in the configuration reference linked above. Domain/city-role overrides can use dedicated tables instead of proliferating unrelated globals. Keep existing combat settings as the source of truth.
 
 | Setting family | Initial proposal | Purpose |
 |---|---|---|

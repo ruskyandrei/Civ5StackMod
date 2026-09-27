@@ -290,6 +290,7 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 		GetHomelandAI()->Update(true);
 		GetTacticalAI()->CleanUp();
 	}
+	CvStackingDiagnostics::AfterPlayerUnitAI(*this);
 }
 
 void CvPlayerAI::AI_conquerCity(CvCity* pCity, bool bGift, bool bAllowSphereRemoval)

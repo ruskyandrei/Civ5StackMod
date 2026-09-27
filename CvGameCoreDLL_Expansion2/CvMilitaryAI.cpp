@@ -6,6 +6,8 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingAI.h"
+#include "CvStackingDiagnostics.h"
 #include "ICvDLLUserInterface.h"
 #include "CvGameCoreUtils.h"
 #include "CvMinorCivAI.h"
@@ -730,7 +732,7 @@ bool CvMilitaryAI::IsPossibleAttackTarget(const CvCity* pCity, ArmyType eArmyTyp
 
 bool CvMilitaryAI::IsPossibleMusterCity(const CvCity* pCity, ArmyType eArmyType) const
 {
-	if (!pCity || pCity->getOwner() == m_pPlayer->GetID())
+	if (!pCity || pCity->getOwner() != m_pPlayer->GetID())
 		return false;
 
 	//cities may be listed multiple times!
@@ -1022,8 +1024,18 @@ bool CvMilitaryAI::RequestCityAttack(PlayerTypes eIntendedTarget, int iNumUnitsW
 			continue;
 		}
 
+		// Count useful reserves in this operation's domain, after city-defense exclusions.
+		if (CvStackingAI::Enabled(m_pPlayer->GetID()) && !CvStackingAI::CanStartAnotherOperation(m_pPlayer->GetID(),opType==AI_OPERATION_CITY_ATTACK_LAND?DOMAIN_LAND:DOMAIN_SEA))
+			continue;
+
 		//don't duplicate operations
 		CvAIOperation* pCurrentOp = m_pPlayer->getFirstAIOperationOfType(opType, eTargetPlayer, pTargetPlot);
+		if (CvStackingAI::Enabled(m_pPlayer->GetID()) && pCurrentOp && pCurrentOp->GetArmy(0) &&
+			(pCurrentOp->GetOperationState()==AI_OPERATION_STATE_RECRUITING_UNITS || pCurrentOp->GetOperationState()==AI_OPERATION_STATE_GATHERING_FORCES))
+		{
+			CvStackingDiagnostics::Record(2,m_pPlayer->GetID(),"OPERATION_GATE","target=%d operation=%d reason=existing_assembly",pTargetPlot->GetPlotIndex(),pCurrentOp->GetID());
+			continue;
+		}
 		if (bCareful && pCurrentOp != NULL && pCurrentOp->GetArmy(0))
 		{
 			//wait until the previous army has at least left our territory, don't commit all our units to one target
@@ -2385,13 +2397,17 @@ void CvMilitaryAI::DoCityAttacks(PlayerTypes ePlayer)
 {
 	//Not perfect, as some operations are mixed, but it will keep us from sending everyone to slaughter all at once.
 	int iReservesTotal = ((m_iNumLandUnits + m_iNumNavalUnits) - (m_iNumNavalUnitsInArmies + m_iNumLandUnitsInArmies));
-	if (iReservesTotal >= m_iRecLandUnits || (m_pPlayer->GetNumOffensiveOperations(DOMAIN_LAND)+m_pPlayer->GetNumOffensiveOperations(DOMAIN_SEA)) <= 0)
+	const bool stackAllocation=CvStackingAI::Enabled(m_pPlayer->GetID());
+	const bool landAvailable=stackAllocation && CvStackingAI::CanStartAnotherOperation(m_pPlayer->GetID(),DOMAIN_LAND);
+	const bool seaAvailable=stackAllocation && CvStackingAI::CanStartAnotherOperation(m_pPlayer->GetID(),DOMAIN_SEA);
+	if (stackAllocation) CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"OPERATION_BUDGET","enemy=%d landAvailable=%d seaAvailable=%d landOperations=%d seaOperations=%d",ePlayer,landAvailable,seaAvailable,m_pPlayer->GetNumOffensiveOperations(DOMAIN_LAND),m_pPlayer->GetNumOffensiveOperations(DOMAIN_SEA));
+	if (stackAllocation ? (landAvailable || seaAvailable) : (iReservesTotal >= m_iRecLandUnits || (m_pPlayer->GetNumOffensiveOperations(DOMAIN_LAND)+m_pPlayer->GetNumOffensiveOperations(DOMAIN_SEA)) <= 0))
 	{
 		WarStateTypes eWarState = GET_PLAYER(ePlayer).isMajorCiv() ? m_pPlayer->GetDiplomacyAI()->GetWarState(ePlayer) : WAR_STATE_OFFENSIVE;
 		if (eWarState >= WAR_STATE_TROUBLED)
 		{
 			RequestCityAttack(ePlayer, 2);
-			if (GET_PLAYER(ePlayer).isMajorCiv())
+			if (GET_PLAYER(ePlayer).isMajorCiv() && (!stackAllocation || CvStackingAI::CanStartAnotherOperation(m_pPlayer->GetID(),DOMAIN_LAND)))
 				RequestPillageAttack(ePlayer);
 		}
 	}

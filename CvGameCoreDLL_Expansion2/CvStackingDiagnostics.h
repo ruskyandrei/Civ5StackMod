@@ -14,6 +14,7 @@ namespace CvStackingDiagnostics
     bool Enabled(int level, PlayerTypes player = NO_PLAYER);
     void Record(int level, PlayerTypes player, const char* category, const char* format, ...);
     void OnPlayerTurn(CvPlayer& player);
+    void AfterPlayerUnitAI(CvPlayer& player);
     class CombatScope
     {
     public:

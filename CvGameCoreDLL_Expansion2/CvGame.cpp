@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingAI.h"
+#include "CvStackingDiagnostics.h"
 #include "CvGameCoreUtils.h"
 #include "CvInternalGameCoreUtils.h"
 #include "CvGame.h"
@@ -1268,6 +1270,8 @@ void CvGame::uninit()
 // Initializes data members that are serialized.
 void CvGame::reset(HandicapTypes eHandicap, bool bConstructorCall)
 {
+	// Same-process loads must not inherit another game's planning or diagnostic state.
+	if (!bConstructorCall) { CvStackingAI::Reset(); CvStackingDiagnostics::Reset(); }
 	//--------------------------------
 	// Uninit class
 	uninit();

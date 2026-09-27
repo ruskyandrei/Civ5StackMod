@@ -3,6 +3,7 @@ from pathlib import Path
 import hashlib,json,os,subprocess,sys
 root=Path(__file__).resolve().parents[1];out=root/'work/diagnostics-core-regression';out.mkdir(exist_ok=True);logs=out/'logs';logs.mkdir(exist_ok=True)
 src=(root/'CvGameCoreDLL_Expansion2/CvStackingDiagnostics.cpp').read_text(encoding='utf-8-sig');actual=src[src.index('namespace\n'):src.index('    void OnPlayerTurn(')]+'}\n'
+actual=actual[:-2]+src[src.index('    void AfterPlayerUnitAI('):src.index('    void CombatScope::AddUnit(')]+'}\n'
 head=r"""
 #include <cstdio>
 #include <cstdarg>
@@ -27,6 +28,12 @@ static wstring logLocator=L"logs\\StackingDiagnostics-path.log";
 struct FILogFile{enum{kDontTimeStamp=1};const wchar_t*GetFileName(){return logLocator.c_str();}} locator;
 struct LogMgr{FILogFile*GetLog(const char*,int){return &locator;}}LOGFILEMGR;
 namespace CvStackingDiagnostics{void Reset();void SetLevel(int);int GetLevel();const char*GetStatus();bool Enabled(int,PlayerTypes=NO_PLAYER);void Record(int,PlayerTypes,const char*,const char*,...);}
+struct Plot{int GetPlotIndex()const{return 12;}bool isCity()const{return true;}} testPlot;
+const int AI_TACTICAL_MOVE_NONE=0,AI_HOMELAND_MOVE_NONE=0,AI_HOMELAND_MOVE_UNASSIGNED=1;
+struct CvUnit{int id;bool dead;CvUnit(int n=0):id(n),dead(false){}bool isDelayedDeath()const{return dead;}bool IsCombatUnit()const{return true;}
+ Plot*plot(){return &testPlot;}int getArmyID()const{return -1;}bool IsHurt()const{return false;}int getTacticalMove()const{return 0;}int getHomelandMove()const{return 1;}
+ int GetID()const{return id;}int GetCurrHitPoints()const{return 100;}int getMoves()const{return 0;}bool TurnProcessed()const{return true;}bool IsGarrisoned()const{return false;}};
+struct CvPlayer{vector<CvUnit*> units;int GetID()const{return 0;}CvUnit*firstUnit(int*i){*i=0;return units.empty()?NULL:units[0];}CvUnit*nextUnit(int*i){++*i;return *i<(int)units.size()?units[*i]:NULL;}};
 static FILE* testOpen(const wchar_t*path,const wchar_t*mode,int sharing){++opens;if(openFailure)return NULL;return _wfsopen(path,mode,sharing);}
 static int testPrint(FILE*p,const char*f,...){++writes;if(writeFailure)return -1;va_list a;va_start(a,f);int r=vfprintf(p,f,a);va_end(a);return r;}
 #define _wfsopen testOpen
@@ -42,6 +49,14 @@ int countText(const string&s,const char*t){int n=0;size_t p=0;while((p=s.find(t,
 void fresh(){CvStackingDiagnostics::Reset();cfg.clear();cfg["DiagnosticsMemoryInterval"]=0;cfg["DiagnosticsMaxFileKB"]=64;cfg["DiagnosticsMaxFiles"]=2;cfg["DiagnosticsMaxRowsPerTurn"]=32;settingsReads=dbReads=opens=writes=0;openFailure=writeFailure=false;logLocator=L"logs\\StackingDiagnostics-path.log";GC.game.turn=1;}
 DWORD WINAPI concurrentStatus(LPVOID){for(int i=0;i<100;++i){CvStackingDiagnostics::SetLevel(i%3);const char*p=CvStackingDiagnostics::GetStatus();if(!p||!p[0])return 1;}return 0;}
 int main(){
+ CvUnit unit(7),dead(8);dead.dead=true;CvPlayer player;player.units.push_back(&unit);player.units.push_back(&dead);
+ fresh();CvStackingDiagnostics::AfterPlayerUnitAI(player);expect(opens==0&&writes==0,"after-AI observer off does not open logs");
+ CvStackingDiagnostics::SetLevel(1);CvStackingDiagnostics::AfterPlayerUnitAI(player);string decisions=slurpCurrent();
+ expect(countText(decisions,"|DECISION_SUMMARY|")==1,"summary after actual AI pass");expect(decisions.find("combat=1 inCities=1 inArmies=0 healthyUnassigned=1")!=string::npos,"after-AI counts ignore delayed deaths");
+ expect(countText(decisions,"|UNIT_DECISION|")==0,"summary omits per-unit detail");CvStackingDiagnostics::AfterPlayerUnitAI(player);expect(countText(slurpCurrent(),"|DECISION_SUMMARY|")==1,"duplicate AI passes do not duplicate observation");
+ CvStackingDiagnostics::SetLevel(2);GC.game.turn=10;CvStackingDiagnostics::AfterPlayerUnitAI(player);expect(countText(slurpCurrent(),"|UNIT_DECISION|")==1,"verbose detail follows XML interval");
+ expect(unit.id==7&&!unit.dead&&GC.game.turn==10,"decision logging does not mutate units or turn");
+ CvStackingDiagnostics::Reset();cfg["DiagnosticsLevel"]=1;CvStackingDiagnostics::AfterPlayerUnitAI(player);expect(countText(slurpCurrent(),"|DECISION_SUMMARY|")==1,"same-turn reload permits new-session observation");
  fresh();CvStackingDiagnostics::Record(1,0,"TEST","off");expect(opens==0&&writes==0&&dbReads==0,"default off no file or DB scans");expect(CvStackingDiagnostics::GetLevel()==0,"default off");CvStackingDiagnostics::SetLevel(-1);CvStackingDiagnostics::SetLevel(3);expect(CvStackingDiagnostics::GetLevel()==0&&opens==0,"invalid setter ignored");
  fresh();cfg["DiagnosticsLevel"]=1;cfg["DiagnosticsPlayer"]=2;CvStackingDiagnostics::Record(1,1,"TEST","wrongplayer");expect(opens==0,"player filter suppresses file");CvStackingDiagnostics::Record(1,2,"TEST","rightplayer");expect(opens==1,"XML summary opens on first relevant event");expect(dbReads==9,"configuration scan once opening");expect(configHash!=0,"configuration fingerprint resolved");expect(slurpCurrent().find("rightplayer")!=string::npos&&slurpCurrent().find("wrongplayer")==string::npos,"filter affects actual bytes");int reads=settingsReads;CvStackingDiagnostics::Record(1,2,"TEST","again");expect(settingsReads==reads,"cached numeric settings");expect(CvStackingDiagnostics::Enabled(1,NO_PLAYER),"global memory records bypass player filter");expect(!CvStackingDiagnostics::Enabled(2,2),"summary excludes verbose");expect(GC.game.turn==1,"recording leaves game getter state unchanged");
  fresh();CvStackingDiagnostics::SetLevel(1);for(int i=0;i<40;++i)CvStackingDiagnostics::Record(1,0,"BUDGET","row=%d",i);string s=slurpCurrent();expect(countText(s,"|BUDGET|")==32,"actual row budget");expect(countText(s,"|TRUNCATED|")==1,"one truncation marker per turn");++GC.game.turn;CvStackingDiagnostics::Record(1,0,"BUDGET","nextturn");expect(rows==1&&!suppressed&&slurpCurrent().find("nextturn")!=string::npos,"budget resets next turn");CvStackingDiagnostics::Record(1,0,"TEXT","a\nb\rc");expect(slurpCurrent().find("a b c")!=string::npos,"record sanitizes newlines");string longText(8000,'x');CvStackingDiagnostics::Record(1,0,"LONG","%s",longText.c_str());expect(slurpCurrent().find("[message truncated]")!=string::npos,"long formatting visibly truncated");

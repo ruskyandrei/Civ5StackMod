@@ -36,6 +36,6 @@ The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an e
 
 ## Military allocation follow-up (2026-09-27)
 
-- [ ] Implement the staged [military AI plan](military-ai-plan.md), beginning with bounded diagnostics and confirmed placement/garrison/muster/progress defects. AI changes are proposed only; no new AI policy was deployed by the planning task.
+- [x] Implement the first bounded [military AI allocation pass](military-ai-plan.md#implementation-checkpoint--2026-09-27): shared retention, useful garrison orders, reserve transfers, domain budgets, assembly recovery and native explanations. Campaign calibration and advanced naval/air planning remain open. See `work/MILITARY-AI-IMPLEMENTATION.md` for release evidence.
 - [ ] Compare rear-city surplus, operation assembly delays and actual front arrivals against the Danish replay and independent offensive/defensive scenarios before tuning broader policy.
-- [ ] Live-validate observer notification expiry at the configured turn boundary, save/reload and normal-play preservation. The source uses VP's existing notification creation turns and ordinary UI dismissal; offline boundary/event tests are recorded separately.
+- [x] User confirmed three-turn observer notification expiry working in autoplay through turn 330. Offline age/rebroadcast/normal-play cases also pass; this report does not add an independent live save/reload boundary test.

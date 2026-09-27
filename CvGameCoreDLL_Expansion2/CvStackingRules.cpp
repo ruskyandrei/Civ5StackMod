@@ -1,6 +1,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingRules.h"
 #include "CvStackingDiagnostics.h"
+#include "CvStackingAI.h"
 #include "CvUnit.h"
 #include "CvPlot.h"
 #include "CvCity.h"
@@ -32,6 +33,42 @@ namespace
 		{"FlankingEnabled", 1, 0, 1},
 		{"CollateralEnabled", 1, 0, 1},
 		{"AIEnabled", 1, 0, 1},
+		{"AIMilitaryAllocationEnabled", 1, 0, 1},
+		{"AICityApproachRadius", 6, 1, 8},
+		{"AICityApproachWeight", 35, 0, 100},
+		{"AICitySafeDefenders", 1, 0, 10},
+		{"AICityMaximumDefenders", 3, 1, 10},
+		{"AICityEmergencyDefenders", 2, 1, 10},
+		{"AICityMaximumNavalDefenders", 2, 0, 10},
+		{"AICityStrengthCreditPercent", 50, 0, 100},
+		{"AICityDefenseStrengthPercent", 120, 50, 300},
+		{"AICapitalDefensePercent", 125, 100, 300},
+		{"AIGarrisonRangedBonus", 20, 0, 100},
+		{"AIGarrisonReplacementPercent", 20, 0, 100},
+		{"AIAssemblyNoProgressTurns", 3, 1, 10},
+		{"AIFailedAssignmentCooldown", 3, 0, 10},
+		{"AIRecruitmentReviewTurns", 5, 1, 30},
+		{"AIAssemblyMinimumCombatUnits", 4, 2, 20},
+		{"AIAssemblyRequiredPercent", 75, 50, 100},
+		{"AIAssemblyMaximumMissing", 1, 0, 3},
+		{"AIAssemblyMinimumRanged", 2, 0, 10},
+		{"AIAssemblyStrengthPercent", 150, 100, 300},
+		{"AIAssemblyStallReviewTurns", 12, 6, 40},
+		{"AIReassignmentCooldown", 3, 0, 10},
+		{"AIReassignmentContinuityBonus", 40, 0, 300},
+		{"AIReinforcementUnitsPerTurn", 8, 0, 32},
+		{"AIReinforcementPathQueriesPerTurn", 32, 0, 128},
+		{"AIReinforcementMaximumTargets", 8, 1, 32},
+		{"AIReinforcementMaximumTurns", 12, 1, 30},
+		{"AIReinforcementTravelWeight", 15, 1, 100},
+		{"AIReinforcementDefensePriority", 300, 1, 1000},
+		{"AIReinforcementAttackPriority", 200, 1, 1000},
+		{"AIRearCityPlotScore", 6, 0, 12},
+		{"AIRearCityHealthyPercent", 70, 1, 100},
+		{"AICityAssaultMinimumSiege", 1, 0, 4},
+		{"AIPatrolCurrentZoneBonus", 20, 0, 1000},
+		{"AIOffensiveOperationsPerDomain", 2, 0, 6},
+		{"AIOffensiveReserveMinimumUnits", 4, 1, 20},
 		{"DiagnosticsLevel", 0, 0, 2},
 		{"DiagnosticsSummaryInterval", 1, 1, 10000},
 		{"DiagnosticsDetailInterval", 10, 0, 10000},
@@ -258,6 +295,7 @@ namespace CvStacking
 	void ResetCache()
 	{
 		CvStackingDiagnostics::Reset();
+		CvStackingAI::Reset();
 		Cache() = RulesCache();
 	}
 	int GetInt(const char* name, int fallback)

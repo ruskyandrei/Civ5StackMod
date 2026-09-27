@@ -2,6 +2,7 @@
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
     <ClCompile Include="CvStackingRules.cpp" />
+    <ClCompile Include="CvStackingAI.cpp" />
     <ClCompile Include="CvStackMovement.cpp" />
     <ClCompile Include="CustomMods.cpp" />
     <ClCompile Include="CvAchievementInfo.cpp" />
@@ -315,6 +316,8 @@
   <ItemGroup>
     <ClInclude Include="..\CvGameCoreDLLUtil\include\CvEnums.h" />
     <ClInclude Include="CvStackingRules.h" />
+    <ClInclude Include="CvStackingAI.h" />
+    <ClInclude Include="CvStackingAIPolicy.h" />
     <ClInclude Include="CvStackMovement.h" />
     <ClInclude Include="CustomMods.h" />
     <ClInclude Include="CvAchievementInfo.h" />

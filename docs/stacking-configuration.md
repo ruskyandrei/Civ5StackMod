@@ -118,6 +118,57 @@ All AI tuning rows are in `Stacking_Settings`. The DLL uses the individual nonne
 
 Existing tactical search limits remain bounded at their upstream defaults rather than scaling with stack capacity. These values tune preferences; shared eligibility, capacity, defender selection and damage forecasting establish which actions are legal.
 
+## Military allocation settings
+
+All 36 controls below are `Stacking_Settings` rows in the same XML file. These defaults are an initial test policy, not calibrated long-campaign balance. `AIEnabled` and `AIMilitaryAllocationEnabled` must both be enabled; ordinary human units and barbarians keep their existing controllers.
+
+| Setting | Default | DLL range | Meaning |
+|---|---:|---:|---|
+| AIMilitaryAllocationEnabled | 1 | 0–1 | Enable this allocation policy; 0 restores legacy allocation hooks while retaining correctness fixes. |
+| AICityApproachRadius | 6 | 1–8 | Hex radius of visible nearby enemies; this is proximity, not path reach. |
+| AICityApproachWeight | 35 | 0–100 | Percent strength credit for nearby enemies absent from the immediate attack map. |
+| AICitySafeDefenders | 1 | 0–10 | Land defenders in a safe ordinary city; early expansion can release this baseline. |
+| AICityMaximumDefenders | 3 | 1–10 | Maximum reserved land defenders on the city tile, also limited by stack capacity. |
+| AICityEmergencyDefenders | 2 | 1–10 | Minimum when the city reports siege or danger of falling, capped by available capacity. |
+| AICityMaximumNavalDefenders | 2 | 0–10 | City-held naval reserve cap when visible naval pressure exists; zero without naval pressure. |
+| AICityStrengthCreditPercent | 50 | 0–100 | Percent of health-adjusted city strength credited against required land defense. |
+| AICityDefenseStrengthPercent | 120 | 50–300 | Percent of assessed enemy strength desired before city-strength credit. |
+| AICapitalDefensePercent | 125 | 100–300 | Multiplier on a threatened capital's remaining strength requirement. |
+| AIGarrisonRangedBonus | 20 | 0–100 | Additive strength-score bonus for ranged, non-siege defenders. |
+| AIGarrisonReplacementPercent | 20 | 0–100 | Minimum percentage improvement for a replacement at an already adequately defended threatened city. |
+| AIAssemblyNoProgressTurns | 3 | 1–10 | Stationary turns before clearing the path; twice this interval before releasing a straggler. |
+| AIFailedAssignmentCooldown | 3 | 0–10 | Future turns before retrying the same failed objective (also blocks the release turn). |
+| AIRecruitmentReviewTurns | 5 | 1–30 | Operation age before considering an incomplete but viable formation. |
+| AIAssemblyMinimumCombatUnits | 4 | 2–20 | Minimum members for relaxed formation readiness. |
+| AIAssemblyRequiredPercent | 75 | 50–100 | Percentage of required slots filled for relaxed readiness. |
+| AIAssemblyMaximumMissing | 1 | 0–3 | Maximum missing required slots for relaxed readiness. |
+| AIAssemblyMinimumRanged | 2 | 0–10 | Required ranged support count for relaxed readiness, in addition to a capturer. |
+| AIAssemblyStrengthPercent | 150 | 100–300 | Minimum own strength percentage relative to the visible city and nearby defenders. |
+| AIAssemblyStallReviewTurns | 12 | 6–40 | Consecutive observed turns without added members or shorter furthest-member distance before abort/reassignment. |
+| AIReassignmentCooldown | 3 | 0–10 | Retention window for transfer intent/inbound credits; not a hard ban on emergency reassignment. |
+| AIReassignmentContinuityBonus | 40 | 0–300 | Score preference for continuing the same reinforcement goal. |
+| AIReinforcementUnitsPerTurn | 8 | 0–32 | Maximum successful strategic reserve transfers per player/game turn; 0 disables. |
+| AIReinforcementPathQueriesPerTurn | 32 | 0–128 | Maximum strategic target ETA queries per player/game turn; execution revalidates the selected path. |
+| AIReinforcementMaximumTargets | 8 | 1–32 | Maximum prioritized demands considered per candidate unit. |
+| AIReinforcementMaximumTurns | 12 | 1–30 | Maximum estimated travel turns; native-domain paths forbid embarkation. |
+| AIReinforcementTravelWeight | 15 | 1–100 | Demand score penalty per estimated travel turn. |
+| AIReinforcementDefensePriority | 300 | 1–1000 | Base score for a local city-defense strength deficit. |
+| AIReinforcementAttackPriority | 200 | 1–1000 | Base score for reinforcement of an active offensive army. |
+| AIRearCityPlotScore | 6 | 0–12 | Tactical position score for healthy surplus troops in cities at least three enemy-distance bands from contact. |
+| AIRearCityHealthyPercent | 70 | 1–100 | HP percentage above which rear-city preference is reduced. |
+| AICityAssaultMinimumSiege | 1 | 0–4 | Desired nearby bombard-role units before an otherwise dominant land siege stops requesting that role. |
+| AIPatrolCurrentZoneBonus | 20 | 0–1000 | Bounded current-zone preference instead of unconditional acceptance. |
+| AIOffensiveOperationsPerDomain | 2 | 0–6 | Maximum concurrent offensive operations separately for land and sea; mixed naval operations use sea. |
+| AIOffensiveReserveMinimumUnits | 4 | 1–20 | Minimum eligible healthy unassigned units in that domain before a new operation is considered. |
+
+Assessment reuses VP's immediate attack map, plus currently visible enemies in a bounded proximity band. Strength is a health-adjusted base combat/ranged proxy for strategic allocation, not predicted combat damage. Existing tactical simulation still evaluates actual defender, flank and collateral rules. A capital bonus only applies when an enemy threat is observed. No full multi-turn invasion/air campaign model is added.
+
+City defenders are reconsidered against the units actually present. An adequate rear city stops seeking redundant replacements; wounded/army-bound units can be freed when another defender is adequate. Strategic transfers retain civilian escorts, healing troops, engaged units and necessary nearby field defenders. A transfer arrival means within the existing two-hex native-domain staging tolerance, not that the unit attacked or joined a formation. Successful arrivals enter normal local/operational selection on later turns.
+
+Incomplete-formation readiness additionally requires a currently visible target city and a city-capturing unit. It advances to gathering, with ordinary movement/access/cohesion rules still applied. No deadline alone authorizes an assault. Per-unit progress uses position and ETA; active danger, healing and already assembled units receive grace. Whole assembly recovery is separate and only affects recruiting/gathering offensive operations.
+
+Planning histories contain owner/ID references, not retained unit pointers. They are bounded, transient and reset on load, including same-process reloads. Old saves keep their format, but timers/intent start fresh after load. The per-turn threat snapshot is conservative after enemies are destroyed and can lag discoveries later in that turn. Broader memory of threats, role-specific multi-front allocation, naval landings and air coordination remain follow-up work.
+
 ## Engine constraints and diagnostics
 
 The existing `CvCombatInfo` interface has 32 damage-member entries. This layout is shared with the closed game executable and is not enlarged. Collateral selection must stop at available slots, merge a pre-existing garrison entry and preserve the HP floor. The numeric role validator therefore caps victim limits at 32. This is an engine-layout constraint, distinct from the XML default stack cap of 9.
@@ -174,3 +225,9 @@ Record timing and sampling duration include diagnostic overhead; bounded output 
 In observer mode or autoplay, displayed notifications become eligible for ordinary dismissal when the current game turn minus their saved creation turn reaches the configured lifetime. A message from turn 280 is eligible at turn 283. Reloading a save or switching the observed view does not renew a message's age. Individual older entries are removed from bundles while newer entries remain. The notification history is retained by VP's ordinary notification system.
 
 Normal play is unaffected. Native mandatory-choice notifications retain the same restrictions as manual right-click dismissal. The check is event-driven and throttled by active player/game turn; it sends no gameplay orders. Restart into the modded game after changing the XML/UI files. The implementation targets this prototype's tested VP EUI compatibility panel; non-EUI and network observer behavior have not been validated.
+
+### Military allocation diagnostic records
+
+Summary adds `CITY_DEFENSE`, `OPERATION_BUDGET`, `OPERATION_READINESS`, `OPERATION_ASSEMBLY`, `ASSEMBLY_STALL`, `GARRISON_ASSIGN`, `REINFORCEMENT`, `SIEGE_REINFORCE` and `DECISION_SUMMARY`. The last observes the first completed unit-AI pass, not final end-turn state; its counts overlap. Verbose adds retention/recruitment reasons, stationary-unit history, blocked transfers and periodic `UNIT_DECISION` snapshots. The existing row and file bounds still apply; Summary is recommended for continuous autoplay, Verbose for detailed problem windows.
+
+The offline summarizer's `military.players` output keeps city/operation identities separate per player, shows actual moved/unchanged/absent garrison outcomes, reinforcement moving/arrived/failure counts, unique observed arrival units and assembly ages/recovery actions. An absent unit is not automatically a casualty. Missing/truncated/rotated records are never treated as proof that no action occurred.

@@ -27,6 +27,7 @@ namespace
     bool optionsLoaded = false;
     int level = -1, rowTurn = -1, rows = 0, memoryTurn = -1;
     int playerTurn[MAX_PLAYERS];
+    int playerAfterTurn[MAX_PLAYERS];
     bool initialized = false, suppressed = false, failed = false;
     FILE* output = NULL;
     unsigned int sequence = 0, runCounter = 0, combatCounter = 0;
@@ -168,7 +169,7 @@ namespace CvStackingDiagnostics
     int GetLevel()
     {
         Lock lock;
-        if (!initialized) { for (int i = 0; i < MAX_PLAYERS; ++i) playerTurn[i] = -1; initialized = true; }
+        if (!initialized) { for (int i = 0; i < MAX_PLAYERS; ++i) { playerTurn[i] = -1; playerAfterTurn[i] = -1; } initialized = true; }
         if (level < 0) level = setting("DiagnosticsLevel", 0);
         return level;
     }
@@ -281,6 +282,28 @@ namespace CvStackingDiagnostics
         Record(1, owner, "SAMPLE_END", "elapsedMs=%lu", GetTickCount() - start);
     }
 
+    void AfterPlayerUnitAI(CvPlayer& player)
+    {
+        Lock lock;
+        const PlayerTypes owner=player.GetID();
+        if (!Enabled(1,owner)) return;
+        const int turn=GC.getGame().getGameTurn();
+        if (playerAfterTurn[owner]==turn) return;
+        playerAfterTurn[owner]=turn;
+        const int interval=setting("DiagnosticsDetailInterval",10);
+        const bool detail=Enabled(2,owner) && interval && turn%interval==0;
+        int loop=0,combat=0,inCities=0,inArmies=0,idle=0;
+        for (CvUnit* unit=player.firstUnit(&loop);unit;unit=player.nextUnit(&loop))
+        {
+            if (unit->isDelayedDeath() || !unit->IsCombatUnit()) continue;
+            ++combat; inCities+=unit->plot() && unit->plot()->isCity(); inArmies+=unit->getArmyID()!=-1;
+            const bool unassigned=unit->getArmyID()==-1 && !unit->IsHurt() && unit->getTacticalMove()==AI_TACTICAL_MOVE_NONE &&
+                (unit->getHomelandMove()==AI_HOMELAND_MOVE_NONE || unit->getHomelandMove()==AI_HOMELAND_MOVE_UNASSIGNED);
+            idle+=unassigned;
+            if (detail) Record(2,owner,"UNIT_DECISION","unit=%d plot=%d hp=%d moves=%d processed=%d army=%d garrison=%d tactical=%d homeland=%d unassigned=%d",unit->GetID(),unit->plot()?unit->plot()->GetPlotIndex():-1,unit->GetCurrHitPoints(),unit->getMoves(),unit->TurnProcessed(),unit->getArmyID(),unit->IsGarrisoned(),unit->getTacticalMove(),unit->getHomelandMove(),unassigned);
+        }
+        Record(1,owner,"DECISION_SUMMARY","phase=after_first_unit_AI_pass combat=%d inCities=%d inArmies=%d healthyUnassigned=%d; counts can overlap and unfinished animations may cause later passes",combat,inCities,inArmies,idle);
+    }
     void CombatScope::AddUnit(int owner, int id, const char* role, int rolledDamage)
     {
         if (owner < 0 || owner >= MAX_PLAYERS || id < 0 || count >= 35) return;

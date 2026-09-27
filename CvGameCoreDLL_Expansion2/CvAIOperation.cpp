@@ -9,6 +9,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingRules.h"
 #include "CvStackingDiagnostics.h"
+#include "CvStackingAI.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -259,18 +260,21 @@ int CvAIOperation::GetGatherTolerance(CvArmyAI* pArmy, CvPlot* pPlot) const
 		if (IsNavalOperation() && !pArmy->IsAllOceanGoing() && pLoopPlot->isDeepWater())
 			continue;
 
-		if (pLoopPlot->canPlaceCombatUnit(GetOwner()))
-  {
-   const DomainTypes domain = IsNavalOperation() ? DOMAIN_SEA : DOMAIN_LAND;
-   int occupied = 0;
-   for (int j = 0; j < pLoopPlot->getNumUnits(); ++j)
-   {
-    const CvUnit* unit = pLoopPlot->getUnitByIndex(j);
-    if (unit && unit->getOwner() == GetOwner() && unit->IsCombatUnit() && unit->getDomainType() == domain && !unit->isCargo() && !unit->isDelayedDeath() && !unit->IsStackingUnit())
-     ++occupied;
-   }
-   iValidPlotsNearby += CvStacking::IsEnabled() ? max(0, CvStacking::GetCapacity(GetOwner(), domain, pLoopPlot->isCity()) - occupied) : 1;
-  }
+		const DomainTypes domain = IsNavalOperation() ? DOMAIN_SEA : DOMAIN_LAND;
+		int otherOccupants = 0, assembledHere = 0;
+		for (int j=0;j<pLoopPlot->getNumUnits();++j)
+		{
+			const CvUnit* unit=pLoopPlot->getUnitByIndex(j);
+			if (!unit || unit->getOwner()!=GetOwner() || !unit->IsCombatUnit() || unit->getDomainType()!=domain || unit->isCargo() || unit->isDelayedDeath() || unit->IsStackingUnit()) continue;
+			if (unit->getArmyID()==pArmy->GetID()) ++assembledHere; else ++otherOccupants;
+		}
+		if (CvStacking::IsEnabled())
+		{
+			// Compare total usable capacity with the total army, including members already here.
+			if (pLoopPlot->canPlaceCombatUnit(GetOwner()) || assembledHere>0)
+				iValidPlotsNearby += max(0,CvStacking::GetCapacity(GetOwner(),domain,pLoopPlot->isCity())-otherOccupants);
+		}
+		else if (pLoopPlot->canPlaceCombatUnit(GetOwner())) ++iValidPlotsNearby;
 	}
 
 	// Find more valid plots than units?
@@ -1545,6 +1549,12 @@ bool CvAIOperationMilitary::CheckTransitionToNextStage()
 	CvArmyAI* pThisArmy = GetArmy(0);
 	if(!pThisArmy)
 		return false;
+	if (CvStackingAI::AssemblyStalled(this,pThisArmy))
+	{
+		LogOperationSpecialMessage("Assembly stalled; releasing units for reassignment");
+		SetToAbort(AI_ABORT_TIMED_OUT);
+		return true;
+	}
 
 	bool bStateChanged = false;
 	switch( pThisArmy->GetArmyAIState() )
@@ -1554,8 +1564,9 @@ bool CvAIOperationMilitary::CheckTransitionToNextStage()
 		break;
 	case ARMYAISTATE_WAITING_FOR_UNITS_TO_REINFORCE:
 		{
-			if(OperationalAIHelpers::HaveEnoughUnits(pThisArmy->GetSlotStatus(),0))
+			if(OperationalAIHelpers::HaveEnoughUnits(pThisArmy->GetSlotStatus(),0) || CvStackingAI::ReadyWithAvailableUnits(this,pThisArmy))
 			{
+				m_viListOfUnitsWeStillNeedToBuild.clear();
 				pThisArmy->SetArmyAIState(ARMYAISTATE_WAITING_FOR_UNITS_TO_CATCH_UP);
 				m_eCurrentState = AI_OPERATION_STATE_GATHERING_FORCES;
 				LogOperationSpecialMessage("Transition to gathering stage");
@@ -1567,7 +1578,8 @@ bool CvAIOperationMilitary::CheckTransitionToNextStage()
 			float fX = 0;
 			float fY = 0;
 			CvPlot* pCoM = pThisArmy->GetCenterOfMass(true,&fX,&fY);
-			if (pCoM && fX < iGatherTolerance && fY < iGatherTolerance && GetMusterPlot() && GetTargetPlot())
+			const int varianceLimit = CvStackingAI::Enabled(m_eOwner) ? iGatherTolerance*iGatherTolerance : iGatherTolerance;
+			if (pCoM && fX < varianceLimit && fY < varianceLimit && GetMusterPlot() && GetTargetPlot())
 			{
 				//be a bit careful, don't have units hanging around just anywhere
 				//also don't update too frequently, because it interferes with the "progress to checkpoint" logic
@@ -1586,7 +1598,8 @@ bool CvAIOperationMilitary::CheckTransitionToNextStage()
 			float fX = 0;
 			float fY = 0;
 			CvPlot* pCoM = pThisArmy->GetCenterOfMass(true,&fX,&fY);
-			if (fX < iGatherTolerance && fY < iGatherTolerance)
+			const int varianceLimit = CvStackingAI::Enabled(m_eOwner) ? iGatherTolerance*iGatherTolerance : iGatherTolerance;
+			if (pCoM && fX < varianceLimit && fY < varianceLimit)
 			{
 				//put the muster plot where our units are and go straight to movement phase
 				//this should only happen once ...
@@ -3212,9 +3225,18 @@ bool OperationalAIHelpers::IsSlotRequired(PlayerTypes ePlayer, const OperationSl
 
 int OperationalAIHelpers::IsUnitSuitableForRecruitment(CvUnit* pLoopUnit, const ReachablePlots& turnsFromMuster, CvPlot* pTarget, bool bMustEmbark, bool bMustBeDeepWaterNaval, const vector<pair<size_t,CvFormationSlotEntry>>& availableSlots)
 {
+	if (!pLoopUnit) return -1;
+	if (CvStackingAI::RecruitmentBlocked(pLoopUnit,pTarget))
+	{
+		CvStackingDiagnostics::Record(2,pLoopUnit->getOwner(),"OP_RECRUIT_FILTER","unit=%d reason=failed_assignment_cooldown",pLoopUnit->GetID());
+		return -1;
+	}
 	//otherwise engaged?
 	if (!pLoopUnit->canUseForAIOperation())
+	{
+		CvStackingDiagnostics::Record(2,pLoopUnit->getOwner(),"OP_RECRUIT_FILTER","unit=%d army=%d reason=committed_or_local_defense",pLoopUnit->GetID(),pLoopUnit->getArmyID());
 		return -1;
+	}
 
 	//don't recruit if currently healing
 	if (pLoopUnit->shouldHeal(false))

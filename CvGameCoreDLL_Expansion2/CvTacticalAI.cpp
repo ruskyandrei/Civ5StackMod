@@ -6,6 +6,7 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingAI.h"
 #include "CvStackingRules.h"
 #include "CvDangerPlots.h"
 #include "CvUnitCombat.h"
@@ -1497,6 +1498,44 @@ void CvTacticalAI::PlotGarrisonMoves(int iNumTurnsAway)
 		if (pEnemyPlot)
 			pCity->rangeStrike(pEnemyPlot->getX(), pEnemyPlot->getY());
 
+		if (CvStackingAI::Enabled(m_pPlayer->GetID()))
+		{
+			// A city may hold several units but only its assessed defenders are reserved.
+			// Do not upgrade/move units while iterating its mutable unit list.
+			vector<int> retained;
+			for (int i = 0; i < pPlot->getNumUnits(); ++i)
+			{
+				CvUnit* defender = pPlot->getUnitByIndex(i);
+				if (!defender || defender->getOwner()!=m_pPlayer->GetID() || defender->getArmyID()!=-1 || defender->TurnProcessed()) continue;
+				if (CvStackingAI::RetainCityUnit(defender)) retained.push_back(defender->GetID());
+			}
+			CvUnit* candidate = FindUnitForThisMove(AI_TACTICAL_GARRISON, pPlot, iNumTurnsAway);
+			if (candidate)
+			{
+				const int candidateID = candidate->GetID();
+				const int from = candidate->plot()->GetPlotIndex();
+				const int turns = ExecuteMoveToPlot(candidate,pPlot,false);
+				// A move may process/upgrade the unit even with bSetProcessed=false.
+				CvUnit* moved = m_pPlayer->getUnit(candidateID);
+				const int after = moved && moved->plot() ? moved->plot()->GetPlotIndex() : -1;
+				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"GARRISON_ASSIGN","city=%d unit=%d from=%d after=%d result=%d present=%d",pCity->GetID(),candidateID,from,after,turns,moved!=NULL);
+				if (moved && !moved->isDelayedDeath() && !moved->TurnProcessed() && turns!=INT_MAX && after!=from) UnitProcessed(candidateID);
+			}
+			// Re-evaluate after arrival: release an old defender when the new one is adequate.
+			for (size_t i=0;i<retained.size();++i)
+			{
+				CvUnit* defender=m_pPlayer->getUnit(retained[i]);
+				if (!defender || !CvStackingAI::RetainCityUnit(defender)) continue;
+				TacticalAIHelpers::PerformOpportunityAttack(defender,false);
+				defender=m_pPlayer->getUnit(retained[i]);
+				if (!defender || defender->isDelayedDeath()) continue;
+				defender->PushMission(CvTypes::getMISSION_SKIP());
+				CvStackingDiagnostics::Record(2,m_pPlayer->GetID(),"CITY_RETAIN","city=%d unit=%d reason=defense_requirement",pCity->GetID(),defender->GetID());
+				UnitProcessed(defender->GetID()); // may upgrade/delete the old unit; no dereference afterward
+			}
+			continue;
+		}
+
 		// ignore core cities here (handled by homeland ai)
 		if (!pCity->isBorderCity() && !pCity->GetCityCitizens()->AnyPlotBlockaded() && !m_pPlayer->GetMilitaryAI()->IsExposedToEnemy(pCity,NO_PLAYER))
 			continue;
@@ -1996,12 +2035,22 @@ void CvTacticalAI::PlotReinforcementMoves(CvTacticalDominanceZone* pTargetZone)
 
 	//sometimes we do not need further reinforcement - should we check whether we still need siege units specifically?
 	bool bNeedMeleeOnly = false;
+	bool bNeedSiegeOnly = false;
 	if (pTargetZone->GetOverallDominanceFlag() == TACTICAL_DOMINANCE_FRIENDLY && pTargetZone->GetRangedDominanceFlag(100) == TACTICAL_DOMINANCE_FRIENDLY)
 	{
 		if (pTargetZone->GetFriendlyMeleeStrength() == 0) //get in melee units to capture a city!
 			bNeedMeleeOnly = true;
-		else
-			return;
+		else if (CvStackingAI::Enabled(m_pPlayer->GetID()) && !pTargetZone->IsWater() && m_pPlayer->IsAtWarWith(pZoneCity->getOwner()))
+		{
+			int siege = 0, loop = 0;
+			for (CvUnit* unit=m_pPlayer->firstUnit(&loop);unit;unit=m_pPlayer->nextUnit(&loop))
+				if (!unit->isDelayedDeath() && !unit->isEmbarked() && unit->AI_getUnitAIType()==UNITAI_CITY_BOMBARD &&
+					plotDistance(*unit->plot(),*pZoneCity->plot())<=TACTICAL_COMBAT_MAX_TARGET_DISTANCE) ++siege;
+			bNeedSiegeOnly = siege<CvStacking::GetInt("AICityAssaultMinimumSiege",1);
+			if (!bNeedSiegeOnly) return;
+			CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"SIEGE_REINFORCE","city=%d siege=%d reason=missing_bombard_role",pZoneCity->GetID(),siege);
+		}
+		else return;
 	}
 
 	//sometimes it's pointless, too far out
@@ -2024,6 +2073,8 @@ void CvTacticalAI::PlotReinforcementMoves(CvTacticalDominanceZone* pTargetZone)
 			CvUnit* pUnit = pPlot->getUnitByIndex(i);
 			if (pUnit->getOwner()==m_pPlayer->GetID() && pUnit->canUseForTacticalAI())
 			{
+				if (CvStackingAI::Enabled(m_pPlayer->GetID()) && CvStackingAI::RetainCityUnit(pUnit)) continue;
+				if (bNeedSiegeOnly && pUnit->AI_getUnitAIType()!=UNITAI_CITY_BOMBARD) continue;
 				CvTacticalDominanceZone* pUnitZone = GetTacticalAnalysisMap()->GetZoneByPlot(pUnit->plot());
 				if (pUnitZone && pUnitZone != pTargetZone)
 				{
@@ -4423,7 +4474,7 @@ CvPlot* CvTacticalAI::GetBestRepositionPlot(CvUnit* pUnit, CvPlot* plotTarget, i
 		return NULL;
 
 	//don't pull units out of cities for repositioning
-	if (pUnit->IsGarrisoned() && pUnit->getDomainType() != DOMAIN_SEA && pUnit->plot()->getPlotCity()->NeedsGarrison())
+	if (CvStackingAI::Enabled(pUnit->getOwner()) ? CvStackingAI::RetainCityUnit(pUnit) : (pUnit->IsGarrisoned() && pUnit->getDomainType() != DOMAIN_SEA && pUnit->plot()->getPlotCity()->NeedsGarrison()))
 		return NULL;
 
 	ReachablePlots reachablePlots = pUnit->GetAllPlotsInReachThisTurn(true, true, false);
@@ -4563,6 +4614,12 @@ CvUnit* CvTacticalAI::FindUnitForThisMove(AITacticalMove eMove, CvPlot* pTarget,
 				continue;
 
 			if (pLoopUnit->IsCoveringFriendlyCivilian())
+				continue;
+
+			// Share city retention with operation recruitment and avoid redundant garrison orders.
+			if (CvStackingAI::Enabled(m_pPlayer->GetID()) &&
+				(CvStackingAI::RetainCityUnit(pLoopUnit) ||
+				(eMove==AI_TACTICAL_GARRISON && !CvStackingAI::UsefulGarrison(pLoopUnit,pTarget->getPlotCity()))))
 				continue;
 
 			//performance optimization ... careful because zero is a valid turn value
@@ -5961,7 +6018,7 @@ bool TacticalAIHelpers::PerformRangedOpportunityAttack(CvUnit* pUnit, bool bAllo
 
 	CvPlot* pBasePlot = pUnit->plot();
 	bool bIsAirUnit = pUnit->getDomainType() == DOMAIN_AIR;
-	if (bIsAirUnit || (pUnit->IsGarrisoned() && pUnit->getDomainType() == DOMAIN_LAND && pUnit->plot()->getPlotCity()->NeedsGarrison()))
+	if (bIsAirUnit || (CvStackingAI::Enabled(pUnit->getOwner()) ? CvStackingAI::RetainCityUnit(pUnit) : (pUnit->IsGarrisoned() && pUnit->getDomainType() == DOMAIN_LAND && pUnit->plot()->getPlotCity()->NeedsGarrison())))
 		bAllowMovement = false;
 
 	if (bAllowMovement || pUnit->canMoveAfterAttacking())
@@ -8858,7 +8915,12 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 			: iPlotScoreForEnemyDistanceSeaAttack[eMoveStrategy][iEnemyDistance];
 
 		if (pTestPlot->isFriendlyCity(*pUnit))
-			iPlotScore = 12;
+		{
+			// Rear-city safety is not an objective for every healthy member of a stack.
+			const bool rearSurplus = CvStackingAI::Enabled(pUnit->getOwner()) && iEnemyDistance>=3 &&
+				(!pUnit->IsGarrisoned() || pUnit->getArmyID()!=-1) && iCurrentHealth*100>=pUnit->GetMaxHitPoints()*CvStacking::GetInt("AIRearCityHealthyPercent",70);
+			iPlotScore = rearSurplus ? CvStacking::GetInt("AIRearCityPlotScore",6) : 12;
+		}
 		// wounded units and scouts can go wherever as long as they don't die (danger checked later)
 		else if (iCurrentHealth < gMinHpForTactsim || pUnit->getUnitInfo().GetDefaultUnitAIType() == UNITAI_EXPLORE)
 			iPlotScore = 12;

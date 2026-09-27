@@ -136,6 +136,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="CvStackingRules.cpp" />
+    <ClCompile Include="CvStackingAI.cpp" />
     <ClCompile Include="CvStackingDiagnostics.cpp" />
     <ClCompile Include="CvStackMovement.cpp" />
     <ClCompile Include="CustomMods.cpp">
@@ -758,6 +759,8 @@
   <ItemGroup>
     <ClInclude Include="..\CvGameCoreDLLUtil\include\CvEnums.h" />
     <ClInclude Include="CvStackingRules.h" />
+    <ClInclude Include="CvStackingAI.h" />
+    <ClInclude Include="CvStackingAIPolicy.h" />
     <ClInclude Include="CvStackingDiagnostics.h" />
     <ClInclude Include="CvStackMovement.h" />
     <ClInclude Include="CustomMods.h" />

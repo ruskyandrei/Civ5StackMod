@@ -87,4 +87,25 @@ class ParserTests(unittest.TestCase):
   target=self.root/'summary.json'
   with redirect_stdout(io.StringIO()):self.assertEqual(mod.main([str(self.root),'--output',str(target)]),0)
   self.assertTrue(target.is_file())
+ def test_military_outcomes_are_movements_not_attempts(self):
+  text=header()+row('REINFORCEMENT','unit=4 from=1 after=2 goal=9 status=moving')+row('REINFORCEMENT','unit=4 from=2 after=8 goal=9 status=arrived',turn=11)
+  text+=row('REINFORCEMENT','unit=5 reason=unsafe_endpoint')+row('REINFORCEMENT','unit=6 status=no_progress')+row('REINFORCEMENT','unit=7 status=removed_during_move')
+  text+=row('GARRISON_ASSIGN','city=2 unit=5 from=2 after=2 present=1')+row('GARRISON_ASSIGN','city=2 unit=6 from=3 after=2 present=1')+row('GARRISON_ASSIGN','city=2 unit=7 from=3 after=-1 present=0')
+  self.write('Stacking-military.log',text);p=self.parse()['runs'][0]['military']['players']['1']
+  self.assertEqual(p['reinforcement_units'],[4]);self.assertEqual(p['arriving_units'],[4]);self.assertEqual(p['reinforcement_outcomes']['no_progress'],1)
+  self.assertEqual(p['garrison_outcomes'],{'absent_after_order':1,'moved':1,'unchanged_position':1})
+ def test_military_city_and_operation_player_identity(self):
+  text=header()+row('CITY_DEFENSE','city=2 needStrength=0')+row('CITY_DEFENSE','city=2 needStrength=99',player=2)
+  text+=row('CITY_DEFENSE','city=2 needStrength=20',turn=11)+row('OPERATION_ASSEMBLY','operation=6 stageAge=15 idle=12 recover=1')
+  text+=row('ASSEMBLY_STALL','army=6 unit=4 action=repath')+row('ASSEMBLY_STALL','army=6 unit=4 action=release')
+  text+=row('OP_RECRUIT_FILTER','unit=4 reason=failed_assignment_cooldown')+row('OPERATION_READINESS','operation=8 ready=0')+row('OPERATION_READINESS','operation=8 ready=1')
+  text+=row('DECISION_SUMMARY','phase=after_first_unit_AI_pass combat=40 inCities=6')+row('UNIT_DECISION','unit=4 unassigned=1')
+  self.write('Stacking-military.log',text);players=self.parse()['runs'][0]['military']['players'];p=players['1']
+  self.assertEqual(p['latest_city_defense']['2']['fields']['needStrength'],20);self.assertEqual(players['2']['latest_city_defense']['2']['fields']['needStrength'],99)
+  self.assertEqual(p['maximum_assembly_idle'],12);self.assertEqual(p['maximum_assembly_age'],15);self.assertEqual(p['assembly_actions'],{'operation_recovery':1,'release':1,'repath':1})
+  self.assertEqual(p['readiness_outcomes'],{'not_ready':1,'ready':1});self.assertEqual(p['recruitment_reasons']['failed_assignment_cooldown'],1)
+  self.assertEqual(len(p['decision_samples']),1);self.assertEqual(p['unit_decision_samples'],1)
+ def test_old_logs_have_no_invented_military_observations(self):
+  self.write('Stacking-old.log',header()+row('SUMMARY','units=12'))
+  m=self.parse()['runs'][0]['military'];self.assertEqual(m['players'],{});self.assertIn('not final end-turn',m['interpretation'])
 if __name__=='__main__':unittest.main(verbosity=2)

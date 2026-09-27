@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingAI.h"
 #include "CvUnit.h"
 #include "CvStackingRules.h"
 #include "CvDangerPlots.h"
@@ -7478,7 +7479,7 @@ bool CvUnit::canUseForAIOperation() const
 	CvPlayer& kPlayer = GET_PLAYER(getOwner());
 
 	//do not poach important garrisons
-	if (IsGarrisoned() && GetGarrisonedCity()->NeedsGarrison())
+	if (CvStackingAI::Enabled(getOwner()) ? (CvStackingAI::RetainCityUnit(this) || IsCoveringFriendlyCivilian()) : (IsGarrisoned() && GetGarrisonedCity()->NeedsGarrison()))
 		return false;
 
 	//check if it's a city zone! don't care about no-mans land.

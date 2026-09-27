@@ -6,6 +6,9 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingAI.h"
+#include "CvStackingRules.h"
+#include "CvStackingDiagnostics.h"
 #include "CvGameCoreUtils.h"
 #include "CvHomelandAI.h"
 #include "CvBuilderTaskingAI.h"
@@ -1646,7 +1649,9 @@ void CvHomelandAI::PlotPatrolMoves()
 	for(list<int>::iterator it = m_CurrentTurnUnits.begin(); it != m_CurrentTurnUnits.end(); ++it)
 	{
 		CvUnit* pUnit = m_pPlayer->getUnit(*it);
-		if(pUnit && pUnit->IsCombatUnit() && pUnit->getDomainType() != DOMAIN_AIR && (!pUnit->IsGarrisoned() || pUnit->getDomainType() != DOMAIN_LAND || !pUnit->plot()->getPlotCity()->NeedsGarrison()) && pUnit->AI_getUnitAIType() != UNITAI_CITY_BOMBARD)
+		if(pUnit && pUnit->IsCombatUnit() && pUnit->getDomainType() != DOMAIN_AIR &&
+			(CvStackingAI::Enabled(m_pPlayer->GetID()) ? !CvStackingAI::RetainCityUnit(pUnit) : (!pUnit->IsGarrisoned() || pUnit->getDomainType() != DOMAIN_LAND || !pUnit->plot()->getPlotCity()->NeedsGarrison())) &&
+			(CvStackingAI::Enabled(m_pPlayer->GetID()) || pUnit->AI_getUnitAIType() != UNITAI_CITY_BOMBARD))
 		{
 			CvHomelandUnit unit;
 			unit.SetID(pUnit->GetID());
@@ -1700,8 +1705,12 @@ void CvHomelandAI::ExecutePatrolMoves()
 	for(CHomelandUnitArray::iterator itUnit = m_CurrentMoveUnits.begin(); itUnit != m_CurrentMoveUnits.end(); ++itUnit)
 	{
 		CvUnit* pUnit = m_pPlayer->getUnit(itUnit->GetID());
-		if(!pUnit || pUnit->IsCivilianUnit() || pUnit->getDomainType()==DOMAIN_AIR)
+		if(!pUnit || pUnit->IsCivilianUnit() || pUnit->getDomainType()==DOMAIN_AIR || pUnit->TurnProcessed())
 			continue;
+
+		const int reserveID=pUnit->GetID();
+		if (CvStackingAI::TryReinforceRearUnit(pUnit)) { UnitProcessed(reserveID); continue; }
+		if (pUnit->AI_getUnitAIType()==UNITAI_CITY_BOMBARD) continue;
 
 		//the target we're looking at depends on the domain of the unit
 		vector<SPatrolTarget>& vTargets = (pUnit->getDomainType()==DOMAIN_SEA) ? vWaterTargets : vLandTargets;
@@ -1719,7 +1728,7 @@ void CvHomelandAI::ExecutePatrolMoves()
 			{
 				//stay in the current zone if it's one of the targets
 				CvTacticalDominanceZone* pTargetZone = m_pPlayer->GetTacticalAI()->GetTacticalAnalysisMap()->GetZoneByPlot(vTargets[i].pTarget);
-				if (pTargetZone == pCurrentZone)
+				if (pTargetZone == pCurrentZone && !CvStackingAI::Enabled(m_pPlayer->GetID()))
 				{
 					pBestCity = vTargets[i].pTarget;
 					pWorstEnemy = vTargets[i].pWorstEnemy;
@@ -1727,11 +1736,12 @@ void CvHomelandAI::ExecutePatrolMoves()
 				}
 
 				//otherwise move to the zone with the highest threat score, using distance as tiebreaker
-				if (vTargets[i].iThreatLevel > iHighestThreat || (vTargets[i].iThreatLevel == iHighestThreat  && itPlot->iNormalizedDistanceRaw < iCurrentDistance))
+				const int adjustedThreat=vTargets[i].iThreatLevel + ((pTargetZone==pCurrentZone && CvStackingAI::Enabled(m_pPlayer->GetID())) ? CvStacking::GetInt("AIPatrolCurrentZoneBonus",20) : 0);
+				if (adjustedThreat > iHighestThreat || (adjustedThreat == iHighestThreat && itPlot->iNormalizedDistanceRaw < iCurrentDistance))
 				{
 					pBestCity = vTargets[i].pTarget;
 					pWorstEnemy = vTargets[i].pWorstEnemy;
-					iHighestThreat = vTargets[i].iThreatLevel;
+					iHighestThreat = adjustedThreat;
 					iCurrentDistance = itPlot->iNormalizedDistanceRaw;
 				}
 			}
@@ -6485,7 +6495,7 @@ bool CvHomelandAI::FindUnitsForThisMove(AIHomelandMove eMove)
 				continue;
 
 			//Don't poach garrisons
-			if (pLoopUnit->IsGarrisoned() && pLoopUnit->plot()->isCity() && pLoopUnit->plot()->getPlotCity()->NeedsGarrison())
+			if (CvStackingAI::Enabled(m_pPlayer->GetID()) ? CvStackingAI::RetainCityUnit(pLoopUnit) : (pLoopUnit->IsGarrisoned() && pLoopUnit->plot()->isCity() && pLoopUnit->plot()->getPlotCity()->NeedsGarrison()))
 				continue;
 
 			bool bSuitableUnit = false;

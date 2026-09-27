@@ -30671,7 +30671,7 @@ CvPlot* CvCity::GetPlotForNewUnit(UnitTypes eUnitType, bool bAllowCenterPlot) co
 
 	//check city plot and adjacent plots
 	vector<CvPlot*> validChoices;
-	for (int i = 0; i < RING1_PLOTS; i++)
+	for (int i = bAllowCenterPlot ? 0 : 1; i < RING1_PLOTS; i++)
 	{
 		CvPlot* pPlot = iterateRingPlots(plot(), aiShuffle[uShuffleType][i]);
 		if (pPlot == NULL)

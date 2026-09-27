@@ -31,8 +31,8 @@ Close Civ V before deployment. Stage the chosen DLL and its matching PDB explici
 $python = 'C:\Users\rusit\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
 & $python work\stage_vp.py --dll '<build directory>\CvGameCore_Expansion2.dll' --pdb '<build directory>\CvGameCore_Expansion2.pdb'
 & $python work\stage_vp.py --verify
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\work\deploy-vp.ps1 -ValidateOnly
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\work\deploy-vp.ps1
+pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\work\deploy-vp.ps1 -ValidateOnly
+pwsh.exe -NoProfile -ExecutionPolicy Bypass -File .\work\deploy-vp.ps1
 ```
 
 Staging reconstructs the FullEUI package from project file lists and refreshes checksums only in staged manifests. Deployment validates the prepared package, archives replaced mapped mod/DLC/cache content under `work/backups`, enables test logging, and verifies every installed file hash. It refuses to run while the game is open. It preserves saves, unrelated mods and current graphics preferences. Record `work/last-deployment-path.txt` and the result JSON when associating runtime evidence with a DLL.

@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingAI.h"
+#include "CvStackingDiagnostics.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -416,13 +418,15 @@ void CvArmyAI::UpdateCheckpointTurnsAndRemoveBadUnits()
 				m_FormationEntries[iI].SetCurrentTurnsToCheckpoint(iTurnsToReachCheckpoint);
 
 				//if we're already moving to target, the current army plot is moving, so we cannot check progress against ...
-				if (!m_FormationEntries[iI].IsMakingProgressTowardsCheckpoint())
+				const bool stackStall = CvStackingAI::ArmyUnitStalled(pUnit,this,pCurrentArmyPlot,iTurnsToReachCheckpoint);
+				if (stackStall || (!CvStackingAI::Enabled(m_eOwner) && !m_FormationEntries[iI].IsMakingProgressTowardsCheckpoint()))
 				{
 					CvString strMsg;
 					strMsg.Format("Removing %s %d from army %d because no progress to checkpoint (%d:%d). ETA %d; prev %d; prev %d", 
 						pUnit->getName().c_str(), m_FormationEntries[iI].GetUnitID(), GetID(), pCurrentArmyPlot->getX(), pCurrentArmyPlot->getY(),
 						m_FormationEntries[iI].GetTurnsToCheckpoint(0), m_FormationEntries[iI].GetTurnsToCheckpoint(1), m_FormationEntries[iI].GetTurnsToCheckpoint(2));
 					pOperation->LogOperationSpecialMessage(strMsg);
+					CvStackingAI::DelayRecruitment(pUnit,pOperation->GetTargetPlot());
 					RemoveUnit(m_FormationEntries[iI].GetUnitID(),false);
 				}
 			}
