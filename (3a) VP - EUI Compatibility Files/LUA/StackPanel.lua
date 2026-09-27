@@ -262,6 +262,74 @@ local function buildRows()
     layoutPanel()
     if active then updateHover() end
 end
+-- Diagnostics is independent of the selected stack and starts no Lua observer.
+-- Use the existing Additional Information menu so the normal roster stays unchanged.
+local diagnosticsVisible = false
+local diagnosticNames = { [0] = "Off", [1] = "Summary", [2] = "Verbose" }
+local function diagnosticsAvailable()
+    return Game.GetStackingDiagnosticsLevel and Game.SetStackingDiagnosticsLevel and Game.GetStackingDiagnosticsStatus
+end
+local function refreshDiagnostics()
+    if not diagnosticsAvailable() then
+        diagnosticsVisible = false
+        Controls.StackDiagnostics:SetHide(true)
+        return
+    end
+    local level = Game.GetStackingDiagnosticsLevel()
+    Controls.StackDiagnosticsState:SetText("Current: " .. (diagnosticNames[level] or tostring(level)))
+    Controls.StackDiagnosticsOff:SetDisabled(level == 0)
+    Controls.StackDiagnosticsSummary:SetDisabled(level == 1)
+    Controls.StackDiagnosticsVerbose:SetDisabled(level == 2)
+    local message = Game.GetStackingDiagnosticsStatus()
+    Controls.StackDiagnosticsLog:SetText(message)
+    Controls.StackDiagnosticsLog:SetToolTipString(message)
+    Controls.StackDiagnosticsRestart:SetText("Reopening a game restores the XML default: " .. (diagnosticNames[setting("DiagnosticsLevel", 0)] or "Off") .. ".")
+    local buttonsY = 118 + (Controls.StackDiagnosticsLog:GetSizeY() or 36) + 12
+    Controls.StackDiagnosticsOff:SetOffsetVal(16, buttonsY)
+    Controls.StackDiagnosticsSummary:SetOffsetVal(122, buttonsY)
+    Controls.StackDiagnosticsVerbose:SetOffsetVal(228, buttonsY)
+    Controls.StackDiagnosticsRestart:SetOffsetVal(16, buttonsY + 40)
+    Controls.StackDiagnostics:SetSizeVal(342, buttonsY + 40 + (Controls.StackDiagnosticsRestart:GetSizeY() or 32) + 16)
+end
+local function closeDiagnostics()
+    diagnosticsVisible = false
+    Controls.StackDiagnostics:SetHide(true)
+end
+local function openDiagnostics()
+    if not diagnosticsAvailable() or inCityScreen then return end
+    if active then stopMode(); status = "" end
+    diagnosticsVisible = true
+    refreshDiagnostics()
+    Controls.StackDiagnostics:SetHide(false)
+end
+local function setDiagnostics(level)
+    if not diagnosticsAvailable() then return end
+    Game.SetStackingDiagnosticsLevel(level)
+    refreshDiagnostics()
+end
+local function gatherDiagnostics(entries)
+    if diagnosticsAvailable() then
+        entries[#entries + 1] = {
+            text = "Stack diagnostics", art = "",
+            tip = "Choose Off, Summary or Verbose diagnostic logging.",
+            call = openDiagnostics
+        }
+    end
+end
+Controls.StackDiagnosticsOff:RegisterCallback(Mouse.eLClick, function() setDiagnostics(0) end)
+Controls.StackDiagnosticsSummary:RegisterCallback(Mouse.eLClick, function() setDiagnostics(1) end)
+Controls.StackDiagnosticsVerbose:RegisterCallback(Mouse.eLClick, function() setDiagnostics(2) end)
+Controls.StackDiagnosticsClose:RegisterCallback(Mouse.eLClick, closeDiagnostics)
+LuaEvents.AdditionalInformationDropdownGatherEntries.Add(gatherDiagnostics)
+LuaEvents.RequestRefreshAdditionalInformationDropdownEntries()
+ContextPtr:SetInputHandler(function(uiMsg, wParam)
+    if diagnosticsVisible and uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_ESCAPE then
+        closeDiagnostics()
+        return true
+    end
+    return false
+end)
+
 local function beginMove()
     if active then stopMode(); status = ""; return end
     local unit = UI.GetHeadSelectedUnit()
@@ -307,7 +375,7 @@ Events.SerialEventUnitInfoDirty.Add(function() refreshNeeded = true end)
 Events.UnitVisibilityChanged.Add(function() refreshNeeded = true end)
 Events.UnitStateChangeDetected.Add(function() refreshNeeded = true end)
 Events.HexFOWStateChanged.Add(function() refreshNeeded = true end)
-Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; stopMode(); refreshNeeded = true end)
+Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); stopMode(); refreshNeeded = true end)
 Events.SerialEventExitCityScreen.Add(function() inCityScreen = false; refreshNeeded = true end)
 Events.UnitSelectionChanged.Add(function(ownerID, unitID, x, y, z, isSelected)
     if active and isSelected and (ownerID ~= Game.GetActivePlayer() or unitID ~= selectedID) then
@@ -320,7 +388,7 @@ Events.InterfaceModeChanged.Add(function(oldMode, newMode)
     if active and newMode ~= InterfaceModeTypes.INTERFACEMODE_SELECTION then stopMode(); status = "" end
 end)
 Events.UnitMoveQueueChanged.Add(function() refreshNeeded = true end)
-Events.GameplaySetActivePlayer.Add(function() stopMode(); pending = nil; status = ""; refreshNeeded = true end)
+Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); stopMode(); pending = nil; status = ""; refreshNeeded = true end)
 Events.ActivePlayerTurnEnd.Add(function() stopMode(); pending = nil; status = "" end)
 ContextPtr:SetUpdate(function(delta)
     if refreshNeeded then refreshNeeded = false; buildRows() end
@@ -350,4 +418,5 @@ print("Stack roster and tile-local movement UI loaded")
 
 ContextPtr:SetShutdown(function()
     if active then LuaEvents.StackMoveModeChanged(false) end
+    LuaEvents.AdditionalInformationDropdownGatherEntries.Remove(gatherDiagnostics)
 end)

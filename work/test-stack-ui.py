@@ -18,7 +18,7 @@ end
 Controls=setmetatable({}, {__index=function(t,k) local c=control(); rawset(t,k,c); return c end})
 local function event()
     local handlers={}
-    return setmetatable({Add=function(f) handlers[#handlers+1]=f end},
+    return setmetatable({Add=function(f) handlers[#handlers+1]=f end, Remove=function(f) for i=#handlers,1,-1 do if handlers[i]==f then table.remove(handlers,i) end end end},
         {__call=function(_,...) for _,f in ipairs(handlers) do f(...) end end})
 end
 Events=setmetatable({}, {__index=function(t,k) local e=event(); rawset(t,k,e); return e end})
@@ -101,6 +101,7 @@ function ContextPtr:BuildInstanceForControl(name,instance,parent)
     created[#created+1]=instance
 end
 function ContextPtr:SetUpdate(f) self.update=f end
+function ContextPtr:SetInputHandler(f) self.input=f end
 function ContextPtr:SetShutdown(f) self.shutdown=f end
 """)
 src=Path(__file__).parent.parent / "(3a) VP - EUI Compatibility Files/LUA/StackPanel.lua"

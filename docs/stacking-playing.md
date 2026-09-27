@@ -60,6 +60,14 @@ Each member must be able to arrive this turn under its own normal movement rules
 
 Aircraft keep their normal rebase commands. Cargo travels with an eligible carrier without receiving an independent movement order. Move Stack does not issue an attack or declare war. Revealed threats or changing occupancy can stop a unit en route; the result notification distinguishes arrivals, units that stayed and interrupted moves. Squad membership is preserved. Existing linked movement is released when these individual orders are issued.
 
+## Diagnostics
+
+Open the top-right **Additional Information** menu and choose **Stack diagnostics**. The control is available without selecting a unit or opening a stack roster. Choose **Off**, **Summary** or **Verbose**; the panel shows the current level and the native logger's status, including the log location or an output error. Escape or Close dismisses the panel.
+
+Logging defaults to Off. Summary records turn diagnostics; Verbose adds detail. This changes logging only and works during normal play or autoplay without injecting a Lua observer. Files use the normal Civ V Logs directory and rotate within configured limits (by default, eight segments of up to 4 MB). Turning logging off keeps files already written.
+
+The selection applies to the currently loaded game session. Loading or reopening a game restores the XML `DiagnosticsLevel` default, so check the displayed level after loading. The panel reports that configured default. Developer console equivalents are `Game.SetStackingDiagnosticsLevel(0)`, `(1)` or `(2)`, `Game.GetStackingDiagnosticsLevel()` and `Game.GetStackingDiagnosticsStatus()`.
+
 ## Editing the rules
 
 Edit these source files, then stage/deploy and restart Civ V into a fresh test game:

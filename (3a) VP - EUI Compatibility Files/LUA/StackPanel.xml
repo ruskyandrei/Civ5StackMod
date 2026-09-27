@@ -16,6 +16,17 @@
     </ScrollPanel>
     <Label ID="StackSummary" Anchor="L,T" Offset="16,148" WrapWidth="326" Font="TwCenMT16"/>
   </Grid>
+  <Grid ID="StackDiagnostics" Anchor="R,T" Offset="22,150" Size="342,278" Padding="0,0" Style="Grid9FrameBlack" ConsumeMouse="1" Hidden="1">
+    <Label Anchor="L,T" Offset="16,12" String="Stack diagnostics"/>
+    <GridButton ID="StackDiagnosticsClose" Anchor="R,T" Offset="10,8" Size="30,28" Style="SmallButton"><Label Anchor="C,C" String="X"/></GridButton>
+    <Label ID="StackDiagnosticsState" Anchor="L,T" Offset="16,42" Font="TwCenMT16" String="Current: Off"/>
+    <Label Anchor="L,T" Offset="16,66" Font="TwCenMT16" WrapWidth="306" String="Summary records turn diagnostics; Verbose adds detail. This controls logging only."/>
+    <Label ID="StackDiagnosticsLog" Anchor="L,T" Offset="16,118" Font="TwCenMT14" WrapWidth="306"/>
+    <GridButton ID="StackDiagnosticsOff" Anchor="L,T" Offset="16,124" Size="96,30" Style="SmallButton" ToolTip="Stop diagnostic logging."><Label Anchor="C,C" String="Off"/></GridButton>
+    <GridButton ID="StackDiagnosticsSummary" Anchor="L,T" Offset="122,124" Size="96,30" Style="SmallButton" ToolTip="Enable summary logging for play or autoplay."><Label Anchor="C,C" String="Summary"/></GridButton>
+    <GridButton ID="StackDiagnosticsVerbose" Anchor="L,T" Offset="228,124" Size="96,30" Style="SmallButton" ToolTip="Enable detailed diagnostics; log files grow faster."><Label Anchor="C,C" String="Verbose"/></GridButton>
+    <Label ID="StackDiagnosticsRestart" Anchor="L,T" Offset="16,220" Font="TwCenMT14" WrapWidth="306" String="Reopening a game restores the XML default: Off."/>
+  </Grid>
   <Container ID="StackScrap" Hidden="1"/>
   <Instance Name="StackMember">
     <GridButton ID="Row" Size="318,38" Style="SmallButton2" ConsumeMouse="1">

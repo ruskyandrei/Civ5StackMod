@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -22,6 +22,7 @@
 #include "CvDiplomacyAI.h"
 #include "CvBarbarians.h"
 #include "CvUnitMovement.h"
+#include "CvStackingDiagnostics.h"
 
 #include <iomanip>
 #include <sstream>
@@ -909,6 +910,7 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 						LogTacticalMessage(strLogString);
 					}
 
+					CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=enemy_dominance", pPlot->getX(), pPlot->getY());
 					continue;
 				}
 			}
@@ -940,6 +942,8 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 							LogTacticalMessage(strLogString);
 						}
 
+						CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=insufficient_damage required=%d expected=%d heal=%d candidates=%u",
+							pPlot->getX(), pPlot->getY(), iRequiredDamage, iExpectedDamagePerTurn, iCityHealRate, (unsigned int)m_CurrentMoveUnits.size());
 						continue;
 					}
 				}
@@ -966,6 +970,7 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 						LogTacticalMessage(strLogString);
 					}
 
+					CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=no_melee required=%d candidates=%u", pPlot->getX(), pPlot->getY(), iRequiredDamage, (unsigned int)m_CurrentMoveUnits.size());
 					continue;
 				}
 
@@ -978,6 +983,8 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 				}
 
 				//finally do the attack. be a bit more careful if we have few melee units
+				CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=attempt required=%d expected=%d candidates=%u melee=%d",
+					pPlot->getX(), pPlot->getY(), iRequiredDamage, iExpectedDamagePerTurn, (unsigned int)m_CurrentMoveUnits.size(), iMeleeCount);
 				ExecuteAttackWithUnits(pPlot, iMeleeCount>2 ? AL_HIGH : AL_MEDIUM);
 
 				// Did it work?  If so, don't need a temporary dominance zone if had one here
@@ -988,6 +995,8 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 				if (FindEmbarkedUnitsAroundTarget(pPlot, 4))
 					ExecuteLandingOperation(pPlot);
 			}
+			else
+				CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=no_eligible_units", pPlot->getX(), pPlot->getY());
 		}
 	}
 }
@@ -2589,6 +2598,8 @@ static bool StackPreferencesEnabled()
  return CvStacking::IsEnabled() && CvStacking::GetInt("AIEnabled", 1) != 0;
 }
 
+static bool CanApproachInProtectedStack(const CvUnit* unit, const CvPlot* destination, int destinationDanger);
+
 static int StackCollateralWeight()
 {
  return StackPreferencesEnabled() ? CvStacking::GetInt("AIStackCollateralWeight", 100) : 100;
@@ -3364,7 +3375,10 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 
 	//try to improve visibility
 	if (!ExecuteSpotterMove(vUnits,pTargetPlot))
+	{
+		CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "ATTACK_GATE", "target=%d:%d reason=not_visible candidates=%u", pTargetPlot->getX(), pTargetPlot->getY(), (unsigned int)vUnits.size());
 		return false;
+	}
 
 	//first handle air units (including missiles)
 	ExecuteAirSweep(pTargetPlot);
@@ -3445,7 +3459,12 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 		int iDanger = pUnit->GetDanger(pUnit->GetPathEndFirstTurnPlot());
 		int iDangerLimit = (pUnit->IsCanAttack() && pUnit->AI_getUnitAIType()!=UNITAI_CITY_BOMBARD) ? pUnit->GetCurrHitPoints() / 2 : 0;
 		//generals and siege should not even be in fog danger
-		if (iDanger > iDangerLimit)
+		const bool bProtectedApproach = iDanger > iDangerLimit && pUnit->AI_getUnitAIType() == UNITAI_CITY_BOMBARD &&
+			CanApproachInProtectedStack(pUnit, pUnit->GetPathEndFirstTurnPlot(), iDanger);
+		if (pUnit->AI_getUnitAIType() == UNITAI_CITY_BOMBARD && iDanger > iDangerLimit)
+			CvStackingDiagnostics::Record(1, pUnit->getOwner(), "SIEGE_APPROACH", "unit=%d from=%d destination=%d danger=%d limit=%d protectedAccepted=%d",
+				pUnit->GetID(), pUnit->plot()->GetPlotIndex(), pUnit->GetPathEndFirstTurnPlot()->GetPlotIndex(), iDanger, iDangerLimit, bProtectedApproach ? 1 : 0);
+		if (iDanger > iDangerLimit && !bProtectedApproach)
 			continue;
 
 		//embark only when it's safe
@@ -7702,6 +7721,104 @@ static void GetVirtualFriendlyStack(const CvTacticalPosition& position, const Cv
  }
 }
 
+// A same-tile escort counts only when removing eligible melee members would
+// expose this unit to more real forecast damage, and those escorts survive.
+// This also rejects a weak defender or a cavalry-bypassed escort that adds no cover.
+static bool HasSurvivingStackProtection(const CvUnit* unit, const CvPlot* plot,
+ const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
+ const SUnitIDValueContainer& enemyDamage, int /*callerDanger*/)
+{
+ if (!StackPreferencesEnabled() || !unit->IsCombatUnit() || !unit->isNativeDomain(plot))
+  return false;
+ // Some intermediate callers scale danger by aggression. Protection and survival
+ // must compare raw forecasts on both sides, never raw solo against scaled stack.
+ const int protectedDanger = GetCachedStackDanger(unit, plot, candidates, friendlyDamage, enemyDamage);
+ if (protectedDanger >= unit->GetCurrHitPoints() - friendlyDamage.GetValue(unit->GetID()))
+  return false;
+ vector<const CvUnit*> withoutProtectors;
+ bool hasProtector = false;
+ for (size_t i = 0; i < candidates.size(); ++i)
+ {
+  const CvUnit* member = candidates[i];
+  const bool eligible = member && member != unit && member->getOwner() == unit->getOwner() &&
+   member->IsCombatUnit() && !member->IsStackingUnit() && !member->isCargo() && !member->isDelayedDeath() &&
+   !member->IsCanAttackRanged() && member->IsCanDefend() && member->getDomainType() == unit->getDomainType() &&
+   member->isNativeDomain(plot) && member->GetCurrHitPoints() > friendlyDamage.GetValue(member->GetID());
+  if (eligible)
+  {
+   if (GetCachedStackDanger(member, plot, candidates, friendlyDamage, enemyDamage) >=
+    member->GetCurrHitPoints() - friendlyDamage.GetValue(member->GetID()))
+    return false;
+   hasProtector = true;
+  }
+  else if (member)
+   withoutProtectors.push_back(member);
+ }
+ return hasProtector && GetCachedStackDanger(unit, plot, withoutProtectors, friendlyDamage, enemyDamage) > protectedDanger;
+}
+
+static bool CanApproachInProtectedStack(const CvUnit* unit, const CvPlot* destination, int destinationDanger)
+{
+ if (!StackPreferencesEnabled() || !destination || destination == unit->plot() ||
+  !unit->canMoveInto(*destination, CvUnit::MOVEFLAG_DESTINATION))
+  return false;
+ vector<const CvUnit*> before;
+ for (int i = 0; i < destination->getNumUnits(); ++i)
+ {
+  const CvUnit* member = destination->getUnitByIndex(i);
+  if (member && member != unit && member->getOwner() == unit->getOwner() && member->IsCombatUnit() &&
+   !member->isCargo() && !member->isDelayedDeath())
+   before.push_back(member);
+ }
+ if (before.empty())
+  return false;
+ vector<const CvUnit*> after = before;
+ after.push_back(unit);
+ SUnitIDValueContainer noDamage;
+ if (!HasSurvivingStackProtection(unit, destination, after, noDamage, noDamage, destinationDanger) ||
+  destinationDanger > unit->GetDanger(unit->plot()))
+  return false;
+ // Do not improve the siege unit by making an existing member less safe.
+ for (size_t i = 0; i < before.size(); ++i)
+ {
+  const int joinedDanger = GetCachedStackDanger(before[i], destination, after, noDamage, noDamage);
+  if (joinedDanger >= before[i]->GetCurrHitPoints() ||
+   joinedDanger > GetCachedStackDanger(before[i], destination, before, noDamage, noDamage))
+   return false;
+ }
+ return true;
+}
+
+// Geometric encirclement counts occupied passable hexes, never units in a stack.
+// This remains a conservative addition to the live blockade/zone-of-control rules.
+static bool HasVirtualCityEncirclement(const CvTacticalPosition& position, const CvCity* city)
+{
+ CvPlot** neighbors = GC.getMap().getNeighborsUnchecked(city->plot());
+ for (int d = 0; d < NUM_DIRECTION_TYPES; ++d)
+ {
+  const CvPlot* plot = neighbors[d];
+  if (!plot || plot->isImpassable(city->getTeam()))
+   continue;
+  if (plot->isCity())
+   return false;
+  vector<const CvUnit*> members;
+  SUnitIDValueContainer damage;
+  GetVirtualFriendlyStack(position, plot, NULL, 0, members, damage);
+  bool occupied = false;
+  for (size_t i = 0; i < members.size(); ++i)
+  {
+   const CvUnit* member = members[i];
+   if (member && member->getOwner() == position.getPlayer() && member->IsCombatUnit() && !member->isCargo() &&
+    !member->isDelayedDeath() && member->IsCanDefend() && member->isNativeDomain(plot) &&
+    member->GetCurrHitPoints() > damage.GetValue(member->GetID()))
+   { occupied = true; break; }
+  }
+  if (!occupied)
+   return false;
+ }
+ return true;
+}
+
 static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition)
 {
  int iDanger = 0;
@@ -7732,8 +7849,8 @@ static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDa
  if (candidates.size() < 2)
   return 0;
  const vector<CvUnit*> attackers = GET_PLAYER(unit->getOwner()).GetPossibleAttackers(*plot, NO_TEAM);
- if (attackers.empty())
-  return 0;
+ // City bombardment alone can make a protective pair valuable. The forecast
+ // below includes cities; these unit attackers only identify flanking/collateral.
  bool cavalryThreat = false, collateralThreat = false, antiCavalry = false;
  int otherProtectors = 0;
  const CvUnit* vulnerable = NULL;
@@ -7905,7 +8022,9 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		iPrevCityHitPoints = pEnemyCity->GetMaxHitPoints() - pEnemyCity->getDamage() - iPrevCityDamage;
 
 
-		bool bBlockaded = pEnemyCity->IsBlockadedWaterAndLand() || tactPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_BOTH, -1) == pTestPlot->countPassableNeighbors(NO_DOMAIN);
+		bool bBlockaded = pEnemyCity->IsBlockadedWaterAndLand() || (CvStacking::IsEnabled()
+			? HasVirtualCityEncirclement(assumedPosition, pEnemyCity)
+			: tactPlot->getNumAdjacentFriendlies(CvTacticalPlot::TD_BOTH, -1) == pTestPlot->countPassableNeighbors(NO_DOMAIN));
 
 		//but we don't want our melee units to die so take into account self damage and counterattacks
 		if (!bRanged)
@@ -8552,7 +8671,13 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	{
 		//siege units (with limited visibility) should not move there unless covered (the -1 is important)
 		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(DomainForUnit(pUnit), -1) < 2)
-			return INT_MAX;
+		{
+			vector<const CvUnit*> stack;
+			SUnitIDValueContainer damage;
+			GetVirtualFriendlyStack(assumedPosition, pTestPlot, pUnit, iSelfDamage, stack, damage);
+			if (!HasSurvivingStackProtection(pUnit, pTestPlot, stack, damage, assumedPosition.GetUnitDamageDealt(), iDanger))
+				return INT_MAX;
+		}
 		
 		iDanger = max(iMaxHitPoints / 2, iDanger);
 	}
@@ -10019,6 +10144,8 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 			vector<SUnitStats>::iterator toDrop = find_if(availableUnits_w.begin(), availableUnits_w.end(), PrMatchingUnit(itUnit->iUnitID));
 			availableUnits_w.erase(toDrop);
 			finishedUnits.write().push_back(*itUnit);
+			CvStackingDiagnostics::Record(2, getPlayer(), "RECRUIT_DROP", "target=%d:%d unit=%d reason=search_budget importance=%d cap=%d",
+				getTarget()->getX(), getTarget()->getY(), itUnit->iUnitID, itUnit->iImportanceScore, iMaxUnitsToKeep);
 			STacticalAssignment blocked;
 			blocked.init(itUnit->iPlotIndex, itUnit->iPlotIndex, itUnit->iUnitID, itUnit->iMovesLeft, itUnit->eMoveStrategy, A_BLOCKED, GetPrevPlotScore(itUnit->iUnitID, *this));
 			blocked.SetScore(0, 0, 0);
@@ -10157,13 +10284,23 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 		{
 			const STacticalAssignment& other = *gOverAllChoices[iJ].option;
 
-			if (other.iUnitID != iBlockID)
-				continue;
 			if (other.eAssignmentType != A_MOVE && other.eAssignmentType != A_MOVE_DOUBLE)
 				continue;
+			if (other.iUnitID != iBlockID)
+			{
+				// A full stack needs one slot, not one specific occupant. Keep the
+				// existing sorted-choice and one-combo budget, but try other legal exits.
+				const SUnitStats* alternative = getAvailableUnitStats(other.iUnitID);
+				if (!CvStacking::IsEnabled() || !(isCombatUnit(assignment.eMoveType) || isEmbarkedUnit(assignment.eMoveType)) ||
+					!alternative || alternative->iMovesLeft <= 0 || alternative->iPlotIndex != assignment.iToPlotIndex ||
+					other.iFromPlotIndex != assignment.iToPlotIndex || other.iFromPlotIndex == other.iToPlotIndex ||
+					!alternative->pUnit->IsCombatUnit() || alternative->pUnit->IsStackingUnit() || alternative->pUnit->isCargo() ||
+					alternative->pUnit->getDomainType() != eDomain)
+					continue;
+			}
 
 			// Swap: blocker wants to move into our current plot
-			if ((iI < iJ || other.eAssignmentType == A_MOVE_DOUBLE) && assignment.iFromPlotIndex == other.iToPlotIndex)
+			if (other.iUnitID == iBlockID && (iI < iJ || other.eAssignmentType == A_MOVE_DOUBLE) && assignment.iFromPlotIndex == other.iToPlotIndex)
 			{
 				const STacticalAssignment* pLA = getLatestAssignment(other.iUnitID);
 				if (pLA->eAssignmentType == A_MOVE_SWAP)
@@ -11153,6 +11290,21 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 	//i know what you did last summer!
 	itUnit->eLastAssignment = newAssignment.eAssignmentType;
 
+	// Observe pathological history growth before the allocation; never cap gameplay.
+	if (CvStackingDiagnostics::Enabled(1, ePlayer))
+	{
+		const size_t threshold = (size_t)max(0, CvStacking::GetInt("DiagnosticsLongPlanThreshold", 256));
+		const vector<STacticalAssignment>& history = assignedMoves.read();
+		if (threshold > 0 && history.size() >= threshold && history.size() % threshold == 0)
+		{
+			const STacticalAssignment& previous = history.back();
+			CvStackingDiagnostics::Record(1, ePlayer, "LONG_PLAN", "target=%d:%d generation=%u length=%u capacity=%u unit=%d type=%d from=%d to=%d movesBefore=%d movesAfter=%d attacks=%d previousUnit=%d previousType=%d previousFrom=%d previousTo=%d previousMoves=%d",
+				pTargetPlot->getX(), pTargetPlot->getY(), (unsigned int)iGeneration, (unsigned int)history.size(), (unsigned int)history.capacity(),
+				newAssignment.iUnitID, (int)newAssignment.eAssignmentType, newAssignment.iFromPlotIndex, newAssignment.iToPlotIndex,
+				itUnit->iMovesLeft, (int)newAssignment.iRemainingMoves, itUnit->iAttacksLeft, previous.iUnitID, (int)previous.eAssignmentType,
+				previous.iFromPlotIndex, previous.iToPlotIndex, (int)previous.iRemainingMoves);
+		}
+	}
 	//store the assignment
 	assignedMoves.write().push_back(newAssignment);
 
@@ -12991,7 +13143,10 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		//do not use a set for enforcing uniqueness - the iteration order would depend on memory address by default
 		//unfortunately the simulation result sometimes seems to depend on the order of the units being processed ...
 		if (std::find(ourUnits.begin(), ourUnits.end(), pUnit) != ourUnits.end())
+		{
+			CvStackingDiagnostics::Record(2, ePlayer, "RECRUIT_FILTER", "target=%d:%d unit=%d reason=duplicate", pTarget->getX(), pTarget->getY(), pUnit ? pUnit->GetID() : -1);
 			continue;
+		}
 
 		// Embarked combat stacks use the same domain-slot accounting. Cargo and
 		// aircraft retain their separate transport/rebase handling. Legacy mode
@@ -13003,7 +13158,11 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 				ourUnits.push_back(vUnits[i]);
 				unitXP.push_back(vUnits[i]->getExperienceTimes100());
 			}
+			else
+				CvStackingDiagnostics::Record(2, ePlayer, "RECRUIT_FILTER", "target=%d:%d unit=%d reason=domain_occupancy", pTarget->getX(), pTarget->getY(), pUnit->GetID());
 		}
+		else
+			CvStackingDiagnostics::Record(2, ePlayer, "RECRUIT_FILTER", "target=%d:%d unit=%d reason=null_or_not_usable", pTarget->getX(), pTarget->getY(), pUnit ? pUnit->GetID() : -1);
 	}
 
 	if (ourUnits.empty())
@@ -13058,6 +13217,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 					initialPosition->addTacticalPlot(pPlot, ourUnits);
 			}
 		}
+		else
+			CvStackingDiagnostics::Record(2, ePlayer, "RECRUIT_FILTER", "target=%d:%d unit=%d reason=not_admitted_to_combat_sim", pTarget->getX(), pTarget->getY(), pUnit->GetID());
 	}
 
 	//find out which plot is frontline, second line etc
@@ -13074,7 +13235,11 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	initialPosition->setFirstInterestingAssignment(initialPosition->getAssignments().size());
 
 	//around 15 units everything becomes slow so don't use too many
+	const int iRecruitedUnits = initialPosition->GetNumAvailableUnits();
 	initialPosition->dropSuperfluousUnits(TACTSIM_MAX_UNITS);
+	const int iKeptUnits = initialPosition->GetNumAvailableUnits();
+	CvStackingDiagnostics::Record(1, ePlayer, "RECRUIT", "target=%d:%d input=%u usable=%u recruited=%d kept=%d budgetDropped=%d cap=%d",
+		pTarget->getX(), pTarget->getY(), (unsigned int)vUnits.size(), (unsigned int)ourUnits.size(), iRecruitedUnits, iKeptUnits, iRecruitedUnits-iKeptUnits, TACTSIM_MAX_UNITS);
 
 	openPositionsHeap.clear();
 	completedPositions.clear();
@@ -13216,6 +13381,17 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	OutputDebugString(szDebugInfo);
 #endif
 
+	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
+		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,
+		(unsigned int)completedPositions.size(), (unsigned int)result.size(), durationMs);
+	if (CvStackingDiagnostics::Enabled(2, ePlayer))
+		for (size_t i = 0; i < result.size(); ++i)
+		{
+			const STacticalAssignment& a = result[i];
+			CvStackingDiagnostics::Record(2, ePlayer, "PLAN_ASSIGN", "target=%d:%d index=%u unit=%d from=%d to=%d type=%d moves=%d score=%d plotScore=%d bonus=%d damageDelta=%d selfDamage=%d cityDamage=%d",
+				pTarget->getX(), pTarget->getY(), (unsigned int)i, a.iUnitID, a.iFromPlotIndex, a.iToPlotIndex, (int)a.eAssignmentType,
+				(int)a.iRemainingMoves, a.Score(), a.GetPlotScore(), a.GetBonusScore(), a.GetDamageDelta(), (int)a.iSelfDamage, (int)a.iCityDamage);
+		}
 	return result;
 }
 

@@ -148,6 +148,9 @@ protected:
 
 	static int lGetAIAutoPlay(lua_State* L);
 	static int lSetAIAutoPlay(lua_State* L);
+	static int lGetStackingDiagnosticsLevel(lua_State* L);
+	static int lGetStackingDiagnosticsStatus(lua_State* L);
+	static int lSetStackingDiagnosticsLevel(lua_State* L);
 	static int lChangeActivePlayer(lua_State* L);
 
 	static int lIsScoreDirty(lua_State* L);

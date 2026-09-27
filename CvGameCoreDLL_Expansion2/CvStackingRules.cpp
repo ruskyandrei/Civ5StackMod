@@ -1,5 +1,6 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingRules.h"
+#include "CvStackingDiagnostics.h"
 #include "CvUnit.h"
 #include "CvPlot.h"
 #include "CvCity.h"
@@ -31,6 +32,16 @@ namespace
 		{"FlankingEnabled", 1, 0, 1},
 		{"CollateralEnabled", 1, 0, 1},
 		{"AIEnabled", 1, 0, 1},
+		{"DiagnosticsLevel", 0, 0, 2},
+		{"DiagnosticsSummaryInterval", 1, 1, 10000},
+		{"DiagnosticsDetailInterval", 10, 0, 10000},
+		{"DiagnosticsMemoryInterval", 10, 0, 10000},
+		{"DiagnosticsPlayer", -1, -1, MAX_PLAYERS-1},
+		{"DiagnosticsMaxFileKB", 4096, 64, 65536},
+		{"DiagnosticsMaxFiles", 8, 1, 32},
+		{"DiagnosticsMaxRowsPerTurn", 4096, 32, 65536},
+		{"DiagnosticsHistogramMaxStack", 32, 1, 256},
+		{"DiagnosticsLongPlanThreshold", 256, 0, 10000},
 		{"BaseCapacity", 2, 1, SAFE_INTEGER},
 		{"MaximumCapacity", 9, 1, SAFE_INTEGER},
 		{"LandCapacityBonus", 0, 0, SAFE_INTEGER},
@@ -246,6 +257,7 @@ namespace CvStacking
 {
 	void ResetCache()
 	{
+		CvStackingDiagnostics::Reset();
 		Cache() = RulesCache();
 	}
 	int GetInt(const char* name, int fallback)

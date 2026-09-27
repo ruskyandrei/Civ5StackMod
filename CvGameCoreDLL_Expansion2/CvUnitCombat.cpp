@@ -6,6 +6,7 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingDiagnostics.h"
 #include "CvUnit.h"
 #include "CvUnitCombat.h"
 #include "CvUnitMission.h"
@@ -3428,6 +3429,7 @@ int CvUnitCombat::DoDamageMath(int iAttackerStrength100, int iDefenderStrength10
 //	---------------------------------------------------------------------------
 void CvUnitCombat::ResolveCombat(const CvCombatInfo& kInfo, uint uiParentEventID /* = 0 */)
 {
+	CvStackingDiagnostics::CombatScope diagnosticCombat(kInfo, uiParentEventID);
 	PlayerTypes eAttackingPlayer = NO_PLAYER;
 	// Restore visibility
 	CvUnit* pAttacker = kInfo.getUnit(BATTLE_UNIT_ATTACKER);

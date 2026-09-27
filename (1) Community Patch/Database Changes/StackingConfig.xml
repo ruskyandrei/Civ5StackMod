@@ -8,6 +8,17 @@
     <Row Name="FlankingEnabled" Value="1" />
     <Row Name="CollateralEnabled" Value="1" />
     <Row Name="AIEnabled" Value="1" />
+    <!-- Diagnostic-only controls. Runtime menu overrides Level until reload. -->
+    <Row Name="DiagnosticsLevel" Value="0" />
+    <Row Name="DiagnosticsSummaryInterval" Value="1" />
+    <Row Name="DiagnosticsDetailInterval" Value="10" />
+    <Row Name="DiagnosticsMemoryInterval" Value="10" />
+    <Row Name="DiagnosticsPlayer" Value="-1" />
+    <Row Name="DiagnosticsMaxFileKB" Value="4096" />
+    <Row Name="DiagnosticsMaxFiles" Value="8" />
+    <Row Name="DiagnosticsMaxRowsPerTurn" Value="4096" />
+    <Row Name="DiagnosticsHistogramMaxStack" Value="32" />
+    <Row Name="DiagnosticsLongPlanThreshold" Value="256" />
     <Row Name="BaseCapacity" Value="2" />
     <Row Name="MaximumCapacity" Value="9" />
     <Row Name="LandCapacityBonus" Value="0" />

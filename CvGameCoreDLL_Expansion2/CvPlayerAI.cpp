@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingDiagnostics.h"
 #include "CvPlayerAI.h"
 #include "CvRandom.h"
 #include "CvGlobals.h"
@@ -271,6 +272,7 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 	{
 		return;
 	}
+	CvStackingDiagnostics::OnPlayerTurn(*this);
 
 	if(isHuman(ISHUMAN_AI_UNITS))
 	{

@@ -8,6 +8,8 @@ This checkout contains a unit-stacking prototype based on Vox Populi 5.4.6, on b
 
 Start with the [playing guide](docs/stacking-playing.md), [XML configuration reference](docs/stacking-configuration.md), [native build/deployment guide](work/BUILD-LOCAL.md), and [test coverage and remaining limitations](work/REQUIREMENTS-AUDIT-20260927.md). Local saves, test evidence, backups, toolchains and compiled binaries remain under `work` outside Git. The upstream project description follows.
 
+Planned follow-up work, including optional DLL diagnostics for autoplay, is tracked in [the stacking TODO](docs/stacking-todo.md).
+
 ## What is Vox Populi
 
 Started in 2014, Vox Populi (formerly known as the "Community Balance Patch/Overhaul") is a collaborative effort to improve Civilization V's AI and gameplay. It consists of a collection of mods (see below) that are designed to work together seamlessly.

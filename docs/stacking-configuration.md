@@ -143,3 +143,26 @@ These `Stacking_Settings` values control the optional stack roster and Move Stac
 | UIStackResultDelayMilliseconds | 250 | 0–10000 | Delay before reporting group-move results; Lua converts milliseconds to seconds. |
 
 The Lua UI reads raw database values rather than the DLL's clamped settings cache. Keep UI edits within the documented DLL ranges as well as the effective layout minimums above; out-of-range values are not guaranteed to behave identically in Lua and C++. Layout padding, icon size and text measurement are rendering constraints, not combat-balance settings. Restart after editing; full in-game UI hot reload has not been reliable with this VP/EUI setup.
+
+## Built-in autoplay diagnostics
+
+Open Additional Information > Stack diagnostics for Off, Summary or Verbose. Runtime overrides apply to the loaded session; after loading/restarting, XML defaults apply. Logging does not issue orders, consume RNG, or change gameplay search budgets. Existing VP AI logging remains a separate facility.
+
+| XML setting | Default | Valid values | Meaning |
+|---|---:|---:|---|
+| DiagnosticsLevel | 0 | 0–2 | Off / Summary / Verbose; runtime menu overrides this until reload. |
+| DiagnosticsSummaryInterval | 1 | 1–10000 | Sample each player's units before unit AI on these game turns, once per player/turn. |
+| DiagnosticsDetailInterval | 10 | 0–10000 | Verbose unit/city snapshots; 0 disables scheduled detail. |
+| DiagnosticsMemoryInterval | 10 | 0–10000 | Process virtual-memory sample once on matching turns; 0 disables. |
+| DiagnosticsPlayer | -1 | -1–63 | Player ID filter; -1 includes all. Session/configuration/memory records are global. |
+| DiagnosticsMaxFileKB | 4096 | 64–65536 | Maximum approximate size per rolling segment, including record overhead. |
+| DiagnosticsMaxFiles | 8 | 1–32 | Segments retained per loaded session; reuse overwrites the oldest segment. |
+| DiagnosticsMaxRowsPerTurn | 4096 | 32–65536 | Global event-row budget, followed by one TRUNCATED marker. Configuration headers are separate. |
+| DiagnosticsHistogramMaxStack | 32 | 1–256 | Final histogram bucket includes this size and all larger sizes. This does not limit legal stacks. |
+| DiagnosticsLongPlanThreshold | 256 | 0–10000 | Warn before an unusually long tactical history grows further; repeats at multiples. 0 disables. No action is blocked. |
+
+The native logger writes immediately flushed, live-readable `Stacking-<UTC>-p<PID>-r<session>-<slot>.log` files in the game's Logs directory. Each segment identifies its run, monotonically increasing segment number and build. A configuration fingerprint is resolved in the first CONFIG record and carried by later segment headers. CONFIG_RAW rows record the stacking tables in database order; effective values still follow the validation/clamping described above. Off/on continues the same session and rolling budget. Reloads/new sessions have distinct prefixes; old sessions are retained for manual archiving/removal.
+
+Summary includes unit/stack statistics, memory measurements, city-attack gates, recruitment counts, chosen-plan size/search time and long-history anomalies. Verbose adds unit/city identities, recruitment rejections, chosen assignments and score components, operation messages, and before/after combat participants with explicit inflicted-versus-received damage labels. Combat uses saved owner/ID lookups after resolution so captured/deleted units are handled safely. Unit composition is not a forecast of safety, an attempted-city-attack message is not proof an attack occurred, and missing units can have non-combat removal causes. No extra danger calculation is performed solely to populate logs.
+
+Record timing and sampling duration include diagnostic overhead; bounded output can omit events, and TRUNCATED must be treated as incomplete evidence. Rotated records are not recoverable from the current session. The logger does not retain a whole-game history in memory and has no injected Lua observer. These limits control diagnostics only.

@@ -24,6 +24,7 @@
 #include "CvLuaLeague.h"
 
 #include "../CvGame.h"
+#include "../CvStackingDiagnostics.h"
 #include "../CvGameCoreUtils.h"
 #include "../CvInternalGameCoreUtils.h"
 #include "../CvGameTextMgr.h"
@@ -166,6 +167,9 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 
 	Method(GetAIAutoPlay);
 	Method(SetAIAutoPlay);
+	Method(GetStackingDiagnosticsLevel);
+	Method(GetStackingDiagnosticsStatus);
+	Method(SetStackingDiagnosticsLevel);
 	Method(ChangeActivePlayer);
 
 	Method(IsScoreDirty);
@@ -1231,6 +1235,29 @@ int CvLuaGame::lSetAIAutoPlay(lua_State* L)
 {
 	return BasicLuaMethod(L, &CvGame::setAIAutoPlay);
 }
+// Local diagnostic output only; these calls do not issue synchronized game orders.
+int CvLuaGame::lGetStackingDiagnosticsLevel(lua_State* L)
+{
+	lua_pushinteger(L, CvStackingDiagnostics::GetLevel());
+	return 1;
+}
+
+int CvLuaGame::lGetStackingDiagnosticsStatus(lua_State* L)
+{
+	lua_pushstring(L, CvStackingDiagnostics::GetStatus());
+	return 1;
+}
+
+int CvLuaGame::lSetStackingDiagnosticsLevel(lua_State* L)
+{
+	const lua_Number level = luaL_checknumber(L, 1);
+	if (level != 0 && level != 1 && level != 2)
+		return luaL_error(L, "Stacking diagnostics level must be 0 (Off), 1 (Summary), or 2 (Verbose)");
+	CvStackingDiagnostics::SetLevel(static_cast<int>(level));
+	lua_pushinteger(L, CvStackingDiagnostics::GetLevel());
+	return 1;
+}
+
 int CvLuaGame::lChangeActivePlayer(lua_State* L)
 {
 	const PlayerTypes eNewPlayer = toValue<PlayerTypes>(L, 2);

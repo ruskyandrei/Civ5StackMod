@@ -8,6 +8,7 @@
 
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingRules.h"
+#include "CvStackingDiagnostics.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -1230,6 +1231,7 @@ void CvAIOperation::LogOperationStatus(bool bPreTurn) const
 
 void CvAIOperation::LogOperationSpecialMessage(const CvString& strMsg) const
 {
+	CvStackingDiagnostics::Record(2, m_eOwner, "OPERATION", "id=%d type=%s state=%d target=%d,%d muster=%d,%d message=%s", m_iID, GetOperationName(), m_eCurrentState, m_iTargetX, m_iTargetY, m_iMusterX, m_iMusterY, strMsg.c_str());
 	if(GC.getLogging() && GC.getAILogging())
 	{
 		CvString strOutBuf;
