@@ -17,6 +17,8 @@
 #include "../CvMinorCivAI.h"
 #include "../CvPlayerAI.h"
 #include "../CvUnitCombat.h"
+#include "../CvStackingRules.h"
+#include "../CvStackMovement.h"
 
 #pragma warning(disable:4800 ) //forcing value to bool 'true' or 'false'
 
@@ -197,6 +199,12 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(IsLinked);
 	Method(IsLinkedLeader);
 	Method(IsGrouped);
+	Method(GetStackingLimit);
+	Method(CanStackAtPlot);
+	Method(GetStackRoleInfo);
+	Method(GetStackAttackPreview);
+	Method(GetStackMovePreview);
+	Method(DoStackMove);
 	Method(CanLinkUnits);
 	Method(LinkUnits);
 	Method(UnlinkUnits);
@@ -2591,6 +2599,137 @@ int CvLuaUnit::lIsGrouped(lua_State* L)
 	return 1;
 }
 //------------------------------------------------------------------------------ 
+// Stack capacity and role information are shared with actual movement/combat.
+int CvLuaUnit::lGetStackingLimit(lua_State* L)
+{
+	CvUnit* pUnit = GetInstance(L);
+	CvPlot* pPlot = lua_isnoneornil(L, 2) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 2);
+	lua_pushinteger(L, pUnit->GetStackingLimit(pPlot));
+	return 1;
+}
+
+int CvLuaUnit::lCanStackAtPlot(lua_State* L)
+{
+	CvUnit* pUnit = GetInstance(L);
+	CvPlot* pPlot = lua_isnoneornil(L, 2) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 2);
+	lua_pushboolean(L, pUnit->CanStackUnitAtPlot(pPlot));
+	return 1;
+}
+
+int CvLuaUnit::lGetStackRoleInfo(lua_State* L)
+{
+	CvUnit* pUnit = GetInstance(L);
+	lua_newtable(L);
+	lua_pushboolean(L, CvStacking::IsEnabled()); lua_setfield(L, -2, "Enabled");
+	lua_pushboolean(L, pUnit->IsCombatUnit() && !pUnit->IsStackingUnit() && !pUnit->isCargo() && pUnit->getDomainType() != DOMAIN_AIR); lua_setfield(L, -2, "CountsTowardCapacity");
+	lua_pushboolean(L, CvStacking::CanFlank(pUnit)); lua_setfield(L, -2, "Flanker");
+	lua_pushboolean(L, CvStacking::IsAntiCavalry(pUnit)); lua_setfield(L, -2, "AntiCavalry");
+	lua_pushinteger(L, CvStacking::GetCollateralTargetLimit(pUnit)); lua_setfield(L, -2, "CollateralTargets");
+	lua_pushinteger(L, pUnit->GetStackingLimit(pUnit->plot())); lua_setfield(L, -2, "Capacity");
+	lua_pushinteger(L, CvStacking::GetCityProtection(pUnit->plot() ? pUnit->plot()->getPlotCity() : NULL)); lua_setfield(L, -2, "CityProtection");
+	return 1;
+}
+
+int CvLuaUnit::lGetStackAttackPreview(lua_State* L)
+{
+	CvUnit* pUnit = GetInstance(L);
+	CvPlot* pPlot = CvLuaPlot::GetInstance(L, 2);
+	bool bRanged = luaL_optbool(L, 3, pUnit->IsCanAttackRanged());
+	CvUnit* pDefender = NULL;
+	int iDirectDamage = 0;
+	std::vector<std::pair<const CvUnit*, int> > collateral;
+	CvUnitCombat::GetStackAttackPreview(pUnit, pPlot, bRanged, pDefender, iDirectDamage, collateral);
+	lua_newtable(L);
+	lua_pushinteger(L, pDefender ? pDefender->GetID() : -1); lua_setfield(L, -2, "DefenderID");
+	lua_pushinteger(L, pDefender ? pDefender->getOwner() : NO_PLAYER); lua_setfield(L, -2, "DefenderOwner");
+	lua_pushinteger(L, iDirectDamage); lua_setfield(L, -2, "DirectDamage");
+	lua_pushboolean(L, pUnit->getDomainType() == DOMAIN_AIR); lua_setfield(L, -2, "ConditionalOnAirHit");
+	lua_pushinteger(L, CvStacking::GetCityProtection(pPlot ? pPlot->getPlotCity() : NULL)); lua_setfield(L, -2, "CityProtection");
+	lua_pushinteger(L, (int)collateral.size()); lua_setfield(L, -2, "CollateralCount");
+	lua_newtable(L);
+	for (size_t i = 0; i < collateral.size(); ++i)
+	{
+		const CvUnit* pVictim = collateral[i].first;
+		lua_newtable(L);
+		lua_pushinteger(L, pVictim->GetID()); lua_setfield(L, -2, "UnitID");
+		lua_pushinteger(L, pVictim->getOwner()); lua_setfield(L, -2, "Owner");
+		lua_pushinteger(L, collateral[i].second); lua_setfield(L, -2, "Damage");
+		lua_pushinteger(L, pVictim->GetMaxHitPoints()); lua_setfield(L, -2, "MaxHP");
+		lua_pushinteger(L, pVictim->GetCurrHitPoints() - collateral[i].second); lua_setfield(L, -2, "HPAfter");
+		lua_rawseti(L, -2, (int)i + 1);
+	}
+	lua_setfield(L, -2, "Collateral");
+	return 1;
+}
+
+
+namespace
+{
+    std::vector<int> ReadStackMemberIDs(lua_State* L, CvUnit* pUnit, CvPlot* pSource)
+    {
+        std::vector<int> ids;
+        if (lua_istable(L, 4))
+        {
+            const int count = (int)lua_objlen(L, 4);
+            for (int i = 1; i <= count; ++i)
+            {
+                lua_rawgeti(L, 4, i);
+                if (lua_isnumber(L, -1)) ids.push_back(lua_tointeger(L, -1));
+                lua_pop(L, 1);
+            }
+        }
+        else if (pSource)
+        {
+            for (int i = 0; i < pSource->getNumUnits(); ++i)
+            {
+                CvUnit* pMember = pSource->getUnitByIndex(i);
+                if (pMember && pMember->getOwner() == pUnit->getOwner())
+                    ids.push_back(pMember->GetID());
+            }
+        }
+        return ids;
+    }
+
+    int PushStackMovePlan(lua_State* L, const CvStackMovement::Plan& plan)
+    {
+        lua_newtable(L);
+        lua_pushinteger(L, plan.moving); lua_setfield(L, -2, "Moving");
+        lua_pushinteger(L, plan.staying); lua_setfield(L, -2, "Staying");
+        lua_pushboolean(L, plan.protectorStays); lua_setfield(L, -2, "ProtectorStays");
+        lua_newtable(L);
+        for (size_t i = 0; i < plan.members.size(); ++i)
+        {
+            const CvStackMovement::Member& member = plan.members[i];
+            lua_newtable(L);
+            lua_pushinteger(L, member.id); lua_setfield(L, -2, "UnitID");
+            lua_pushstring(L, member.reason); lua_setfield(L, -2, "Reason");
+            lua_pushboolean(L, member.canMove); lua_setfield(L, -2, "CanMove");
+            lua_pushboolean(L, member.sent); lua_setfield(L, -2, "Sent");
+            lua_pushboolean(L, member.uncertain); lua_setfield(L, -2, "Uncertain");
+            lua_pushinteger(L, member.movesLeft); lua_setfield(L, -2, "MovesLeft");
+            lua_rawseti(L, -2, (int)i + 1);
+        }
+        lua_setfield(L, -2, "Members");
+        return 1;
+    }
+}
+
+int CvLuaUnit::lGetStackMovePreview(lua_State* L)
+{
+    CvUnit* pUnit = GetInstance(L);
+    CvPlot* pDestination = CvLuaPlot::GetInstance(L, 2);
+    CvPlot* pSource = lua_isnoneornil(L, 3) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 3);
+    return PushStackMovePlan(L, CvStackMovement::Preview(pUnit, pSource, pDestination, ReadStackMemberIDs(L, pUnit, pSource)));
+}
+
+int CvLuaUnit::lDoStackMove(lua_State* L)
+{
+    CvUnit* pUnit = GetInstance(L);
+    CvPlot* pDestination = CvLuaPlot::GetInstance(L, 2);
+    CvPlot* pSource = lua_isnoneornil(L, 3) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 3);
+    return PushStackMovePlan(L, CvStackMovement::Execute(pUnit, pSource, pDestination, ReadStackMemberIDs(L, pUnit, pSource)));
+}
+
 //bool CanLinkUnits();
 int CvLuaUnit::lCanLinkUnits(lua_State* L)
 {

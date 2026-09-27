@@ -274,11 +274,89 @@ end
 -- Common function for combat simulator (unit vs unit, city vs unit, unit vs city)
 -- This assumes pMyUnit and pTheirUnit cannot be both nil
 --------------------------------------------------------------------------------
-function UpdateCombatSimulator(pMyUnit, pTheirUnit, pMyCity, pTheirCity)
-	g_MyCombatDataIM:ResetInstances();
-	g_TheirCombatDataIM:ResetInstances();
 
-	local eMyPlayer, eTheirPlayer;
+-- Stack rows use the same instance managers and sizing as the normal combat details.
+local g_StackSummaryRows = {}
+local function StackSummaryInstance(manager)
+    local row = manager:GetInstance()
+    g_StackSummaryRows[#g_StackSummaryRows + 1] = row
+    return row
+end
+
+local function AppendStackCombatSummary(pMyUnit, pTheirUnit, pTheirCity, preview)
+    if not preview then return end
+    local target = pTheirUnit and pTheirUnit:GetPlot() or (pTheirCity and pTheirCity:Plot())
+    if pTheirUnit and target and target:GetNumUnits() > 1 then
+        local row = StackSummaryInstance(g_TheirCombatDataIM)
+        row.Text:SetText("Stack defender: " .. pTheirUnit:GetName())
+        row.Value:SetText("")
+        row.Text:SetToolTipString("This is the defender selected for this attack, including cavalry flanking and anti-cavalry protection.")
+    end
+    local role = pMyUnit:GetStackRoleInfo()
+    if pMyUnit:IsCanAttackRanged() and role.CollateralTargets > 0 then
+        local count, total, details = 0, 0, {}
+        for _, victim in ipairs(preview.Collateral or {}) do
+            if victim.Damage > 0 then
+                count, total = count + 1, total + victim.Damage
+                local owner = Players[victim.Owner]
+                local unit = owner and owner:GetUnitByID(victim.UnitID)
+                details[#details + 1] = (unit and unit:GetName() or "Unit") .. ": " ..
+                    victim.Damage .. " HP collateral"
+            end
+        end
+        local row = StackSummaryInstance(g_MyCombatDataIM)
+        row.Text:SetText("Collateral: " .. count .. (count == 1 and " unit" or " units"))
+        row.Value:SetText("[COLOR_GREEN]" .. total .. " HP[ENDCOLOR]")
+        local tooltip = "Additional damage to secondary targets; primary damage is shown above."
+        if #details > 0 then tooltip = tooltip .. "[NEWLINE]" .. table.concat(details, "[NEWLINE]") end
+        row.Text:SetToolTipString(tooltip)
+        row.Value:SetToolTipString(tooltip)
+        if pTheirCity and preview.CityProtection > 0 then
+            row = StackSummaryInstance(g_TheirCombatDataIM)
+            row.Text:SetText("City collateral protection")
+            row.Value:SetText(preview.CityProtection .. "%")
+            row.Text:SetToolTipString("Reduces collateral to units in the city. Primary city damage is unchanged.")
+        end
+        if preview.ConditionalOnAirHit then
+            row = StackSummaryInstance(g_MyCombatDataIM)
+            row.Text:SetText("Collateral assumes bomber reaches target")
+            row.Value:SetText("")
+            row.Text:SetToolTipString("Interception may prevent or weaken the strike; no collateral is caused by an aborted bombing attack.")
+        end
+    end
+end
+
+function UpdateCombatSimulator(pMyUnit, pTheirUnit, pMyCity, pTheirCity)
+    -- InstanceManager recycles labels; do not leave a prior stack tooltip on a normal modifier.
+    for _, row in ipairs(g_StackSummaryRows) do
+        row.Text:SetToolTipString("")
+        row.Value:SetToolTipString("")
+    end
+    g_StackSummaryRows = {}
+	g_MyCombatDataIM:ResetInstances();
+    g_TheirCombatDataIM:ResetInstances();
+
+    local stackPreview
+    if pMyUnit and pMyUnit.GetStackAttackPreview and pMyUnit:GetStackRoleInfo().Enabled then
+        local target = pTheirUnit and pTheirUnit:GetPlot() or (pTheirCity and pTheirCity:Plot())
+        if target and target:IsVisible(Game.GetActiveTeam(), false) then
+            stackPreview = pMyUnit:GetStackAttackPreview(target, pMyUnit:IsCanAttackRanged())
+            if pTheirUnit and stackPreview.DefenderOwner >= 0 and stackPreview.DefenderID >= 0 then
+                local owner = Players[stackPreview.DefenderOwner]
+                local defender = owner and owner:GetUnitByID(stackPreview.DefenderID)
+                if defender then
+                    pTheirUnit = defender
+                    -- The normal portrait was set before this function; keep all displayed
+                    -- stats and both sides of the exchange on the shared selected defender.
+                    UpdateUnitPortrait(defender)
+                    UpdateUnitPromotions(defender)
+                    UpdateUnitStats(defender)
+                end
+            end
+        end
+    end
+
+    local eMyPlayer, eTheirPlayer;
 	local pMyPlayer, pTheirPlayer;
 	local iMyStrength, iTheirStrength;
 	local iMyMaxHP, iTheirMaxHP;
@@ -1333,6 +1411,7 @@ function UpdateCombatSimulator(pMyUnit, pTheirUnit, pMyCity, pTheirCity)
 		controlTable.Value:SetText(GetFormattedText(iMiscModifier, false, true));
 	end
 
+	AppendStackCombatSummary(pMyUnit, pTheirUnit, pTheirCity, stackPreview);
 	RecalculateSize();
 end
 
@@ -1587,7 +1666,13 @@ function OnMouseOverHex(hexX, hexY)
 			-- Don't show info for targets we can't see
 			if pPlot:IsVisible(eTeam, false) then
 				local ePlayer = Game.GetActivePlayer();
-				local pUnit = pPlot:GetBestDefender(-1, ePlayer, nil, 1);
+                local pUnit
+                if pHeadCity.GetStackDefender then
+                    pUnit = pHeadCity:GetStackDefender(pPlot)
+                else
+                    -- Keep this UI usable with the previous locally installed DLL.
+                    pUnit = pPlot:GetBestDefender(-1, ePlayer, nil, 1)
+                end
 
 				if pUnit then
 					UpdateUnitPortrait(pUnit);

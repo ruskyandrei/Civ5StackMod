@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingRules.h"
+#include "CvDangerPlots.h"
 #include "CvPlot.h"
 #include "CvCity.h"
 #include "CvUnit.h"
@@ -3635,6 +3637,7 @@ CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer
 	const IDInfo* pUnitNode = headUnitNode();
 	CvUnit* pLoopUnit = NULL;
 	CvUnit* pBestUnit = NULL;
+	std::vector<const CvUnit*> stackCandidates;
 
 	//early out
 	if (eAttackingPlayer != NO_PLAYER && !bIgnoreVisibility && !isVisible(GET_PLAYER(eAttackingPlayer).getTeam()))
@@ -3655,7 +3658,7 @@ CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer
 		if (pLoopUnit && pLoopUnit == pIgnoreUnit)
 			continue;
 
-		if(pLoopUnit && (bNoncombatAllowed || pLoopUnit->IsCanDefend()) && pLoopUnit != pAttacker)	// Does the unit exist, and can it fight, or do we care if it can't fight?
+		if(pLoopUnit && !pLoopUnit->IsDead() && !pLoopUnit->isDelayedDeath() && (bNoncombatAllowed || pLoopUnit->IsCanDefend()) && pLoopUnit != pAttacker)	// Does the unit exist, and can it fight, or do we care if it can't fight?
 		{
 			if(eAttackingPlayer == NO_PLAYER || bIgnoreVisibility || !pLoopUnit->isInvisible(GET_PLAYER(eAttackingPlayer).getTeam(), false))
 			{
@@ -3663,6 +3666,8 @@ CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer
 				{
 					if(!bTestCanMove || (pLoopUnit->canMove() && !(pLoopUnit->isCargo())))
 					{
+						if (pLoopUnit->IsCanDefend() && !pLoopUnit->isCargo())
+							stackCandidates.push_back(pLoopUnit);
 						if(pLoopUnit->isBetterDefenderThan(pBestUnit, pAttacker))
 						{
 							pBestUnit = pLoopUnit;
@@ -3673,6 +3678,13 @@ CvUnit* CvPlot::getBestDefender(PlayerTypes eOwner, PlayerTypes eAttackingPlayer
 		}
 	}
 
+	if (pAttacker && CvStacking::IsEnabled() && !stackCandidates.empty())
+	{
+		const CvUnit* selected = CvUnitCombat::SelectStackDefender(pAttacker, pAttacker->plot(), this,
+			stackCandidates, SUnitIDValueContainer(), pAttacker->IsCanAttackRanged());
+		if (selected)
+			pBestUnit = const_cast<CvUnit*>(selected);
+	}
 	return pBestUnit;
 }
 
@@ -11529,6 +11541,30 @@ int CvPlot::getVisiblityCount(TeamTypes eTeam)
 	return m_aiVisibilityCount[eTeam];
 }
 //	--------------------------------------------------------------------------------
+static void DirtyStackDangerForVisibility(const CvPlot* plot, TeamTypes team)
+{
+ if (!CvStacking::IsEnabled() || !plot || team == NO_TEAM)
+  return;
+ const vector<PlayerTypes>& players = GET_TEAM(team).getPlayers();
+ for (size_t i = 0; i < players.size(); ++i)
+ {
+  CvPlayer& observer = GET_PLAYER(players[i]);
+  if (!observer.isAlive())
+   continue;
+  bool relevant = plot->isCity() && GET_TEAM(team).isAtWar(plot->getTeam()) && plot->isRevealed(team);
+  for (int j = 0; j < plot->getNumUnits() && !relevant; ++j)
+  {
+   const CvUnit* unit = plot->getUnitByIndex(j);
+   if (!unit || !GET_TEAM(team).isAtWar(unit->getTeam()))
+    continue;
+   const bool visible = plot->isVisible(team) && !unit->isInvisible(team, false);
+   relevant = visible || observer.GetDangerPlots()->IsKnownAttacker(unit);
+  }
+  if (relevant)
+   observer.SetDangerPlotsDirty();
+ }
+}
+
 PlotVisibilityChangeResult CvPlot::changeVisibilityCount(TeamTypes eTeam, int iChange, InvisibleTypes eSeeInvisible, bool bInformExplorationTracking, bool bAlwaysSeeInvisible, CvUnit* pUnit)
 {
 	PRECONDITION(eTeam >= 0, "eTeam is expected to be non-negative (invalid Index)");
@@ -11703,6 +11739,9 @@ PlotVisibilityChangeResult CvPlot::changeVisibilityCount(TeamTypes eTeam, int iC
 		// observer UI following eTeam? update visibility also for observer
 		changeVisibilityCount(GET_PLAYER(GC.getGame().getActivePlayer()).getTeam(), iChange, eSeeInvisible, bInformExplorationTracking, bAlwaysSeeInvisible);
 	}
+
+	if (bOldVisibility != isVisible(eTeam))
+		DirtyStackDangerForVisibility(this, eTeam);
 
 	return eResult;
 }
@@ -13039,6 +13078,7 @@ void CvPlot::changeInvisibleVisibilityCountUnit(TeamTypes eTeam, int iChange)
 		bNewInvisibleVisible = isInvisibleVisibleUnit(eTeam);
 		if (bOldInvisibleVisible != bNewInvisibleVisible)
 		{
+			DirtyStackDangerForVisibility(this, eTeam);
 			TeamTypes activeTeam = GC.getGame().getActiveTeam();
 			if (eTeam == activeTeam)
 			{
@@ -13135,6 +13175,7 @@ void CvPlot::changeInvisibleVisibilityCount(TeamTypes eTeam, InvisibleTypes eInv
 
 		if (bOldInvisibleVisible != bNewInvisibleVisible)
 		{
+			DirtyStackDangerForVisibility(this, eTeam);
 			TeamTypes activeTeam = GC.getGame().getActiveTeam();
 			if (eTeam == activeTeam)
 			{
@@ -14964,8 +15005,20 @@ bool CvPlot::canPlaceCombatUnit(PlayerTypes ePlayer) const
 			return false;
 	}
 
-	//can't place into a plot with another combat unit (owner does not matter)
-	if(getNumDefenders(NO_PLAYER) >= getUnitLimit())
+	// Without a specific unit, use the native domain of the destination.
+	int iOccupants = 0;
+	for (const IDInfo* pNode = headUnitNode(); pNode; pNode = nextUnitNode(pNode))
+	{
+		const CvUnit* pUnit = ::GetPlayerUnit(*pNode);
+		if (!pUnit || pUnit->isDelayedDeath() || pUnit->isCargo() || !pUnit->IsCombatUnit() || pUnit->IsStackingUnit())
+			continue;
+		if (ePlayer != NO_PLAYER && GET_TEAM(GET_PLAYER(ePlayer).getTeam()).isAtWar(pUnit->getTeam()))
+			return false;
+		if (!CvStacking::IsEnabled() || pUnit->getDomainType() == getDomain())
+			++iOccupants;
+	}
+	const int iCapacity = CvStacking::IsEnabled() && ePlayer != NO_PLAYER ? CvStacking::GetCapacity(ePlayer, getDomain(), isCity()) : getUnitLimit();
+	if (iOccupants >= iCapacity)
 		return false;
 			
 	//can't place into a plot with a foreign city

@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingRules.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -258,7 +259,17 @@ int CvAIOperation::GetGatherTolerance(CvArmyAI* pArmy, CvPlot* pPlot) const
 			continue;
 
 		if (pLoopPlot->canPlaceCombatUnit(GetOwner()))
-			iValidPlotsNearby++;
+  {
+   const DomainTypes domain = IsNavalOperation() ? DOMAIN_SEA : DOMAIN_LAND;
+   int occupied = 0;
+   for (int j = 0; j < pLoopPlot->getNumUnits(); ++j)
+   {
+    const CvUnit* unit = pLoopPlot->getUnitByIndex(j);
+    if (unit && unit->getOwner() == GetOwner() && unit->IsCombatUnit() && unit->getDomainType() == domain && !unit->isCargo() && !unit->isDelayedDeath() && !unit->IsStackingUnit())
+     ++occupied;
+   }
+   iValidPlotsNearby += CvStacking::IsEnabled() ? max(0, CvStacking::GetCapacity(GetOwner(), domain, pLoopPlot->isCity()) - occupied) : 1;
+  }
 	}
 
 	// Find more valid plots than units?

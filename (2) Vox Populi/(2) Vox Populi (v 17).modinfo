@@ -1408,6 +1408,7 @@
     <File md5="C9837AE28C480828B49045BDA4547DFF" import="1">Mapscripts/EMP/PangaeaPlus.lua</File>
     <File md5="2702A67600180AC22EDA582CBBDDEFCC" import="1">Mapscripts/EMP/Sandstorm.lua</File>
     <File md5="D831E87B71B26B079C8E50318F70FC6B" import="0">Mapscripts/EMP/EMP_Maps.xml</File>
+    <File md5="20263F8B1599208CAAC914834FBBF940" import="0">Database Changes/StackingVPConfig.xml</File>
   </Files>
   <Actions>
     <OnModActivated>
@@ -1653,6 +1654,7 @@
       <UpdateDatabase>Database Changes/Text/en_US/WorldMap/RouteTextChanges.sql</UpdateDatabase>
       <UpdateDatabase>Database Changes/Text/en_US/WorldMap/TerrainTextChanges.sql</UpdateDatabase>
       <UpdateDatabase>Database Changes/Triggers.sql</UpdateDatabase>
+      <UpdateDatabase>Database Changes\StackingVPConfig.xml</UpdateDatabase>
     </OnModActivated>
   </Actions>
   <EntryPoints>

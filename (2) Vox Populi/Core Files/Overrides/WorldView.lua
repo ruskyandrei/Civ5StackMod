@@ -1118,7 +1118,18 @@ end
 ----------------------------------------------------------------
 -- Input handling
 ----------------------------------------------------------------
+local stackMoveMode = false
+LuaEvents.StackMoveModeChanged.Add(function(active) stackMoveMode = active; rButtonDown = false end)
 function InputHandler( uiMsg, wParam, lParam )
+    if stackMoveMode then
+        if uiMsg == MouseEvents.RButtonUp or uiMsg == MouseEvents.LButtonUp or
+            (uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_ESCAPE) then
+            LuaEvents.StackMoveInput(uiMsg, wParam, lParam)
+            return true
+        elseif uiMsg == MouseEvents.RButtonDown or uiMsg == MouseEvents.LButtonDown then
+            return true
+        end
+    end
 	if uiMsg == MouseEvents.RButtonDown then
 		rButtonDown = true;
 	elseif uiMsg == MouseEvents.RButtonUp then
@@ -1157,6 +1168,7 @@ end
 Events.UIPathFinderUpdate.Add( OnUIPathFinderUpdate );
 
 function OnMouseMoveHex()
+    if stackMoveMode then return end
 	local interfaceMode = UI.GetInterfaceMode();
 	local bShift = UIManager:GetShift();
 	if not bShift and rButtonDown and interfaceMode == InterfaceModeTypes.INTERFACEMODE_SELECTION or interfaceMode == InterfaceModeTypes.INTERFACEMODE_MOVE_TO then

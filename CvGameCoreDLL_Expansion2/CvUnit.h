@@ -422,7 +422,7 @@ public:
 	{
 		//these values can be called via the dll external interface, don't modify them
 	    MOVEFLAG_ATTACK							= 0x0001, // flag for CvUnit missions to allow attacks (melee combat or ranged capturing civilian). pathfinder handles this automatically
-	    MOVEFLAG_UNUSED1						= 0x0002, // 
+	    MOVEFLAG_STACK_SAFE					= 0x0002, // tile-local stack order: no attack/war/capture, same-turn only
 	    MOVEFLAG_DESTINATION					= 0x0004, // we want to end the turn in the given plot. only relevant for canMoveInto(), pathfinder handles it automatically
 	    MOVEFLAG_UNUSED2						= 0x0008, // 
 	    MOVEFLAG_IGNORE_STACKING_SELF			= 0x0010, // stacking rules (with owned units) don't apply (on turn end plots)
@@ -952,11 +952,11 @@ public:
 									int iAssumeExtraDamage = 0, int iAssumeExtraOtherDamage = 0) const;
 	int GetAirCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand,
 									int iAssumeSelfDamage = 0, int iAssumeExtraDefenderDamage = 0,
-									const CvPlot* pTargetPlot = NULL, const CvPlot* pFromPlot = NULL, bool bQuickAndDirty = false) const;
+									const CvPlot* pTargetPlot = NULL, const CvPlot* pFromPlot = NULL, bool bQuickAndDirty = false, bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL) const;
 	int GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand,
 									int iAssumeSelfDamage = 0, int iAssumeExtraDefenderDamage = 0,
 									const CvPlot* pTargetPlot = NULL, const CvPlot* pFromPlot = NULL, 
-									bool bIgnoreUnitAdjacencyBoni = false, bool bQuickAndDirty = false) const;
+									bool bIgnoreUnitAdjacencyBoni = false, bool bQuickAndDirty = false, bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL) const;
 	int GetRangeCombatSplashDamage(const CvPlot* pTargetPlot) const;
 
 	int EstimatePlagueDamage(const CvUnit* pEnemy) const;
@@ -2109,6 +2109,8 @@ public:
 	CvUnit* GetPotentialUnitToPushOut(const CvPlot& pushPlot, CvPlot** ppToPlot=NULL) const;
 	bool PushBlockingUnitOutOfPlot(const CvPlot& atPlot);
 
+	// Combat slots are per domain and derive from this unit's team technologies.
+	int GetStackingLimit(const CvPlot* pPlot) const;
 	bool CanStackUnitAtPlot(const CvPlot* pPlot) const;
 	int CountStackingUnitsAtPlot(const CvPlot* pPlot) const;
 

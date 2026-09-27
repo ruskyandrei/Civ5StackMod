@@ -13,6 +13,7 @@
 //!
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 #include "CvGameCoreDLLPCH.h"
+#include "../CvStackingRules.h"
 #include "../CvGameCoreDLLPCH.h"
 #include "../CustomMods.h"
 #include "CvLuaSupport.h"
@@ -1149,7 +1150,13 @@ int CvLuaPlot::lIsFighting(lua_State* L)
 //int getUnitLimit();
 int CvLuaPlot::lGetUnitLimit(lua_State* L)
 {
-	return BasicLuaMethod(L, &CvPlot::getUnitLimit);
+	CvPlot* pPlot = GetInstance(L); CHECK_PLOT_VALID(pPlot);
+	// Existing UI calls use the active player; explicit player/domain is supported.
+	const PlayerTypes ePlayer = (PlayerTypes)luaL_optint(L, 2, GC.getGame().getActivePlayer());
+	const DomainTypes eDomain = (DomainTypes)luaL_optint(L, 3, pPlot->getDomain());
+	const int iLimit = CvStacking::IsEnabled() && ePlayer != NO_PLAYER ? CvStacking::GetCapacity(ePlayer, eDomain, pPlot->isCity()) : pPlot->getUnitLimit();
+	lua_pushinteger(L, iLimit);
+	return 1;
 }
 #endif
 //------------------------------------------------------------------------------

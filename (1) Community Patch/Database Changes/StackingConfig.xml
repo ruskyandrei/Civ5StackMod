@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- User-editable rules. See docs/stacking-configuration.md. Restart Civ V
+     after editing; use identical configuration on every multiplayer peer. -->
+<GameData>
+  <Stacking_Settings>
+    <Row Name="Enabled" Value="1" />
+    <Row Name="DefenderSelectionEnabled" Value="1" />
+    <Row Name="FlankingEnabled" Value="1" />
+    <Row Name="CollateralEnabled" Value="1" />
+    <Row Name="AIEnabled" Value="1" />
+    <Row Name="BaseCapacity" Value="2" />
+    <Row Name="MaximumCapacity" Value="9" />
+    <Row Name="LandCapacityBonus" Value="0" />
+    <Row Name="SeaCapacityBonus" Value="0" />
+    <Row Name="CityCapacityBonus" Value="0" />
+    <Row Name="MinorCapacityBonus" Value="0" />
+    <Row Name="BarbarianCapacityBonus" Value="0" />
+    <Row Name="CollateralPercent" Value="20" />
+    <Row Name="CollateralHPFloorPercent" Value="50" />
+    <Row Name="CollateralMinimumDamage" Value="1" />
+    <Row Name="CityProtectionMaximumPercent" Value="90" />
+    <Row Name="AIStackProtectionWeight" Value="20" />
+    <Row Name="AIStackJoinBonus" Value="12" />
+    <Row Name="AIStackLeaveProtectorPenalty" Value="30" />
+    <Row Name="AIStackAntiFlankBonus" Value="12" />
+    <Row Name="AIStackCollateralWeight" Value="100" />
+    <Row Name="AIStackConcentrationPenalty" Value="10" />
+    <Row Name="AIStackPairRecruitBonus" Value="25" />
+    <Row Name="UIStackEnabled" Value="1" />
+    <Row Name="UIStackMoveMinimumUnits" Value="2" />
+    <Row Name="UIStackRosterWidth" Value="360" />
+    <Row Name="UIStackRosterRowHeight" Value="38" />
+    <Row Name="UIStackRosterMaximumHeight" Value="430" />
+    <Row Name="UIStackRosterOffsetX" Value="110" />
+    <Row Name="UIStackRosterOffsetY" Value="220" />
+    <Row Name="UIStackFlagCollapseThreshold" Value="3" />
+    <Row Name="AIStackConcentrationFreeUnits" Value="2" />
+    <Row Name="AIStackPairRecruitRange" Value="1" />
+    <Row Name="UIStackResultDelayMilliseconds" Value="250" />
+  </Stacking_Settings>
+  <Stacking_Technologies>
+    <Row TechType="TECH_IRON_WORKING" CapacityBonus="1" />
+    <Row TechType="TECH_GUNPOWDER" CapacityBonus="2" />
+    <Row TechType="TECH_MILITARY_SCIENCE" CapacityBonus="2" />
+    <Row TechType="TECH_ROBOTICS" CapacityBonus="2" />
+  </Stacking_Technologies>
+  <!-- Broad defaults let new unique classes inherit sensible behavior. -->
+  <Stacking_UnitCombatRoles>
+    <Row UnitCombatType="UNITCOMBAT_MOUNTED" Role="FLANK" Value="1" />
+    <Row UnitCombatType="UNITCOMBAT_ARMOR" Role="FLANK" Value="1" />
+    <Row UnitCombatType="UNITCOMBAT_ARCHER" Role="FLANK_TARGET" Value="1" />
+    <Row UnitCombatType="UNITCOMBAT_SIEGE" Role="FLANK_TARGET" Value="1" />
+    <Row UnitCombatType="UNITCOMBAT_SIEGE" Role="COLLATERAL_LIMIT" Value="2" />
+    <Row UnitCombatType="UNITCOMBAT_NAVALRANGED" Role="COLLATERAL_LIMIT" Value="2" />
+    <Row UnitCombatType="UNITCOMBAT_BOMBER" Role="COLLATERAL_LIMIT" Value="3" />
+  </Stacking_UnitCombatRoles>
+  <Stacking_UnitClassRoles>
+    <Row UnitClassType="UNITCLASS_SPEARMAN" Role="ANTI_CAVALRY" Value="1" />
+    <Row UnitClassType="UNITCLASS_PIKEMAN" Role="ANTI_CAVALRY" Value="1" />
+    <Row UnitClassType="UNITCLASS_TERCIO" Role="ANTI_CAVALRY" Value="1" />
+    <Row UnitClassType="UNITCLASS_RIFLEMAN" Role="ANTI_CAVALRY" Value="1" />
+    <Row UnitClassType="UNITCLASS_CATAPULT" Role="COLLATERAL_LIMIT" Value="2" />
+    <Row UnitClassType="UNITCLASS_TREBUCHET" Role="COLLATERAL_LIMIT" Value="2" />
+    <Row UnitClassType="UNITCLASS_CANNON" Role="COLLATERAL_LIMIT" Value="3" />
+    <Row UnitClassType="UNITCLASS_FIELD_GUN" Role="COLLATERAL_LIMIT" Value="4" />
+    <Row UnitClassType="UNITCLASS_ARTILLERY" Role="COLLATERAL_LIMIT" Value="5" />
+    <Row UnitClassType="UNITCLASS_ROCKET_ARTILLERY" Role="COLLATERAL_LIMIT" Value="5" />
+    <Row UnitClassType="UNITCLASS_GREAT_BOMBARD" Role="COLLATERAL_LIMIT" Value="3" />
+    <Row UnitClassType="UNITCLASS_LIBURNA" Role="COLLATERAL_LIMIT" Value="2" />
+    <Row UnitClassType="UNITCLASS_GALLEASS" Role="COLLATERAL_LIMIT" Value="2" />
+    <Row UnitClassType="UNITCLASS_FRIGATE" Role="COLLATERAL_LIMIT" Value="3" />
+    <Row UnitClassType="UNITCLASS_CRUISER" Role="COLLATERAL_LIMIT" Value="4" />
+    <Row UnitClassType="UNITCLASS_DREADNOUGHT" Role="COLLATERAL_LIMIT" Value="4" />
+    <Row UnitClassType="UNITCLASS_BATTLESHIP" Role="COLLATERAL_LIMIT" Value="5" />
+    <Row UnitClassType="UNITCLASS_MISSILE_CRUISER" Role="COLLATERAL_LIMIT" Value="5" />
+    <Row UnitClassType="UNITCLASS_WWI_BOMBER" Role="COLLATERAL_LIMIT" Value="3" />
+    <Row UnitClassType="UNITCLASS_BOMBER" Role="COLLATERAL_LIMIT" Value="4" />
+    <Row UnitClassType="UNITCLASS_STEALTH_BOMBER" Role="COLLATERAL_LIMIT" Value="5" />
+  </Stacking_UnitClassRoles>
+  <Stacking_PromotionRoles>
+    <Row PromotionType="PROMOTION_FORMATION_1" Role="ANTI_CAVALRY" Value="1" />
+    <Row PromotionType="PROMOTION_FORMATION_2" Role="ANTI_CAVALRY" Value="1" />
+    <Row PromotionType="PROMOTION_ANTI_TANK" Role="ANTI_CAVALRY" Value="1" />
+  </Stacking_PromotionRoles>
+  <!-- Optional Stacking_UnitRoles rows override class/promotion rules, even
+       Value=0. Optional Stacking_BuildingProtection rows replace class values. -->
+  <Stacking_BuildingClassProtection>
+    <Row BuildingClassType="BUILDINGCLASS_WALLS" ProtectionPercent="10" />
+    <Row BuildingClassType="BUILDINGCLASS_CASTLE" ProtectionPercent="15" />
+    <Row BuildingClassType="BUILDINGCLASS_ARSENAL" ProtectionPercent="20" />
+    <Row BuildingClassType="BUILDINGCLASS_MILITARY_BASE" ProtectionPercent="25" />
+    <Row BuildingClassType="BUILDINGCLASS_BOMB_SHELTER" ProtectionPercent="30" />
+  </Stacking_BuildingClassProtection>
+  <Stacking_CollateralDomains>
+    <Row DomainType="DOMAIN_LAND" Enabled="1" />
+    <Row DomainType="DOMAIN_SEA" Enabled="0" />
+    <Row DomainType="DOMAIN_AIR" Enabled="0" />
+  </Stacking_CollateralDomains>
+</GameData>

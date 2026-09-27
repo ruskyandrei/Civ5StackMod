@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -13,6 +13,7 @@
 #include "ICvDLLUserInterface.h"
 #include "CvDiplomacyAI.h"
 #include "CvTypes.h"
+#include "CvStackingRules.h"
 
 #include "CvDllCity.h"
 #include "CvDllUnit.h"
@@ -95,6 +96,295 @@ static CvCombatMemberEntry* AddCombatMember(CvCombatMemberEntry* pkArray, int* p
 		return AddCombatMember(pkArray, piMembers, iMaxMembers, pkMember->GetIDInfo(), CvCombatMemberEntry::MEMBER_CITY, pkMember->getX(), pkMember->getY(), GET_PLAYER(pkMember->getOwner()).GetCurrentEra());
 
 	return NULL;
+}
+
+// Stack forecasts deliberately use leaf combat calculations, never movement or
+// tactical-search helpers: those may themselves ask this class for a defender.
+static bool IsStackCombatCandidate(const CvUnit* pUnit, const SUnitIDValueContainer& extraDamage)
+{
+	return pUnit && pUnit->IsCanDefend() && !pUnit->isCargo() &&
+		pUnit->getDomainType() != DOMAIN_AIR && !pUnit->IsDead() && !pUnit->isDelayedDeath() &&
+		pUnit->GetCurrHitPoints() > extraDamage.GetValue(pUnit->GetID());
+}
+
+static void GetStackExchange(const CvUnit* pAttacker, const CvUnit* pDefender,
+	const CvPlot* pFromPlot, const CvPlot* pTargetPlot, bool bRangedAttack,
+	int iExtraAttackerDamage, int iExtraDefenderDamage, int& iDamage, int& iRetaliation)
+{
+	iDamage = 0;
+	iRetaliation = 0;
+	if (bRangedAttack || pAttacker->getDomainType() == DOMAIN_AIR)
+	{
+		int iUnused = 0;
+		iDamage = pAttacker->GetRangeCombatDamage(pDefender, NULL, 0, iUnused, false,
+			iExtraAttackerDamage, iExtraDefenderDamage, pTargetPlot, pFromPlot, false, false);
+		if (pAttacker->getDomainType() == DOMAIN_AIR)
+			iRetaliation = pDefender->GetAirStrikeDefenseDamage(pAttacker, false, pTargetPlot);
+	}
+	else
+	{
+		int iAttack = pAttacker->GetMaxAttackStrength(pFromPlot, pTargetPlot, pDefender,
+			false, false, iExtraAttackerDamage, iExtraDefenderDamage);
+		int iDefense = pDefender->GetMaxDefenseStrength(pTargetPlot, pAttacker, pFromPlot,
+			false, false, iExtraDefenderDamage);
+		iDamage = pAttacker->getMeleeCombatDamage(iAttack, iDefense, iRetaliation, false,
+			pDefender, iExtraAttackerDamage, iExtraDefenderDamage);
+	}
+}
+
+const CvUnit* CvUnitCombat::SelectStackDefender(const CvUnit* pAttacker, const CvPlot* pFromPlot,
+	const CvPlot* pTargetPlot, const std::vector<const CvUnit*>& candidates,
+	const SUnitIDValueContainer& extraDamage, bool bRangedAttack, int iExtraAttackerDamage)
+{
+	if (!pAttacker || !pTargetPlot)
+		return NULL;
+	if (!pFromPlot)
+		pFromPlot = pAttacker->plot();
+
+	const bool bUseStackRules = CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0;
+	const bool bCanFlank = bUseStackRules && !bRangedAttack && CvStacking::CanFlank(pAttacker);
+	bool bHasExposedTarget = false;
+	bool bHasInterceptor = false;
+	for (size_t i = 0; i < candidates.size(); ++i)
+	{
+		const CvUnit* pUnit = candidates[i];
+		if (!IsStackCombatCandidate(pUnit, extraDamage))
+			continue;
+		bHasExposedTarget = bHasExposedTarget || CvStacking::IsFlankTarget(pUnit);
+		bHasInterceptor = bHasInterceptor || CvStacking::IsAntiCavalry(pUnit);
+	}
+
+	const CvUnit* pBest = NULL;
+	bool bBestSurvives = false;
+	int iBestExchange = INT_MIN;
+	int iBestRemainingHP = 0;
+	int iBestMaxHP = 1;
+	for (size_t i = 0; i < candidates.size(); ++i)
+	{
+		const CvUnit* pUnit = candidates[i];
+		if (!IsStackCombatCandidate(pUnit, extraDamage) || pUnit == pAttacker)
+			continue;
+		if (bCanFlank && bHasExposedTarget &&
+			!(bHasInterceptor ? CvStacking::IsAntiCavalry(pUnit) : CvStacking::IsFlankTarget(pUnit)))
+			continue;
+		if (!bUseStackRules)
+		{
+			if (pUnit->isBetterDefenderThan(pBest, pAttacker))
+				pBest = pUnit;
+			continue;
+		}
+
+		int iDamage = 0, iRetaliation = 0;
+		int iExtraDefenderDamage = extraDamage.GetValue(pUnit->GetID());
+		GetStackExchange(pAttacker, pUnit, pFromPlot, pTargetPlot, bRangedAttack,
+			iExtraAttackerDamage, iExtraDefenderDamage, iDamage, iRetaliation);
+		int iHP = max(0, pUnit->GetCurrHitPoints() - iExtraDefenderDamage);
+		int iRemainingHP = max(0, iHP - iDamage);
+		bool bSurvives = iRemainingHP > 0;
+		int iExchange = min(iRetaliation, max(0, pAttacker->GetCurrHitPoints() - iExtraAttackerDamage)) - min(iDamage, iHP);
+		int iMaxHP = max(1, pUnit->GetMaxHitPoints());
+		bool bBetter = !pBest || (bSurvives != bBestSurvives ? bSurvives :
+			iExchange != iBestExchange ? iExchange > iBestExchange :
+			static_cast<int64>(iRemainingHP) * iBestMaxHP != static_cast<int64>(iBestRemainingHP) * iMaxHP ? static_cast<int64>(iRemainingHP) * iBestMaxHP > static_cast<int64>(iBestRemainingHP) * iMaxHP :
+			pUnit->getOwner() != pBest->getOwner() ? pUnit->getOwner() < pBest->getOwner() : pUnit->GetID() < pBest->GetID());
+		if (bBetter)
+		{
+			pBest = pUnit;
+			bBestSurvives = bSurvives;
+			iBestExchange = iExchange;
+			iBestRemainingHP = iRemainingHP;
+			iBestMaxHP = iMaxHP;
+		}
+	}
+	return pBest;
+}
+
+// City bombardment uses the same survival / damage-exchange ordering as unit
+// attacks, with no cavalry bypass and no retaliation against the city.
+const CvUnit* CvUnitCombat::SelectStackDefenderForCity(const CvCity* pAttacker, const CvPlot* pTargetPlot,
+ const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& extraDamage)
+{
+ if (!pAttacker || !pTargetPlot)
+  return NULL;
+ const bool enabled = CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0;
+ const CvUnit* best = NULL;
+ bool bestSurvives = false;
+ int bestLoss = INT_MAX, bestRemaining = 0, bestMaxHP = 1;
+ for (size_t i = 0; i < candidates.size(); ++i)
+ {
+  const CvUnit* unit = candidates[i];
+  if (!IsStackCombatCandidate(unit, extraDamage) || !unit->isEnemy(pAttacker->getTeam(), pTargetPlot)
+   || unit->isInvisible(pAttacker->getTeam(), false))
+   continue;
+  if (MOD_GLOBAL_SUBS_UNDER_ICE_IMMUNITY && unit->getInvisibleType() == 0 && pTargetPlot->getFeatureType() == FEATURE_ICE)
+   continue;
+  if (!enabled)
+  {
+   if (unit->isBetterDefenderThan(best, NULL)) best = unit;
+   continue;
+  }
+  const int hp = unit->GetCurrHitPoints() - extraDamage.GetValue(unit->GetID());
+  const int hit = pAttacker->rangeCombatDamage(unit, false, pTargetPlot, false, extraDamage.GetValue(unit->GetID()));
+  const int remaining = max(0, hp - hit);
+  const int loss = min(hp, hit);
+  const bool survives = remaining > 0;
+  const int maxHP = max(1, unit->GetMaxHitPoints());
+  const bool better = !best || (survives != bestSurvives ? survives : loss != bestLoss ? loss < bestLoss :
+   static_cast<int64>(remaining) * bestMaxHP != static_cast<int64>(bestRemaining) * maxHP ?
+   static_cast<int64>(remaining) * bestMaxHP > static_cast<int64>(bestRemaining) * maxHP : unit->GetID() < best->GetID());
+  if (better)
+  { best = unit; bestSurvives = survives; bestLoss = loss; bestRemaining = remaining; bestMaxHP = maxHP; }
+ }
+ return best;
+}
+
+struct StackCollateralOrder
+{
+	bool operator()(const std::pair<const CvUnit*, int>& a, const std::pair<const CvUnit*, int>& b) const
+	{
+		if (a.second != b.second) return a.second > b.second;
+		if (a.first->getOwner() != b.first->getOwner()) return a.first->getOwner() < b.first->getOwner();
+		return a.first->GetID() < b.first->GetID();
+	}
+};
+
+std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDamage(
+	const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
+	int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
+	const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison, int iGarrisonDamage)
+{
+	std::vector<std::pair<const CvUnit*, int> > result;
+	if (!CvStacking::IsEnabled() || !pAttacker || !pTargetPlot || iPrimaryHitDamage <= 0)
+		return result;
+	int iLimit = min(CvStacking::GetCollateralTargetLimit(pAttacker), MAX_DAMAGE_MEMBER_COUNT);
+	if (iLimit <= 0)
+		return result;
+	int iPercent = max(0, CvStacking::GetInt("CollateralPercent", 20));
+	int iBaseDamage = static_cast<int>((static_cast<int64>(iPrimaryHitDamage) * iPercent) / 100);
+	if (iBaseDamage <= 0)
+		return result;
+	int iProtection = pTargetPlot->isCity() ? CvStacking::GetCityProtection(pTargetPlot->getPlotCity()) : 0;
+	int iMitigated = static_cast<int>((static_cast<int64>(iBaseDamage) * max(0, 100 - iProtection)) / 100);
+	if (iProtection < 100)
+		iMitigated = max(iMitigated, max(0, CvStacking::GetInt("CollateralMinimumDamage", 1)));
+	int iFloorPercent = min(100, max(0, CvStacking::GetInt("CollateralHPFloorPercent", 50)));
+	for (size_t i = 0; i < candidates.size(); ++i)
+	{
+		const CvUnit* pUnit = candidates[i];
+		if (!IsStackCombatCandidate(pUnit, extraDamage) || pUnit == pPrimaryDefender || pUnit == pAttacker ||
+			pUnit->IsCivilianUnit() || pUnit->isTrade() || !pUnit->isEnemy(pAttacker->getTeam(), pTargetPlot) ||
+			!CvStacking::IsCollateralTargetDomain(pUnit->getDomainType()) ||
+			(pUnit->getDomainType() == DOMAIN_LAND && pTargetPlot->needsEmbarkation(pUnit)))
+			continue;
+		int iPendingDirect = pUnit == pGarrison ? max(0, iGarrisonDamage) : 0;
+		int iHP = pUnit->GetCurrHitPoints() - extraDamage.GetValue(pUnit->GetID()) - iPendingDirect;
+		int iFloor = static_cast<int>((static_cast<int64>(pUnit->GetMaxHitPoints()) * iFloorPercent + 99) / 100);
+		int iDamage = min(iMitigated, max(0, iHP - iFloor));
+		if (iDamage > 0)
+			result.push_back(std::make_pair(pUnit, iDamage));
+	}
+	std::sort(result.begin(), result.end(), StackCollateralOrder());
+	if (result.size() > static_cast<size_t>(iLimit))
+		result.resize(iLimit);
+	// The engine packet has 32 slots. An already recorded garrison consumes one
+	// even when it is ineligible for collateral; keep forecasts and live identical.
+	bool bGarrisonIncluded = false;
+	for (size_t i = 0; i < result.size(); ++i)
+		bGarrisonIncluded = bGarrisonIncluded || result[i].first == pGarrison;
+	if (pGarrison && iGarrisonDamage > 0 && !bGarrisonIncluded && result.size() >= MAX_DAMAGE_MEMBER_COUNT)
+		result.resize(MAX_DAMAGE_MEMBER_COUNT - 1);
+	return result;
+}
+
+static void AddStackCollateralMembers(CvUnit& kAttacker, CvPlot& targetPlot,
+	CvUnit* pPrimaryDefender, int iPrimaryHitDamage, CvCombatInfo* pInfo)
+{
+	std::vector<const CvUnit*> candidates;
+	for (int i = 0; i < targetPlot.getNumUnits(); ++i)
+	{
+		CvUnit* pUnit = targetPlot.getUnitByIndex(i);
+		if (pUnit && !pUnit->isInvisible(kAttacker.getTeam(), false))
+			candidates.push_back(pUnit);
+	}
+	// Direct city-garrison absorption must consume HP before the collateral floor.
+	const CvUnit* pGarrison = targetPlot.isCity() ? targetPlot.getPlotCity()->GetGarrisonedUnit() : NULL;
+	int iGarrisonDamage = 0;
+	if (pGarrison)
+	{
+		CvCombatMemberEntry* entry = FindCombatMember(pInfo->getDamageMembers(), pInfo->getDamageMemberCount(),
+			pGarrison->GetIDInfo(), CvCombatMemberEntry::MEMBER_UNIT);
+		if (entry) iGarrisonDamage = entry->GetDamage();
+	}
+	std::vector<std::pair<const CvUnit*, int> > damage = CvUnitCombat::GetStackCollateralDamage(
+		&kAttacker, &targetPlot, pPrimaryDefender, iPrimaryHitDamage, candidates,
+		SUnitIDValueContainer(), pGarrison, iGarrisonDamage);
+	int iMembers = pInfo->getDamageMemberCount();
+	for (size_t i = 0; i < damage.size(); ++i)
+	{
+		CvUnit* pUnit = const_cast<CvUnit*>(damage[i].first);
+		CvCombatMemberEntry* entry = FindCombatMember(pInfo->getDamageMembers(), iMembers,
+			pUnit->GetIDInfo(), CvCombatMemberEntry::MEMBER_UNIT);
+		if (!entry)
+		{
+			entry = AddCombatMember(pInfo->getDamageMembers(), &iMembers, pInfo->getMaxDamageMemberCount(), pUnit);
+			if (entry) BATTLE_JOINED(pUnit, BATTLE_UNIT_COUNT, false);
+		}
+		if (entry)
+		{
+			entry->SetDamage(entry->GetDamage() + damage[i].second);
+			entry->SetFinalDamage(min(pUnit->GetMaxHitPoints(), pUnit->getDamage() + entry->GetDamage()));
+			entry->SetMaxHitPoints(pUnit->GetMaxHitPoints());
+		}
+	}
+	pInfo->setDamageMemberCount(iMembers);
+}
+
+void CvUnitCombat::GetStackAttackPreview(const CvUnit* pAttacker, const CvPlot* pTargetPlot,
+	bool bRangedAttack, CvUnit*& pDefender, int& iDirectDamage,
+	std::vector<std::pair<const CvUnit*, int> >& collateral)
+{
+	pDefender = NULL;
+	iDirectDamage = 0;
+	collateral.clear();
+	if (!pAttacker || !pTargetPlot || !pTargetPlot->isVisible(pAttacker->getTeam()) || pAttacker->IsDead() || pAttacker->isDelayedDeath())
+		return;
+	std::vector<const CvUnit*> candidates;
+	for (int i = 0; i < pTargetPlot->getNumUnits(); ++i)
+	{
+		const CvUnit* pUnit = pTargetPlot->getUnitByIndex(i);
+		if (pUnit && pUnit->isEnemy(pAttacker->getTeam(), pTargetPlot) && !pUnit->isInvisible(pAttacker->getTeam(), false))
+			candidates.push_back(pUnit);
+	}
+	const CvUnit* pGarrison = NULL;
+	int iGarrisonDamage = 0;
+	if (pTargetPlot->isCity() && pAttacker->AI_getUnitAIType() != UNITAI_MISSILE_AIR)
+	{
+		const CvCity* pCity = pTargetPlot->getPlotCity();
+		if (!GET_TEAM(pAttacker->getTeam()).isAtWar(pCity->getTeam()))
+			return;
+		pGarrison = pCity->GetGarrisonedUnit();
+		int iGarrisonHP = pGarrison && !pGarrison->IsDead() ? pGarrison->GetMaxHitPoints() : 0;
+		if (bRangedAttack || pAttacker->getDomainType() == DOMAIN_AIR)
+			iDirectDamage = pAttacker->GetRangeCombatDamage(NULL, pCity, iGarrisonHP, iGarrisonDamage, false);
+		else
+		{
+			int iRetaliation = 0;
+			iDirectDamage = pAttacker->getMeleeCombatDamageCity(pAttacker->GetMaxAttackStrength(pAttacker->plot(), pTargetPlot, NULL),
+				pCity, iRetaliation, iGarrisonHP, iGarrisonDamage, false);
+		}
+	}
+	else
+	{
+		pDefender = const_cast<CvUnit*>(SelectStackDefender(pAttacker, pAttacker->plot(), pTargetPlot, candidates,
+			SUnitIDValueContainer(), bRangedAttack));
+		if (!pDefender)
+			return;
+		int iRetaliation = 0;
+		GetStackExchange(pAttacker, pDefender, pAttacker->plot(), pTargetPlot, bRangedAttack, 0, 0, iDirectDamage, iRetaliation);
+	}
+	if (bRangedAttack || pAttacker->getDomainType() == DOMAIN_AIR)
+		collateral = GetStackCollateralDamage(pAttacker, pTargetPlot, pDefender, iDirectDamage, candidates,
+			SUnitIDValueContainer(), pGarrison, iGarrisonDamage);
 }
 
 //	---------------------------------------------------------------------------
@@ -608,6 +898,7 @@ void CvUnitCombat::GenerateRangedCombatInfo(CvUnit& kAttacker, CvUnit* pkDefende
 	int iExperience = 0;
 	int iMaxXP = 0;
 	int iDamage = 0;
+	int iRawPrimaryDamage = 0;
 	int iTotalDamage = 0;
 	if(!plot.isCity())
 	{
@@ -625,6 +916,7 @@ void CvUnitCombat::GenerateRangedCombatInfo(CvUnit& kAttacker, CvUnit* pkDefende
 		//ASSERT(pkDefender->IsCanDefend());
 		int iUnusedReferenceVariable = 0;
 		iDamage = kAttacker.GetRangeCombatDamage(pkDefender, /*pCity*/ NULL, 0, iUnusedReferenceVariable, /*bIncludeRand*/ bIncludeRand);
+		iRawPrimaryDamage = iDamage;
 
 		if (iDamage + pkDefender->getDamage() > pkDefender->GetMaxHitPoints())
 		{
@@ -661,6 +953,7 @@ void CvUnitCombat::GenerateRangedCombatInfo(CvUnit& kAttacker, CvUnit* pkDefende
 		int iGarrisonDamage = 0;
 		iDamage = kAttacker.GetRangeCombatDamage(/*pDefender*/ NULL, pCity, iGarrisonMaxHP, iGarrisonDamage,
 			/*bIncludeRand*/ bIncludeRand, 0, 0, NULL, NULL, false, false);
+		iRawPrimaryDamage = iDamage;
 
 		if(pGarrison && iGarrisonDamage > 0)
 		{
@@ -686,6 +979,8 @@ void CvUnitCombat::GenerateRangedCombatInfo(CvUnit& kAttacker, CvUnit* pkDefende
 		iTotalDamage = std::max(pCity->getDamage(), pCity->getDamage() + iDamage);
 	}
 	//////////////////////////////////////////////////////////////////////
+
+	AddStackCollateralMembers(kAttacker, plot, plot.isCity() ? NULL : pkDefender, iRawPrimaryDamage, pkCombatInfo);
 
 	pkCombatInfo->setFinalDamage(BATTLE_UNIT_ATTACKER, 0);				// Total damage to the unit
 	pkCombatInfo->setDamageInflicted(BATTLE_UNIT_ATTACKER, iDamage);		// Damage inflicted this round
@@ -861,6 +1156,7 @@ void CvUnitCombat::ResolveRangedUnitVsCombat(const CvCombatInfo& kCombatInfo, ui
 					if (pkDefender->isHuman(ISHUMAN_HANDICAP))
 						bTargetIsHuman = true;
 
+					CvUnitCombat::ApplyExtraUnitDamage(pkAttacker, kCombatInfo, uiParentEventID);
 					pkAttacker->DoAdjacentPlotDamage(pkTargetPlot,min(iDamage,pkAttacker->getSplashDamage()),"TXT_KEY_MISC_YOU_UNIT_WAS_DAMAGED_SPLASH");
 					if (!kCombatInfo.getHasMoved(BATTLE_UNIT_ATTACKER))
 					{
@@ -1026,8 +1322,8 @@ void CvUnitCombat::ResolveRangedUnitVsCombat(const CvCombatInfo& kCombatInfo, ui
 						pkDLLInterface->AddMessage(uiParentEventID, pkAttacker->getOwner(), false, /*10*/ GD_INT_GET(EVENT_MESSAGE_TIME), strBuffer/*, "AS2D_COMBAT", MESSAGE_TYPE_INFO, pkAttacker->m_pUnitInfo->GetButton(), (ColorTypes)GC.getInfoTypeForString("COLOR_RED"), pkAttacker->getX(), pkAttacker->getY(), true, true*/);
 					}
 
-					//apply damage to garrison
-					if (MOD_CORE_GARRISON_DAMAGE_ABSORPTION)
+					// Apply recorded garrison and collateral damage, independently of absorption being enabled.
+					if (kCombatInfo.getDamageMemberCount() > 0)
 						CvUnitCombat::ApplyExtraUnitDamage(pkAttacker, kCombatInfo, uiParentEventID);
 				}
 
@@ -1415,6 +1711,7 @@ void CvUnitCombat::GenerateAirCombatInfo(CvUnit& kAttacker, CvUnit* pkDefender, 
 	int iMaxXP = 0;
 
 	int iAttackerDamageInflicted = 0;
+	int iRawPrimaryDamage = 0;
 	int iDefenderDamageInflicted = 0;
 
 	int iAttackerTotalDamageInflicted = 0;
@@ -1446,6 +1743,7 @@ void CvUnitCombat::GenerateAirCombatInfo(CvUnit& kAttacker, CvUnit* pkDefender, 
 		bool bIncludeRand = !GC.getGame().isGameMultiPlayer();
 		int iUnusedReferenceVariable = 0;
 		iAttackerDamageInflicted = kAttacker.GetAirCombatDamage(pkDefender, /*pCity*/ NULL, 0, iUnusedReferenceVariable, /*bIncludeRand*/ bIncludeRand);
+		iRawPrimaryDamage = iAttackerDamageInflicted;
 
 		if(iAttackerDamageInflicted + pkDefender->getDamage() > pkDefender->GetMaxHitPoints())
 		{
@@ -1488,6 +1786,7 @@ void CvUnitCombat::GenerateAirCombatInfo(CvUnit& kAttacker, CvUnit* pkDefender, 
 
 		int iGarrisonDamage = 0;
 		iAttackerDamageInflicted = kAttacker.GetAirCombatDamage(/*pUnit*/ NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, /*bIncludeRand*/ true);
+		iRawPrimaryDamage = iAttackerDamageInflicted;
 
 		if(pGarrison && iGarrisonDamage > 0)
 		{
@@ -1537,6 +1836,9 @@ void CvUnitCombat::GenerateAirCombatInfo(CvUnit& kAttacker, CvUnit* pkDefender, 
 		}
 	}
 	//////////////////////////////////////////////////////////////////////
+
+	// Successful interceptions return above, before any collateral is recorded.
+	AddStackCollateralMembers(kAttacker, plot, (!plot.isCity() || kAttacker.AI_getUnitAIType() == UNITAI_MISSILE_AIR) ? pkDefender : NULL, iRawPrimaryDamage, pkCombatInfo);
 
 	pkCombatInfo->setFinalDamage(BATTLE_UNIT_ATTACKER, iDefenderTotalDamageInflicted);				// Total damage to the unit
 	pkCombatInfo->setDamageInflicted(BATTLE_UNIT_ATTACKER, iAttackerDamageInflicted);		// Damage inflicted this round
@@ -1647,6 +1949,8 @@ void CvUnitCombat::ResolveAirUnitVsCombat(const CvCombatInfo& kCombatInfo, uint 
 				//One Hit
 				if (MOD_ENABLE_ACHIEVEMENTS && iAttackerDamageInflicted > pkDefender->GetCurrHitPoints() && !pkDefender->IsHurt() && pkAttacker->isHuman(ISHUMAN_ACHIEVEMENTS) && !GC.getGame().isGameMultiPlayer())
 					gDLL->UnlockAchievement(ACHIEVEMENT_ONEHITKILL);
+
+				CvUnitCombat::ApplyExtraUnitDamage(pkAttacker, kCombatInfo, uiParentEventID);
 
 				pkAttacker->changeDamage(iDefenderDamageInflicted, pkDefender->getOwner());
 				pkDefender->changeDamage(iAttackerDamageInflicted, pkAttacker->getOwner());
@@ -1894,8 +2198,8 @@ void CvUnitCombat::ResolveAirUnitVsCombat(const CvCombatInfo& kCombatInfo, uint 
 					ApplyPostCityCombatEffects(pkAttacker, pCity, iAttackerDamageInflicted);
 				}
 
-				//apply damage to garrison
-				if (MOD_CORE_GARRISON_DAMAGE_ABSORPTION)
+				// Apply recorded garrison and collateral damage, independently of absorption being enabled.
+				if (kCombatInfo.getDamageMemberCount() > 0)
 					CvUnitCombat::ApplyExtraUnitDamage(pkAttacker, kCombatInfo, uiParentEventID);
 			}
 		}

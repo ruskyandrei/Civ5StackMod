@@ -535,6 +535,7 @@ protected:
 	static int lCanRangeStrikeNow(lua_State* L);
 	static int lCanRangeStrikeAt(lua_State* L);
 	static int lHasPerformedRangedStrikeThisTurn(lua_State* L);
+	static int lGetStackDefender(lua_State* L);
 	static int lRangeCombatUnitDefense(lua_State* L);
 	static int lRangeCombatDamage(lua_State* L);
 	static int lGetAirStrikeDefenseDamage(lua_State* L);

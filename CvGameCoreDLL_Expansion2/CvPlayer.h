@@ -2546,6 +2546,7 @@ public:
 	int GetPlotDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer(), int iExtraDamage = 0, AirActionType iAirAction = AIR_ACTION_ATTACK);
 	int GetPlotDanger(const CvCity* pCity, const CvUnit* pPretendGarrison = NULL, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer());
 	int GetPlotDanger(const CvPlot& Plot, bool bFixedDamageOnly);
+	CvDangerPlots* GetDangerPlots() const { return m_pDangerPlots; }
 	bool IsVanishedUnit(const IDInfo& id) const;
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck);
 

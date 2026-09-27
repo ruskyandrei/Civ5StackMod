@@ -7,6 +7,8 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvDangerPlots.h"
+#include "CvStackingRules.h"
+#include "CvUnitCombat.h"
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
 #include "CvEnumSerialization.h"
@@ -148,8 +150,20 @@ void CvDangerPlots::UpdateDanger()
 		int iLoop;
 		for (CvUnit* pLoopUnit = thisPlayer.firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = thisPlayer.nextUnit(&iLoop))
 		{
-			if (pLoopUnit->IsCombatUnit() && pLoopUnit->GetDanger() > pLoopUnit->GetCurrHitPoints())
-				plotsWithOwnedUnitsLikelyToBeKilled.push_back(pLoopUnit->plot()->GetPlotIndex());
+   if (pLoopUnit->IsCombatUnit() && pLoopUnit->GetDanger() > pLoopUnit->GetCurrHitPoints())
+   {
+    bool survivingDefender = false;
+    if (CvStacking::IsEnabled())
+     for (int i = 0; i < pLoopUnit->plot()->getNumUnits(); ++i)
+     {
+      const CvUnit* other = pLoopUnit->plot()->getUnitByIndex(i);
+      if (other && other != pLoopUnit && other->getOwner() == m_ePlayer && other->IsCombatUnit() && !other->isDelayedDeath()
+       && other->GetDanger() < other->GetCurrHitPoints())
+      { survivingDefender = true; break; }
+     }
+    if (!survivingDefender)
+     plotsWithOwnedUnitsLikelyToBeKilled.push_back(pLoopUnit->plot()->GetPlotIndex());
+   }
 		}
 
 		//second pass
@@ -381,6 +395,16 @@ int CvDangerPlots::GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison
 }
 
 /// Return the maximum amount of damage a unit could take at this plot
+int CvDangerPlots::GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates,
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
+{
+ if (m_bDirty)
+  UpdateDanger();
+ if (m_DangerPlots.empty() || !pUnit)
+  return 0;
+ return m_DangerPlots[plot.GetPlotIndex()].GetStackDanger(pUnit, candidates, friendlyDamage, enemyDamage);
+}
+
 int CvDangerPlots::GetDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction)
 {
 	if(m_DangerPlots.empty() || !pUnit)
@@ -761,6 +785,21 @@ int CvDangerPlotContents::GetDanger(const CvUnit* pUnit, const SUnitIDValueConta
 	if (pUnit->getDomainType() == DOMAIN_AIR)
 		return GetAirUnitDamage(pUnit, iAirAction);
 
+ if (CvStacking::IsEnabled() && pUnit->IsCombatUnit() && !pUnit->isCargo())
+ {
+  vector<const CvUnit*> candidates;
+  for (int i = 0; i < m_pPlot->getNumUnits(); ++i)
+  {
+   const CvUnit* other = m_pPlot->getUnitByIndex(i);
+   if (other && other != pUnit && other->getOwner() == pUnit->getOwner() && other->IsCombatUnit() && !other->isCargo() && !other->isDelayedDeath())
+    candidates.push_back(other);
+  }
+  candidates.push_back(pUnit);
+  SUnitIDValueContainer friendlyDamage;
+  friendlyDamage.SetValue(pUnit->GetID(), iExtraDamage);
+  return GetStackDanger(pUnit, candidates, friendlyDamage, extraUnitDamage);
+ }
+
 	//otherwise calculate from scratch
 	int iPlotDamage = 0;
 
@@ -925,11 +964,222 @@ int CvDangerPlotContents::GetDanger(const CvUnit* pUnit, const SUnitIDValueConta
 	return iPlotDamage;
 }
 
+// A forecast owns this attempt ledger; it never changes live unit counters.
+// ResolveAirCombat consumes a selected interceptor even on evasion or a miss.
+// Selection mirrors CvPlot::GetBestInterceptor, with virtual HP and occupancy.
+static int StackAirStrikeChance(const CvUnit* attacker, const CvPlot* target,
+ PlayerTypes defendingOwner, const vector<const CvUnit*>& candidates,
+ const SUnitIDValueContainer& friendlyDamage, int extraAttackerDamage,
+ SUnitIDValueContainer& interceptionUses)
+{
+ const CvUnit* best = NULL;
+ int bestDistance = INT_MAX, bestExtraDamage = 0, bestProbability = 0;
+ int64 bestValue = 0;
+ const vector<PlayerTypes>& enemies = GET_PLAYER(attacker->getOwner()).GetPlayersAtWarWith();
+ for (size_t i = 0; i < enemies.size(); ++i)
+ {
+  const CvPlayer& player = GET_PLAYER(enemies[i]);
+  if (attacker->isInvisible(player.getTeam(), false, false))
+   continue;
+  const vector<pair<int, int> >& interceptors = player.GetPossibleInterceptors();
+  for (size_t j = 0; j < interceptors.size(); ++j)
+  {
+   const CvUnit* unit = player.getUnit(interceptors[j].first);
+   if (!unit || unit->IsDead() || unit->isDelayedDeath() || !unit->canInterceptNow())
+    continue;
+   const int extraDamage = max(0, friendlyDamage.GetValue(unit->GetID()));
+   const int hp = unit->GetCurrHitPoints() - extraDamage;
+   if (hp <= 0 || interceptionUses.GetValue(unit->GetID()) >= unit->GetNumInterceptions() - unit->getMadeInterceptionCount())
+    continue;
+   const bool inVirtualStack = std::find(candidates.begin(), candidates.end(), unit) != candidates.end();
+   // A removed protector must not defend the solo/after-departure alternative.
+   // Aircraft are intentionally absent from combat-stack candidate vectors.
+   if (!inVirtualStack && unit->getOwner() == defendingOwner && unit->getDomainType() != DOMAIN_AIR && unit->plot() == target)
+    continue;
+   const CvPlot* from = inVirtualStack ? target : unit->plot();
+   if (!from)
+    continue;
+   const int distance = plotDistance(*from, *target);
+   if (distance > 11 || distance > unit->GetAirInterceptRange())
+    continue;
+   if (target->isOwned() && !player.IsAtWarWith(target->getOwner()) && !target->IsFriendlyTerritory(player.GetID()))
+    continue;
+   // Match GetBestAttackStrength, including prospective damage rather than
+   // scaling an already rounded live interception probability or strength.
+   const int strength = max(unit->GetMaxRangedCombatStrength(NULL, NULL, true, NULL, NULL, true, true, extraDamage),
+    unit->GetMaxAttackStrength(NULL, NULL, NULL, true, true, extraDamage));
+   const int attackStrength = static_cast<int>(static_cast<int64>(strength) * (100 + unit->GetInterceptionCombatModifier()) / 100);
+   const int probability = static_cast<int>(static_cast<int64>(unit->getInterceptChance()) * hp / max(1, unit->GetMaxHitPoints()));
+   int healthFactor = probability;
+   if (unit->getDomainType() == DOMAIN_AIR)
+    healthFactor = static_cast<int>(static_cast<int64>(healthFactor) * (static_cast<int64>(hp) * 100) / max(1, unit->GetMaxHitPoints()) / 100);
+   const int64 value = static_cast<int64>(attackStrength) * healthFactor;
+   // Preserve the live player/interceptor iteration order for equal-distance ties.
+   if (value > bestValue || (value == bestValue && distance < bestDistance))
+   {
+    best = unit; bestValue = value; bestDistance = distance;
+    bestExtraDamage = extraDamage; bestProbability = probability;
+   }
+  }
+ }
+ if (!best)
+  return 10000;
+ interceptionUses.ChangeValue(best->GetID(), 1);
+
+ // Credit protection only if even the minimum interception roll does damage.
+ // A mean-positive but possibly zero hit must not imply a guaranteed abort.
+ const int attackerStrength = attacker->GetMaxRangedCombatStrength(best, NULL, false, target, target,
+  false, false, extraAttackerDamage, bestExtraDamage);
+ int interceptorStrength = best->getDomainType() == DOMAIN_AIR
+  ? best->GetMaxRangedCombatStrength(attacker, NULL, true, target, target, false, false, bestExtraDamage, extraAttackerDamage)
+  : best->GetMaxAttackStrength(NULL, NULL, attacker, false, false, bestExtraDamage, extraAttackerDamage);
+ interceptorStrength = static_cast<int>(static_cast<int64>(interceptorStrength) * (100 + best->GetInterceptionCombatModifier()) / 100);
+ const int minimumHit = CvUnitCombat::DoDamageMath(interceptorStrength, attackerStrength,
+  GD_INT_GET(INTERCEPTION_SAME_STRENGTH_MIN_DAMAGE), 0, false, CvSeeder(), attacker->GetInterceptionDefenseDamageModifier()) / 100;
+ if (minimumHit <= 0)
+  return 10000;
+ // Two independent rolls: interception is certain at >=100, even when
+ // promotions permit values above100; evasion is separately clamped.
+ return 10000 - min(100, max(0, bestProbability)) * (100 - min(100, max(0, attacker->evasionProbability())));
+}
+
+static int StackExpectedStrikeDamage(int hit, int strikeChance)
+{
+ // Mean-HP-state approximation, not a probability tree or a worst-case bound.
+ // Round positive expected harm upward; exact0/100% outcomes remain exact.
+ return hit > 0 ? static_cast<int>((static_cast<int64>(hit) * strikeChance + 9999) / 10000) : 0;
+}
+
+// City and occupant forecasts must share garrison replacement and collateral:
+// otherwise the same siege volley has two incompatible survival predictions.
+static int SimulateStackCityThreats(const CvDangerPlotContents& contents, const CvCity* city,
+ const vector<const CvUnit*>& candidates, SUnitIDValueContainer& damage,
+ const SUnitIDValueContainer& enemyDamage, int extraCityDamage, bool& cityCanFall)
+{
+ int result = 0;
+ cityCanFall = false;
+ SUnitIDValueContainer interceptionUses;
+ for (DangerUnitVector::const_iterator it = contents.m_apUnits.begin(); it != contents.m_apUnits.end(); ++it)
+ {
+  const CvUnit* attacker = GET_PLAYER(it->first).getUnit(it->second);
+  if (!attacker || attacker->isDelayedDeath() || attacker->IsDead() || attacker->plot() == city->plot())
+   continue;
+  const int attackerDamage = enemyDamage.GetValue(attacker->GetID());
+  if (attackerDamage >= attacker->GetCurrHitPoints())
+   continue;
+  const int strikeChance = attacker->getDomainType() == DOMAIN_AIR
+   ? StackAirStrikeChance(attacker, city->plot(), city->getOwner(), candidates, damage, attackerDamage, interceptionUses) : 10000;
+  if (strikeChance == 0)
+   continue;
+  const CvUnit* garrison = TacticalAIHelpers::GetSimulatedGarrison(city, candidates, damage);
+  const int range = attacker->IsCanAttackRanged() ? attacker->GetRange() : 1;
+  const CvPlot* from = plotDistance(*city->plot(), *attacker->plot()) > range ? NULL : attacker->plot();
+  int retaliation = 0, garrisonHit = 0;
+  const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city, attacker, from, retaliation, garrisonHit,
+   false, attackerDamage, extraCityDamage + result, garrison ? damage.GetValue(garrison->GetID()) : 0, true, true, garrison);
+  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, city->plot(), NULL,
+   hit, candidates, damage, garrison, garrisonHit);
+  result += StackExpectedStrikeDamage(hit, strikeChance);
+  if (garrison)
+   damage.ChangeValue(garrison->GetID(), StackExpectedStrikeDamage(garrisonHit, strikeChance));
+  for (size_t i = 0; i < collateral.size(); ++i)
+   damage.ChangeValue(collateral[i].first->GetID(), StackExpectedStrikeDamage(collateral[i].second, strikeChance));
+  cityCanFall |= !attacker->IsCanAttackRanged() && !attacker->isNoCapture() && extraCityDamage + result >= city->GetMaxHitPoints() - city->getDamage();
+ }
+ return result;
+}
+
+// Simulate each known attack against the surviving virtual stack. Friendly and
+// enemy damage containers remain separate: player-local unit IDs may overlap.
+int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const CvUnit*>& candidates,
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
+{
+ if (!pUnit || !m_pPlot)
+  return 0;
+ SUnitIDValueContainer damage = friendlyDamage;
+ const int initialDamage = damage.GetValue(pUnit->GetID());
+ CvCity* city = m_pPlot->isFriendlyCity(*pUnit) ? m_pPlot->getPlotCity() : NULL;
+ if (city)
+ {
+  bool cityCanFall = false;
+  SimulateStackCityThreats(*this, city, candidates, damage, enemyDamage, 0, cityCanFall);
+  if (cityCanFall)
+   return INT_MAX;
+  int result = max(0, damage.GetValue(pUnit->GetID()) - initialDamage);
+  result += m_iImprovementDamage + m_iFogCount * FOG_DEFAULT_DANGER;
+  result += m_bFlatPlotDamage ? m_pPlot->getTurnDamage(pUnit->ignoreTerrainDamage(), pUnit->ignoreFeatureDamage(), pUnit->extraTerrainDamage(), pUnit->extraFeatureDamage()) : 0;
+  return result;
+ }
+ SUnitIDValueContainer interceptionUses;
+ for (DangerUnitVector::const_iterator it = m_apUnits.begin(); it != m_apUnits.end(); ++it)
+ {
+  const CvUnit* attacker = GET_PLAYER(it->first).getUnit(it->second);
+  if (!attacker || attacker->isDelayedDeath() || attacker->IsDead() || attacker->plot() == m_pPlot)
+   continue;
+  int attackerDamage = enemyDamage.GetValue(attacker->GetID());
+  if (attackerDamage >= attacker->GetCurrHitPoints())
+   continue;
+  const int strikeChance = attacker->getDomainType() == DOMAIN_AIR
+   ? StackAirStrikeChance(attacker, m_pPlot, pUnit->getOwner(), candidates, damage, attackerDamage, interceptionUses) : 10000;
+  if (strikeChance == 0)
+   continue;
+  const int range = attacker->IsCanAttackRanged() ? attacker->GetRange() : 1;
+  const CvPlot* from = plotDistance(*m_pPlot, *attacker->plot()) > range ? NULL : attacker->plot();
+  const CvUnit* defender = CvUnitCombat::SelectStackDefender(attacker, from, m_pPlot, candidates, damage, attacker->IsCanAttackRanged(), attackerDamage);
+  if (!defender)
+   continue;
+  int retaliation = 0;
+  const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(defender, attacker, m_pPlot, from, retaliation, false,
+   attackerDamage, damage.GetValue(defender->GetID()), true, true);
+  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, m_pPlot, defender, hit,
+   candidates, damage);
+  // Resolve the entire strike using its pre-hit state, then select anew.
+  if (defender)
+   damage.ChangeValue(defender->GetID(), StackExpectedStrikeDamage(hit, strikeChance));
+  for (size_t i = 0; i < collateral.size(); ++i)
+   damage.ChangeValue(collateral[i].first->GetID(), StackExpectedStrikeDamage(collateral[i].second, strikeChance));
+  for (size_t i = 0; i < candidates.size(); ++i)
+   if (candidates[i]->GetCurrHitPoints() > damage.GetValue(candidates[i]->GetID()))
+    damage.ChangeValue(candidates[i]->GetID(), max(0, attacker->getAoEDamageOnMove()));
+ }
+ // City fire uses the identical selector as live city combat and UI.
+ if (!city)
+  for (DangerCityVector::const_iterator it = m_apCities.begin(); it != m_apCities.end(); ++it)
+  {
+   const CvCity* attacker = GET_PLAYER(it->first).getCity(it->second);
+   if (!attacker || attacker->getTeam() == pUnit->getTeam() || enemyDamage.GetValue(-it->second) >= attacker->GetMaxHitPoints() - attacker->getDamage())
+    continue;
+   const CvUnit* best = CvUnitCombat::SelectStackDefenderForCity(attacker, m_pPlot, candidates, damage);
+   if (best)
+    damage.ChangeValue(best->GetID(), attacker->rangeCombatDamage(best, false, m_pPlot, false, damage.GetValue(best->GetID())));
+  }
+ int result = max(0, damage.GetValue(pUnit->GetID()) - initialDamage);
+ result += m_iImprovementDamage + m_iFogCount * FOG_DEFAULT_DANGER;
+ result += m_bFlatPlotDamage ? m_pPlot->getTurnDamage(pUnit->ignoreTerrainDamage(), pUnit->ignoreFeatureDamage(), pUnit->extraTerrainDamage(), pUnit->extraFeatureDamage()) : 0;
+ return result;
+}
+
 // Get the maximum damage city could receive this turn if it were in this plot
 int CvDangerPlotContents::GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison, const SUnitIDValueContainer& extraUnitDamage, int iExtraSelfDamage)
 {
 	if (!m_pPlot || !pCity)
 		return 0;
+
+ if (CvStacking::IsEnabled())
+ {
+  vector<const CvUnit*> candidates;
+  for (int i = 0; i < m_pPlot->getNumUnits(); ++i)
+  {
+   const CvUnit* unit = m_pPlot->getUnitByIndex(i);
+   if (unit && unit->getOwner() == pCity->getOwner() && unit->IsCombatUnit() && !unit->isCargo() && !unit->isDelayedDeath())
+    candidates.push_back(unit);
+  }
+  if (pPretendGarrison && pPretendGarrison->getOwner() == pCity->getOwner() && std::find(candidates.begin(), candidates.end(), pPretendGarrison) == candidates.end())
+   candidates.push_back(pPretendGarrison);
+  SUnitIDValueContainer damage;
+  bool cityCanFall = false;
+  return SimulateStackCityThreats(*this, pCity, candidates, damage, extraUnitDamage, iExtraSelfDamage, cityCanFall);
+ }
 
 	int iPlotDamage = 0;
 	CvPlot* pCityPlot = pCity->plot();

@@ -254,6 +254,50 @@ local function SetFlagParent( flag )
 end
 
 --==========================================================
+local function UpdateStackBadges(plot)
+    local threshold, enabled = 3, true
+    if GameInfo.Stacking_Settings then
+        for row in GameInfo.Stacking_Settings() do
+            if row.Name == "UIStackFlagCollapseThreshold" then threshold = math.max(2, tonumber(row.Value) or 3) end
+            if row.Name == "UIStackEnabled" or row.Name == "Enabled" then enabled = enabled and tonumber(row.Value) ~= 0 end
+        end
+    end
+    local groups = {}
+    for i = 0, GetPlotNumUnits(plot) - 1 do
+        local unit = GetPlotUnit(plot, i)
+        local flag = unit and g_UnitFlags[unit:GetOwner()] and g_UnitFlags[unit:GetOwner()][unit:GetID()]
+        if flag and flag.StackBadge then
+            flag.StackBadge:SetHide(true)
+            flag.Container:SetHide(false)
+            if enabled and not unit:IsCargo() and not flag.m_IsAirCraft and
+                not flag.m_IsHiddenByFog and not flag.m_IsInvisibleToActiveTeam then
+                local owner = unit:GetOwner()
+                groups[owner] = groups[owner] or {}
+                table_insert(groups[owner], flag)
+            end
+        end
+    end
+    for owner, group in pairs(groups) do
+        if #group >= threshold then
+            local representative = group[1]
+            for _, flag in ipairs(group) do
+                if flag.m_IsSelected or (not representative.m_IsSelected and flag.m_UnitID < representative.m_UnitID) then
+                    representative = flag
+                end
+            end
+            for _, flag in ipairs(group) do flag.Container:SetHide(flag ~= representative) end
+            representative.Container:SetOffsetVal(plot:IsCity() and 43 or 0, plot:IsCity() and -39 or 0)
+            representative.StackBadge:SetHide(false)
+            representative.StackBadge:SetText(tostring(#group))
+            representative.StackBadge:SetToolTipString(tostring(#group) .. " units on this tile. Click to inspect the stack.")
+            local unitID, ownerID = representative.m_UnitID, owner
+            representative.StackBadge:RegisterCallback(Mouse.eLClick, function()
+                LuaEvents.StackRosterOpen(ownerID, unitID)
+            end)
+        end
+    end
+end
+
 local function UpdatePlotFlags( plot )
 	-- DebugPrint( "UpdatePlotFlags at plot XY=", plot:GetX(), plot:GetY() ) end
 	local flags = {}
@@ -335,6 +379,7 @@ local function UpdatePlotFlags( plot )
 			end
 		end
 	end
+	UpdateStackBadges(plot)
 	n = #aflags
 	-- DebugPrint( n,"airbase flags found") end
 	local plotIndex = plot:GetPlotIndex()
@@ -395,6 +440,14 @@ local function UpdatePlotFlags( plot )
 		end
 	end
 end--UpdatePlotFlags
+
+-- Visibility changes can remove the representative flag without a movement event.
+-- Rebuild from visible members so badges neither leak hidden counts nor hide a surviving flag.
+local function RefreshStackVisibility(playerID, unitID)
+    local flag = g_UnitFlags[playerID] and g_UnitFlags[playerID][unitID]
+    if flag and flag.m_Plot then UpdateStackBadges(flag.m_Plot) end
+end
+
 
 --==========================================================
 local function SetFlagSelected( flag, isSelected )
@@ -468,6 +521,7 @@ local function SetFlagSelected( flag, isSelected )
 		g_SelectedFlag = nil
 	end
 	SetFlagParent( flag )
+	if flag.m_Plot then UpdatePlotFlags(flag.m_Plot) end
 end--SetFlagSelected
 
 --==========================================================
@@ -1308,3 +1362,21 @@ if ContextPtr:IsHotLoad() then
 		end
 	end
 end
+
+
+Events.UnitVisibilityChanged.Add(RefreshStackVisibility)
+Events.UnitStateChangeDetected.Add(RefreshStackVisibility)
+Events.HexFOWStateChanged.Add(function(hexPos, fogState, wholeMap)
+    if wholeMap then
+        local plots = {}
+        for _, flags in pairs(g_UnitFlags) do
+            for _, flag in pairs(flags) do
+                if flag.m_Plot then plots[flag.m_Plot:GetPlotIndex()] = flag.m_Plot end
+            end
+        end
+        for _, plot in pairs(plots) do UpdateStackBadges(plot) end
+    else
+        local plot = Map_GetPlot(ToGridFromHex(hexPos.x, hexPos.y))
+        if plot then UpdateStackBadges(plot) end
+    end
+end)

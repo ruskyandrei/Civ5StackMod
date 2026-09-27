@@ -1233,6 +1233,11 @@
         <Type>UpdateDatabase</Type>
         <FileName>Database Changes/Triggers.sql</FileName>
       </Action>
+      <Action>
+        <Set>OnModActivated</Set>
+        <Type>UpdateDatabase</Type>
+        <FileName>Database Changes\StackingVPConfig.xml</FileName>
+      </Action>
     </ModActions>
     <ModReferences />
     <ReloadStrategicViewSystem>true</ReloadStrategicViewSystem>
@@ -1536,6 +1541,11 @@
     <PackageMod>false</PackageMod>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="Database Changes\StackingVPConfig.xml">
+      <SubType>Lua</SubType>
+      <ImportIntoVFS>False</ImportIntoVFS>
+    </Content>
+
     <Folder Include="Assets" />
     <Folder Include="Core Files" />
     <Folder Include="Database Changes" />

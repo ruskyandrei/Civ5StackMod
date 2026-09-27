@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Context Font="TwCenMT18" FontStyle="Shadow" ColorSet="Beige_Black_Alpha">
+  <Grid ID="StackPanel" Anchor="L,B" Offset="110,220" Size="360,165" Padding="0,0" Style="Grid9FrameBlack" ConsumeMouse="1" Hidden="1">
+    <GridButton ID="StackToggle" Anchor="L,T" Offset="12,10" Size="220,30" Style="SmallButton">
+      <Label ID="StackTitle" Anchor="L,C" Offset="8,0" String="Stack"/>
+    </GridButton>
+    <GridButton ID="StackMove" Anchor="R,T" Offset="12,10" Size="112,30" Style="SmallButton">
+      <Label ID="StackMoveLabel" Anchor="C,C" String="Move Stack"/>
+    </GridButton>
+    <Label ID="StackCapacity" Anchor="L,T" Offset="16,44" Font="TwCenMT16" WrapWidth="330"/>
+    <ScrollPanel ID="StackScroll" Anchor="L,T" Offset="12,68" Size="336,76" Vertical="1" AutoScrollBar="1" ConsumeMouse="1">
+      <Stack ID="StackRows" Anchor="L,T" StackGrowth="Bottom" Padding="2"/>
+      <ScrollBar Style="VertSlider" Anchor="R,C" Length="60" AnchorSide="o,i"/>
+      <UpButton Style="ScrollBarUp" Anchor="R,T" AnchorSide="o,i"/>
+      <DownButton Style="ScrollBarDown" Anchor="R,B" AnchorSide="o,i"/>
+    </ScrollPanel>
+    <Label ID="StackSummary" Anchor="L,T" Offset="16,148" WrapWidth="326" Font="TwCenMT16"/>
+  </Grid>
+  <Container ID="StackScrap" Hidden="1"/>
+  <Instance Name="StackMember">
+    <GridButton ID="Row" Size="318,38" Style="SmallButton2" ConsumeMouse="1">
+      <Image ID="Portrait" Anchor="L,C" Offset="3,0" Size="32,32"/>
+      <Label ID="Name" Anchor="L,T" Offset="42,4" Font="TwCenMT16" TruncateWidth="255"/>
+      <Label ID="Detail" Anchor="L,T" Offset="42,24" Font="TwCenMT14" TruncateWidth="255"/>
+    </GridButton>
+  </Instance>
+</Context>

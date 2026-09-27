@@ -191,6 +191,12 @@ protected:
 	static int lIsLinked(lua_State* L);
 	static int lIsLinkedLeader(lua_State* L);
 	static int lIsGrouped(lua_State* L);
+	static int lGetStackingLimit(lua_State* L);
+	static int lCanStackAtPlot(lua_State* L);
+	static int lGetStackRoleInfo(lua_State* L);
+	static int lGetStackAttackPreview(lua_State* L);
+	static int lGetStackMovePreview(lua_State* L);
+	static int lDoStackMove(lua_State* L);
 	static int lCanLinkUnits(lua_State* L);
 	static int lLinkUnits(lua_State* L);
 	static int lUnlinkUnits(lua_State* L);

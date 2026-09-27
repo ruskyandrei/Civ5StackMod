@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Loaded after VP promotion changes. This retains the existing strength
+     penalty; it is not a final-damage multiplier and does not alter city damage. -->
+<GameData>
+  <UnitPromotions_Domains>
+    <Update>
+      <Where PromotionType="PROMOTION_SIEGE_INACCURACY" DomainType="DOMAIN_LAND" />
+      <Set Attack="-33" />
+    </Update>
+  </UnitPromotions_Domains>
+</GameData>

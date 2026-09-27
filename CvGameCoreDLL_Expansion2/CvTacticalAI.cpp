@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -6,13 +6,15 @@
 	All rights reserved. 
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingRules.h"
+#include "CvDangerPlots.h"
+#include "CvUnitCombat.h"
 #include "CvTacticalAI.h"
 #include "CvTacticalAnalysisMap.h"
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
 #include "CvEconomicAI.h"
 #include "CvEnumSerialization.h"
-#include "CvUnitCombat.h"
 #include "CvGrandStrategyAI.h"
 #include "cvStopWatch.h"
 #include "CvMilitaryAI.h"
@@ -2580,6 +2582,33 @@ struct PrSortByUnitId
 	bool operator()(const CvUnit* lhs, const CvUnit* rhs) const { return lhs->GetID() < rhs->GetID(); }
 };
 
+// Disabling preferences must not disable occupancy or combat prediction.
+static bool StackPreferencesEnabled()
+{
+ return CvStacking::IsEnabled() && CvStacking::GetInt("AIEnabled", 1) != 0;
+}
+
+static int StackCollateralWeight()
+{
+ return StackPreferencesEnabled() ? CvStacking::GetInt("AIStackCollateralWeight", 100) : 100;
+}
+
+static int StackCollateralValue(const CvUnit* attacker, const CvPlot* plot, const CvUnit* primary, int primaryHit, int garrisonHit = 0)
+{
+ if (!CvStacking::IsEnabled())
+  return 0;
+ vector<const CvUnit*> candidates;
+ for (int i = 0; i < plot->getNumUnits(); ++i)
+  candidates.push_back(plot->getUnitByIndex(i));
+ const CvCity* city = plot->getPlotCity();
+ const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, plot, primary, primaryHit,
+  candidates, SUnitIDValueContainer(), city ? city->GetGarrisonedUnit() : NULL, garrisonHit);
+ int value = 0;
+ for (size_t i = 0; i < collateral.size(); ++i)
+  value += collateral[i].second;
+ return value * StackCollateralWeight() / 100;
+}
+
 /// Queues up attacks on enemy units on or adjacent to army's desired center
 bool CvTacticalAI::CheckForEnemiesNearArmy(CvArmyAI* pArmy)
 {
@@ -3107,7 +3136,7 @@ CvPlot* CvTacticalAI::FindAirTargetNearTarget(CvUnit* pUnit, CvPlot* pApproximat
 
 				//don't beat a dead horse
 				CvCity *pCity = pTestPlot->getPlotCity();
-				if (pCity && pCity->getDamage() > pCity->GetMaxHitPoints() - 10)
+				if (pCity && pCity->getDamage() > pCity->GetMaxHitPoints() - 10 && CvStacking::GetCollateralTargetLimit(pUnit) == 0)
 					continue;
 
 				CvUnit* pDefender = pUnit->rangeStrikeTarget(*pTestPlot, true);
@@ -3135,29 +3164,41 @@ CvPlot* CvTacticalAI::FindAirTargetNearTarget(CvUnit* pUnit, CvPlot* pApproximat
 						continue;
 					}
 				}
-				else
-				{
-					int iDamage = pUnit->GetAirCombatDamage(pDefender, pCity, 0, iUnusedReferenceVariable, false);
-					// if the original target is a unit and we're considering attacking a city, evaluate only the damage done to the garrison
-					if (pApproximateTargetPlot && !pApproximateTargetPlot->isCity() && pCity)
-					{
-						// Garrison absorbs part of the damage
-						iDamage = (pDefender && MOD_CORE_GARRISON_DAMAGE_ABSORPTION) ? (iDamage * 2 * pDefender->GetMaxHitPoints()) / (pCity->GetMaxHitPoints() + 2 * pDefender->GetMaxHitPoints()) : 0;
-					}
-
-					//use distance as tiebreaker
-					iValue += iDamage - iDistance * 3;
-
-					if (pCity != NULL)
-					{
-						iValue -= pCity->GetAirStrikeDefenseDamage(pUnit, false);
-					}
-					else
-						iValue -= pDefender->GetAirStrikeDefenseDamage(pUnit, false);
-
-					if (pTestPlot->GetBestInterceptor(pUnit->getOwner(),NULL,false,true) != NULL)
-						iValue /= 2;
-				}
+    else
+    {
+     const CvUnit* garrison = pCity ? pCity->GetGarrisonedUnit() : NULL;
+     int garrisonHit = 0;
+     int hit = pUnit->GetAirCombatDamage(pCity ? NULL : pDefender, pCity,
+      garrison ? garrison->GetMaxHitPoints() : 0, garrisonHit, false);
+     int collateral = StackCollateralValue(pUnit, pTestPlot, pCity ? NULL : pDefender, hit, garrisonHit);
+     int damageValue = hit;
+     if (pCity)
+     {
+      damageValue = min(hit, max(0, pCity->GetMaxHitPoints() - pCity->getDamage() - 1));
+      damageValue += garrison ? min(garrisonHit, garrison->GetCurrHitPoints()) : 0;
+      if (pApproximateTargetPlot && !pApproximateTargetPlot->isCity())
+       damageValue = garrison ? min(garrisonHit, garrison->GetCurrHitPoints()) : 0;
+     }
+     else
+      damageValue = min(hit, pDefender->GetCurrHitPoints());
+     int strikeChance = 100;
+     int interceptionRisk = 0;
+     const CvUnit* interceptor = pTestPlot->GetBestInterceptor(pUnit->getOwner(), pUnit, false, true);
+     if (interceptor)
+     {
+      const int interceptionHit = interceptor->GetInterceptionDamage(pUnit, false, pTestPlot);
+      if (interceptionHit > 0)
+      {
+       int chance = interceptor->interceptionProbability() * (100 - pUnit->evasionProbability()) / 100;
+       strikeChance = 100 - min(100, max(0, chance));
+       interceptionRisk = interceptionHit * (100 - strikeChance) / 100;
+      }
+     }
+     const int retaliation = pCity ? pCity->GetAirStrikeDefenseDamage(pUnit, false) : pDefender->GetAirStrikeDefenseDamage(pUnit, false);
+     iValue += (damageValue + collateral - retaliation) * strikeChance / 100 - interceptionRisk - iDistance * 3;
+     if (interceptionRisk + retaliation * strikeChance / 100 >= pUnit->GetCurrHitPoints())
+      continue;
+    }
 
 				if (iValue > iBestValue)
 				{
@@ -3509,8 +3550,8 @@ void CvTacticalAI::ExecuteLandingOperation(CvPlot* pTargetPlot)
 			{
 				if ( m_pPlayer->IsAtWarWith(pDefender->getOwner()) )
 					bAttack = true;
-				else
-					continue; //must be a neutral unit or one of ours
+				else if (!CvStacking::IsEnabled() || !pUnit->canMoveInto(*pEvalPlot, CvUnit::MOVEFLAG_DESTINATION))
+					continue; //neutral restrictions and full stacks still apply
 			}
 
 			if (bAttack && pUnit->IsCanAttackWithMove())
@@ -3549,12 +3590,22 @@ void CvTacticalAI::ExecuteLandingOperation(CvPlot* pTargetPlot)
 	while (!choices.empty())
 	{
 		SAssignment next = choices.front();
-
+		choices.erase(choices.begin());
+		if (CvStacking::IsEnabled())
+		{
+			// Earlier landings may consume the last slot or reveal a new defender.
+			// Keep alternate destinations for this unit when this candidate fails.
+			int flags = CvUnit::MOVEFLAG_DESTINATION | (next.bAttack ? CvUnit::MOVEFLAG_ATTACK : 0);
+			if (!next.pUnit->canMoveInto(*next.pPlot, flags) || (next.bAttack && !TacticalAIHelpers::IsAttackNetPositive(next.pUnit, next.pPlot, 0)))
+				continue;
+		}
 		vector<SAssignment>::iterator last;
-		last = remove_if( choices.begin(), choices.end(), PrPlotMatch(next.pPlot) ); choices.erase(last,choices.end());
-		last = remove_if( choices.begin(), choices.end(), PrUnitMatch(next.pUnit) ); choices.erase(last,choices.end());
-
-		next.pUnit->PushMission( CvTypes::getMISSION_MOVE_TO(), next.pPlot->getX(), next.pPlot->getY() );
+		if (!CvStacking::IsEnabled())
+		{
+			last = remove_if(choices.begin(), choices.end(), PrPlotMatch(next.pPlot)); choices.erase(last, choices.end());
+		}
+		last = remove_if(choices.begin(), choices.end(), PrUnitMatch(next.pUnit)); choices.erase(last, choices.end());
+		next.pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), next.pPlot->getX(), next.pPlot->getY());
 		if (!next.pUnit->canMove()) //not all units end their turn after disembark - they can still be used for other moves!
 			UnitProcessed(next.pUnit->GetID());
 	}
@@ -4830,10 +4881,15 @@ bool CvTacticalAI::FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int
 	//plots are ordered by turns to reach!
 	for (ReachablePlots::const_iterator it = relevantPlots.begin(); it != relevantPlots.end(); ++it)
 	{
+		if (m_CurrentMoveUnits.size() >= (size_t)max(1, iMaxNumUnits))
+			break;
 		CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(it->iPlotIndex);
-		CvUnit* pLoopUnit = pPlot->getBestDefender(m_pPlayer->GetID());
-		if (pLoopUnit)
+		const int candidates = CvStacking::IsEnabled() ? pPlot->getNumUnits() : 1;
+		for (int unitIndex = 0; unitIndex < candidates; ++unitIndex)
 		{
+			CvUnit* pLoopUnit = CvStacking::IsEnabled() ? pPlot->getUnitByIndex(unitIndex) : pPlot->getBestDefender(m_pPlayer->GetID());
+			if (!pLoopUnit || pLoopUnit->getOwner() != m_pPlayer->GetID() || !pLoopUnit->IsCombatUnit() || pLoopUnit->isCargo())
+				continue;
 			if (pLoopUnit->isDelayedDeath())
 				continue;
 
@@ -4941,6 +4997,16 @@ int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget)
 	CvUnit* pCurrentGarrison = kTarget.GetTargetType() == AI_TACTICAL_TARGET_ENEMY_CITY ? pTargetPlot->getPlotCity()->GetGarrisonedUnit() : NULL;
 	int iCurrentGarrisonHealth = pCurrentGarrison ? pCurrentGarrison->GetCurrHitPoints() : 0;
 	PlayerTypes eOwner = pTargetPlot->getOwner();
+ SUnitIDValueContainer projectedGarrisonDamage;
+ vector<const CvUnit*> projectedCityOccupants;
+ if (CvStacking::IsEnabled() && pTargetPlot->isCity())
+  for (int i = 0; i < pTargetPlot->getNumUnits(); ++i)
+  {
+   const CvUnit* unit = pTargetPlot->getUnitByIndex(i);
+   if (unit && unit->IsCanDefend() && !unit->isCargo() && !unit->isDelayedDeath())
+    projectedCityOccupants.push_back(unit);
+  }
+
 
 	// Loop through all units who can reach the target
 	for(unsigned int iI = 0; iI < m_CurrentMoveUnits.size(); iI++)
@@ -4952,7 +5018,7 @@ int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget)
 		{
 		case AI_TACTICAL_TARGET_ENEMY_COMBAT_UNIT:
 		{
-			CvUnit* pDefender = pTargetPlot->getVisibleEnemyDefender(m_pPlayer->GetID());
+			CvUnit* pDefender = pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), pAttacker, true);
 			if (pDefender)
 			{
 				int iSelfDamage = 0;
@@ -4982,6 +5048,37 @@ int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget)
 			CvCity* pCity = pTargetPlot->getPlotCity();
 			if(pCity != NULL)
 			{
+    if (CvStacking::IsEnabled())
+    {
+     // Preserve every projected victim's HP. Ignoring only the most recently
+     // killed garrison can recycle an earlier casualty in a larger city stack.
+     const CvUnit* garrison = TacticalAIHelpers::GetSimulatedGarrison(pCity, projectedCityOccupants, projectedGarrisonDamage);
+     int selfDamage = 0, garrisonDamage = 0;
+     const int previous = garrison ? projectedGarrisonDamage.GetValue(garrison->GetID()) : 0;
+     const int cityDamage = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pCity, pAttacker, pAttacker->plot(),
+      selfDamage, garrisonDamage, true, 0, rtnValue, previous, false, true, garrison);
+     const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(pAttacker, pTargetPlot, NULL,
+      cityDamage, projectedCityOccupants, projectedGarrisonDamage, garrison, garrisonDamage);
+     const int actualGarrisonDamage = garrison ? min(garrisonDamage, max(0, garrison->GetCurrHitPoints() - previous)) : 0;
+     int collateralDamage = 0;
+     for (size_t j = 0; j < collateral.size(); ++j)
+      collateralDamage += collateral[j].second;
+     const int totalDamage = cityDamage + actualGarrisonDamage + collateralDamage;
+     if (totalDamage > selfDamage || (totalDamage * 2 > selfDamage && pAttacker->GetCurrHitPoints() - selfDamage > pAttacker->GetMaxHitPoints() / 2))
+     {
+      if (garrison)
+       projectedGarrisonDamage.ChangeValue(garrison->GetID(), garrisonDamage);
+      for (size_t j = 0; j < collateral.size(); ++j)
+       projectedGarrisonDamage.ChangeValue(collateral[j].first->GetID(), collateral[j].second);
+      m_CurrentMoveUnits[iI].SetExpectedTargetDamage(cityDamage + actualGarrisonDamage + collateralDamage * StackCollateralWeight() / 100);
+      m_CurrentMoveUnits[iI].SetExpectedSelfDamage(selfDamage);
+      // Callers use this total for city-health thresholds, so secondary unit
+      // damage affects ranking but never masquerades as damage to the city.
+      rtnValue += cityDamage;
+     }
+     break;
+    }
+
 				int iSelfDamage = 0;
 				int iGarrisonDamage = 0;
 				bool bNeedsRecalculation = pCurrentGarrison != pCity->GetGarrisonedUnit();
@@ -5069,14 +5166,16 @@ bool CvTacticalAI::IsExpectedToDamageWithRangedAttack(CvUnit* pAttacker, CvPlot*
 	}
 	else
 	{
-		CvUnit* pDefender = pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID());
+		CvUnit* pDefender = pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), pAttacker, true);
 		if(pDefender)
 		{
 			iExpectedDamage = pAttacker->GetRangeCombatDamage(pDefender, NULL, 0, iGarrisonDamage, false, 0, 0, NULL, NULL, true, true);
 		}
 	}
 
-	return iExpectedDamage >= iMinDamage;
+ const CvUnit* primary = pTargetPlot->isCity() ? NULL : pTargetPlot->getBestDefender(NO_PLAYER, m_pPlayer->GetID(), pAttacker, true);
+ iExpectedDamage += StackCollateralValue(pAttacker, pTargetPlot, primary, iExpectedDamage, iGarrisonDamage);
+ return iExpectedDamage >= iMinDamage;
 }
 
 /// Move up close to our target avoiding our own units if possible
@@ -5881,9 +5980,12 @@ bool TacticalAIHelpers::PerformRangedOpportunityAttack(CvUnit* pUnit, bool bAllo
 				int iDamage = bIsAirUnit ? pUnit->GetAirCombatDamage(pOtherUnit, NULL, 0, iUnusedReferenceVariable, false) :
 											pUnit->GetRangeCombatDamage(pOtherUnit, NULL, 0, iUnusedReferenceVariable, false) +  pUnit->GetRangeCombatSplashDamage(pOtherUnit->plot()) + (pUnit->hasMoved() ? 0 : pUnit->GetTileDamageIfNotMoved());
 
+				const int collateralValue = StackCollateralValue(pUnit, pLoopPlot, pOtherUnit, iDamage);
+
 				//kill bonus
 				if (iDamage >= pOtherUnit->GetCurrHitPoints())
 					iDamage += 30;
+				iDamage += collateralValue;
 
 				if (iDamage > iMaxDamage)
 				{
@@ -6116,7 +6218,7 @@ bool TacticalAIHelpers::IsGoodPlotForStaging(CvPlayer* pPlayer, CvPlot* pCandida
 	if (!pPlayer || !pCandidate)
 		return false;
 
-	if (pCandidate->getBestDefender(pPlayer->GetID())!=NULL)
+	if (CvStacking::IsEnabled() ? !pCandidate->canPlaceCombatUnit(pPlayer->GetID()) : pCandidate->getBestDefender(pPlayer->GetID()) != NULL)
 		return false;
 
 	if (eDomain != NO_DOMAIN && pCandidate->getDomain() != eDomain)
@@ -6328,7 +6430,7 @@ std::vector<CvPlot*> TacticalAIHelpers::GetPlotsForRangedAttack(const CvPlot* pT
 		if (!pUnit->isNativeDomain(vCandidates[i]))
 			continue;
 
-		if (bCheckOccupied && vCandidates[i]!=pRefPlot && vCandidates[i]->getBestDefender(NO_PLAYER))
+		if (bCheckOccupied && vCandidates[i]!=pRefPlot && !pUnit->canMoveInto(*vCandidates[i], CvUnit::MOVEFLAG_DESTINATION))
 			continue;
 
 		if (bOnlyInDomain)
@@ -6359,6 +6461,25 @@ std::vector<CvPlot*> TacticalAIHelpers::GetPlotsForRangedAttack(const CvPlot* pT
 	return vPlots;
 }
 
+const CvUnit* TacticalAIHelpers::GetSimulatedGarrison(const CvCity* city, const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage)
+{
+ if (!city)
+  return NULL;
+ const CvUnit* best = NULL;
+ int bestContribution = 0;
+ for (size_t i = 0; i < candidates.size(); ++i)
+ {
+  const CvUnit* unit = candidates[i];
+  if (!unit || unit->getOwner() != city->getOwner() || !unit->CanGarrison() || unit->isCargo() || damage.GetValue(unit->GetID()) >= unit->GetCurrHitPoints())
+   continue;
+  int divisor = unit->getDomainType() == DOMAIN_LAND ? GD_INT_GET(CITY_STRENGTH_LAND_UNIT_DIVISOR) : GD_INT_GET(CITY_STRENGTH_NAVAL_UNIT_DIVISOR);
+  int contribution = max(unit->GetBaseCombatStrength(), unit->GetBaseRangedCombatStrength()) * 100 / max(1, divisor);
+  if (!best || contribution > bestContribution || (contribution == bestContribution && unit == city->GetGarrisonedUnit()))
+  { best = unit; bestContribution = contribution; }
+ }
+ return best;
+}
+
 //helper function for city threat calculation
 int TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, int& iAttackerDamage,
 	int& iGarrisonDamage, bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraCityDamage, int iExtraGarrisonDamage, bool bQuickAndDirty, bool bOverrideGarrison, const CvUnit* pGarrisonOverride)
@@ -6372,9 +6493,9 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, c
 	if (pAttacker->IsCanAttackRanged())
 	{
 		if (pAttacker->getDomainType() == DOMAIN_AIR)
-			iDamage = pAttacker->GetAirCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, false, iExtraSelfDamage, iExtraCityDamage);
+			iDamage = pAttacker->GetAirCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, false, iExtraSelfDamage, iExtraCityDamage, NULL, pAttackerPlot, bQuickAndDirty, bOverrideGarrison, pGarrison);
 		else
-			iDamage = pAttacker->GetRangeCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, false, iExtraSelfDamage, iExtraCityDamage, NULL, pAttackerPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty);
+			iDamage = pAttacker->GetRangeCombatDamage(NULL, pCity, iGarrisonMaxHP, iGarrisonDamage, false, iExtraSelfDamage, iExtraCityDamage, NULL, pAttackerPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, bOverrideGarrison, pGarrison);
 
 		iAttackerDamage = 0; //what about interceptions?
 	}
@@ -6393,7 +6514,7 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, c
 //helper function for unit threat calculation
 int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefender, const CvUnit* pAttacker, 
 				const CvPlot* pDefenderPlot, const CvPlot* pAttackerPlot, int& iAttackerDamage, 
-				bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraDefenderDamage, bool bQuickAndDirty)
+				bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraDefenderDamage, bool bQuickAndDirty, bool bNextTurnThreat)
 {
 	if (!pAttacker || !pDefender || pDefender->isDelayedDeath() || pDefender->IsDead() || pAttacker->isDelayedDeath() || pAttacker->IsDead())
 		return 0;
@@ -6404,15 +6525,55 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 	{
 		if (pAttacker->getDomainType() == DOMAIN_AIR)
 		{
-			// ignore interception for quick and dirty mode ...
-			CvUnit* pInterceptor = bQuickAndDirty ? NULL : pDefenderPlot->GetBestInterceptor(pAttacker->getOwner(), pAttacker, false, true);
-			// assume interception is successful - do this before the actual attack
-			iAttackerDamage = pInterceptor ? pInterceptor->GetInterceptionDamage(pAttacker, false, pDefenderPlot) : 0;
-
-			if (pAttacker->GetCurrHitPoints() - iAttackerDamage > 0)
+			iAttackerDamage = 0;
+			if (pAttacker->GetCurrHitPoints() - iExtraSelfDamage > 0)
 			{
-				iDamage += pAttacker->GetAirCombatDamage(pDefender, NULL, 0, iUnusedReferenceVariable, false, iExtraSelfDamage, iExtraDefenderDamage, pDefenderPlot, pAttackerPlot, bQuickAndDirty);
-				iAttackerDamage += pDefender->GetAirStrikeDefenseDamage(pAttacker, false, pDefenderPlot);
+				const CvPlot* pTargetPlot = pDefenderPlot ? pDefenderPlot : pDefender->plot();
+				int iStrikeChance = 10000;
+				int iInterceptionDamage = 0;
+				// Quick mode returns conditional/raw strike damage: stack danger and
+				// collateral forecasts apply their own interception probability.
+				const CvUnit* pInterceptor = bQuickAndDirty || !pTargetPlot ? NULL
+					: pTargetPlot->GetBestInterceptor(pAttacker->getOwner(), pAttacker, false, true);
+				if (pInterceptor)
+				{
+					const int iExtraInterceptorDamage = pInterceptor == pDefender ? max(0, iExtraDefenderDamage) : 0;
+					const int iInterceptorHP = max(0, pInterceptor->GetCurrHitPoints() - iExtraInterceptorDamage);
+					if (iInterceptorHP > 0)
+					{
+						// Match the live interception damage leaves, including prospective
+						// bomber damage. Never mutate interception attempts while scoring.
+						const int iBomberStrength = pAttacker->GetMaxRangedCombatStrength(pInterceptor, NULL, false,
+							pTargetPlot, pTargetPlot, false, false, iExtraSelfDamage, iExtraInterceptorDamage);
+						int iInterceptorStrength = pInterceptor->getDomainType() == DOMAIN_AIR
+							? pInterceptor->GetMaxRangedCombatStrength(pAttacker, NULL, true, pTargetPlot, pTargetPlot,
+								false, false, iExtraInterceptorDamage, iExtraSelfDamage)
+							: pInterceptor->GetMaxAttackStrength(NULL, NULL, pAttacker, false, false,
+								iExtraInterceptorDamage, iExtraSelfDamage);
+						iInterceptorStrength = static_cast<int>(static_cast<int64>(iInterceptorStrength)
+							* (100 + pInterceptor->GetInterceptionCombatModifier()) / 100);
+						iInterceptionDamage = CvUnitCombat::DoDamageMath(iInterceptorStrength, iBomberStrength,
+							GD_INT_GET(INTERCEPTION_SAME_STRENGTH_MIN_DAMAGE), GD_INT_GET(INTERCEPTION_SAME_STRENGTH_POSSIBLE_EXTRA_DAMAGE),
+							false, CvSeeder(), pAttacker->GetInterceptionDefenseDamageModifier()) / 100;
+						// A positive interception aborts bombing even if the bomber survives.
+						// This uses nominal mean damage, not an exact random-outcome tree.
+						if (iInterceptionDamage > 0)
+						{
+							const int iInterceptProbability = min(100, max(0, static_cast<int>(static_cast<int64>(pInterceptor->getInterceptChance())
+								* iInterceptorHP / max(1, pInterceptor->GetMaxHitPoints()))));
+							const int iEvasionProbability = min(100, max(0, pAttacker->evasionProbability()));
+							iStrikeChance -= iInterceptProbability * (100 - iEvasionProbability);
+						}
+					}
+				}
+				const int iConditionalDamage = pAttacker->GetAirCombatDamage(pDefender, NULL, 0, iUnusedReferenceVariable,
+					false, iExtraSelfDamage, iExtraDefenderDamage, pTargetPlot, pAttackerPlot, bQuickAndDirty);
+				const int iConditionalRetaliation = max(0, pDefender->GetAirStrikeDefenseDamage(pAttacker, false, pTargetPlot));
+				// Mutually exclusive outcomes. Round our damage down and incoming
+				// damage up for conservative attack valuation; 0/100% stay exact.
+				iDamage = static_cast<int>(static_cast<int64>(max(0, iConditionalDamage)) * iStrikeChance / 10000);
+				iAttackerDamage = static_cast<int>((static_cast<int64>(iInterceptionDamage) * (10000 - iStrikeChance)
+					+ static_cast<int64>(iConditionalRetaliation) * iStrikeChance + 9999) / 10000);
 			}
 		}
 		else
@@ -6430,10 +6591,34 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 	}
 	else
 	{
-		//for melee attack check whether the attacker can actually go where the defender is
-		//the defender might only be there hypothetically - so an empty plot is a valid target 
-		if (pDefenderPlot && !pAttacker->canMoveOrAttackInto(*pDefenderPlot))
-			return 0;
+		// Tactical strikes use current attack readiness. Danger projects the next
+		// enemy turn: its reach map already supplies movement/visibility, and an
+		// exhausted unit regains moves and attacks before delivering that threat.
+		if (pDefenderPlot)
+		{
+			if (!bNextTurnThreat)
+			{
+				if (!pAttacker->canMoveOrAttackInto(*pDefenderPlot))
+					return 0;
+			}
+			else
+			{
+				const bool enemyCity = pDefenderPlot->isEnemyCity(*pAttacker);
+				const TeamTypes plotTeam = pAttacker->isHuman(ISHUMAN_AI_UNITS)
+					? pDefenderPlot->getRevealedTeam(pAttacker->getTeam()) : pDefenderPlot->getTeam();
+				if (!pAttacker->IsCanAttackWithMove() || !GET_TEAM(pAttacker->getTeam()).isAtWar(pDefender->getTeam()) ||
+					(pAttacker->IsCityAttackSupport() && !enemyCity) ||
+					(!pAttacker->isNativeDomain(pDefenderPlot) && !enemyCity) ||
+					(pDefenderPlot->isCity() && (!enemyCity || pAttacker->isNoCapture())) ||
+					!pAttacker->canEnterTerritory(plotTeam, true) ||
+					!pAttacker->canEnterTerrain(*pDefenderPlot, CvUnit::MOVEFLAG_ATTACK | CvUnit::MOVEFLAG_DESTINATION))
+					return 0;
+				if (MOD_EVENTS_CAN_MOVE_INTO && pAttacker->getUnitInfo().IsSendCanMoveIntoEvent())
+					if (GAMEEVENTINVOKE_TESTALL(GAMEEVENT_CanMoveInto, pAttacker->getOwner(), pAttacker->GetID(),
+						pDefenderPlot->getX(), pDefenderPlot->getY(), true, false) == GAMEEVENTRETURN_FALSE)
+						return 0;
+			}
+		}
 
 		if (pAttacker->isRangedSupportFire())
 			iDamage += pAttacker->GetRangeCombatDamage(pDefender, NULL, 0, iUnusedReferenceVariable, false, iExtraSelfDamage, iExtraDefenderDamage,
@@ -6470,6 +6655,15 @@ bool TacticalAIHelpers::KillLoneEnemyIfPossible(CvUnit* pOurUnit, CvUnit* pEnemy
 	//aircraft are different
 	if (pOurUnit->getDomainType()==DOMAIN_AIR || pEnemyUnit->getDomainType()==DOMAIN_AIR)
 		return false;
+
+ // An incoming target pointer may name an exposed unit in a larger stack.
+ // Re-select the unit that this particular attacker will actually fight.
+ if (CvStacking::IsEnabled())
+ {
+  pEnemyUnit = pEnemyUnit->plot()->getBestDefender(NO_PLAYER, pOurUnit->getOwner(), pOurUnit, true);
+  if (!pEnemyUnit)
+   return false;
+ }
 
 	//see how the attack would go
 	int iDamageDealt = 0;
@@ -6598,7 +6792,7 @@ bool TacticalAIHelpers::CanKillTarget(const CvUnit* pAttacker, CvPlot* pTarget)
 		return iDamageDealt + pTargetCity->getDamage() >= pTargetCity->GetMaxHitPoints();
 	}
 
-	CvUnit* pDefender = pTarget->getVisibleEnemyDefender(pAttacker->getOwner());
+	CvUnit* pDefender = pTarget->getBestDefender(NO_PLAYER, pAttacker->getOwner(), pAttacker, true);
 	if (pDefender)
 	{
 		//see how the attack would go
@@ -6757,24 +6951,26 @@ void CDangerCache::clear()
 	dangerStats.clear();
 }
 
-void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger)
+void CDangerCache::storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger, size_t iStackHash)
 {
 	DefendKey key;
 	key.iDefenderId = iDefenderId;
 	key.iPlotId = iDefenderPlot;
 	key.iPrevDamage = iPrevDamage;
 	key.iDamageHash = unitDamageDealt.GetHash();
+	key.iStackHash = iStackHash;
 
 	dangerStats[key] = iDanger;
 }
 
-bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const
+bool CDangerCache::findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger, size_t iStackHash) const
 {
 	DefendKey key;
 	key.iDefenderId = iDefenderId;
 	key.iPlotId = iDefenderPlot;
 	key.iPrevDamage = iPrevDamage;
 	key.iDamageHash = unitDamageDealt.GetHash();
+	key.iStackHash = iStackHash;
 
 	std::tr1::unordered_map<DefendKey, int, DefendKeyHash>::const_iterator it =
 		dangerStats.find(key);
@@ -6845,7 +7041,7 @@ bool CAttackCache::findAttack(int iAttackerId, int iAttackerPlot, int iDefenderI
 		iUnitDamageDealt = it->second[0];
 		iCityDamageDealt = it->second[1];
 		iDamageTaken = it->second[2];
-		gAttackCacheMiss++;
+		gAttackCacheHit++;
 		return true;
 	}
 
@@ -7035,8 +7231,9 @@ static bool positionIsEquivalent(const CvBasePosition* ref, const CvBasePosition
 	bool mismatch = false;
 	//the "other" may have more moves assigned but they should all be of type FINISH ...
 	//for performance do the iteration in reverse; we expect the differences at the end
-	for (size_t i = ref->GetNumAssignments() - 1; i >= ref->getFirstInterestingAssignment(); i--)
+	for (size_t cursor = ref->GetNumAssignments(); cursor > ref->getFirstInterestingAssignment(); )
 	{
+		const size_t i = --cursor;
 		//ignore matching elements
 		if (ref->GetAssignment(i) == other->GetAssignment(i))
 			continue;
@@ -7143,7 +7340,7 @@ static bool positionIsEquivalent(const CvBasePosition* ref, const CvBasePosition
 
 void CvBasePosition::setFirstInterestingAssignment(size_t i)
 {
-	nFirstInterestingAssignment = (unsigned char)i;
+	nFirstInterestingAssignment = i;
 }
 
 size_t CvBasePosition::getFirstInterestingAssignment() const
@@ -7174,10 +7371,14 @@ void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore,
 		int iLoopUnitID = it->first;
 		short sPreviousPlotScore = it->second;
 
-		iTotalScore += sPreviousPlotScore;
+		iTotalScore += CvStacking::IsEnabled() && iLoopUnitID == iUnitId ? iPlotScore : sPreviousPlotScore;
 		if (iLoopUnitID == iUnitId)
 		{
 			bFoundScore = true;
+			// The stored previous score replaces the caller's previous score;
+			// subtracting both penalizes a second move by the same unit twice.
+			if (CvStacking::IsEnabled())
+				iScoreOverParent += iOldPlotScore;
 			iScoreOverParent -= sPreviousPlotScore;
 			if (iPlotScore != sPreviousPlotScore)
 			{
@@ -7187,25 +7388,326 @@ void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore,
 	}
 	//the unit didn't have a previous plot score, so we set it here
 	if (!bFoundScore && iPlotScore != 0)
+	{
 		plotScores.write()[iUnitId] = iPlotScore;
+		if (CvStacking::IsEnabled())
+			iTotalScore += iPlotScore;
+	}
+}
+
+// Search-scoped exact-state caches. Hashes locate buckets only; full vectors
+// decide equality, so neither HP quantization nor a hash collision merges states.
+struct StackForecastKey
+{
+ vector<int> state;
+ bool operator==(const StackForecastKey& other) const { return state == other.state; }
+};
+struct StackForecastKeyHash
+{
+ size_t operator()(const StackForecastKey& key) const
+ {
+  size_t result = 0;
+  for (size_t i = 0; i < key.state.size(); ++i)
+   result ^= (size_t)key.state[i] + 0x9e3779b9 + (result << 6) + (result >> 2);
+  return result;
+ }
+};
+typedef std::tr1::unordered_map<StackForecastKey, int, StackForecastKeyHash> StackDangerForecasts;
+typedef std::tr1::unordered_map<StackForecastKey, const CvUnit*, StackForecastKeyHash> StackDefenderForecasts;
+static StackDangerForecasts gStackDangerForecasts;
+static StackDefenderForecasts gStackDefenderForecasts;
+static bool gStackForecastsActive = false;
+static unsigned int gStackForecastDepth = 0;
+static unsigned long gStackDangerHits = 0, gStackDangerMisses = 0;
+static unsigned long gStackDefenderHits = 0, gStackDefenderMisses = 0;
+static unsigned long gStackInsertBypasses = 0, gStackNestedBypasses = 0;
+static size_t gStackKeyPayloadBytes = 0, gStackKeyPayloadLimit = 0, gStackEntryLimit = 0;
+
+struct StackForecastScope
+{
+ StackForecastScope()
+ {
+  ++gStackForecastDepth;
+  gStackForecastsActive = gStackForecastDepth == 1;
+  if (!gStackForecastsActive)
+  {
+   // Ordinary callers are nonrecursive. A callback that reenters search must
+   // not clear/reuse the outer forecast table; the base search is not reentrant.
+   ++gStackNestedBypasses;
+   return;
+  }
+  gStackDangerForecasts.clear(); gStackDefenderForecasts.clear();
+  gStackDangerHits = gStackDangerMisses = gStackDefenderHits = gStackDefenderMisses = 0;
+  gStackInsertBypasses = gStackNestedBypasses = 0;
+  gStackKeyPayloadBytes = 0;
+  gStackEntryLimit = (size_t)gTactPosStorage.getSizeLimit();
+  // Memoization shares the existing search budget: at most one entry per
+  // position, with an ID/damage pair per movable-unit slot as payload budget.
+  gStackKeyPayloadLimit = gStackEntryLimit * TACTSIM_MAX_UNITS * 2 * sizeof(int);
+ }
+ ~StackForecastScope()
+ {
+  --gStackForecastDepth;
+  gStackForecastsActive = gStackForecastDepth == 1;
+  if (gStackForecastDepth == 0)
+  {
+   // clear() can retain buckets. Release them as well in the 32-bit game.
+   StackDangerForecasts().swap(gStackDangerForecasts);
+   StackDefenderForecasts().swap(gStackDefenderForecasts);
+   gStackKeyPayloadBytes = 0;
+  }
+ }
+};
+
+static bool CanStoreStackForecast(const StackForecastKey& key)
+{
+ if (!gStackForecastsActive)
+  return false;
+ const size_t payload = key.state.capacity() * sizeof(int);
+ if (gStackDangerForecasts.size() + gStackDefenderForecasts.size() >= gStackEntryLimit ||
+  payload > gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+ {
+  ++gStackInsertBypasses;
+  return false;
+ }
+ return true;
+}
+
+static size_t EstimatedStackForecastBytes()
+{
+ const size_t entries = gStackDangerForecasts.size() + gStackDefenderForecasts.size();
+ // Key payload is measured; allocator/node/bucket overhead is an estimate.
+ return gStackKeyPayloadBytes + entries * (sizeof(StackForecastKey) + sizeof(const CvUnit*) + 8 * sizeof(void*));
+}
+
+static void AppendStackCandidates(StackForecastKey& key, const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool canonicalOrder = true)
+{
+ vector<pair<int, int> > members;
+ members.reserve(candidates.size());
+ for (size_t i = 0; i < candidates.size(); ++i)
+  if (candidates[i])
+   members.push_back(make_pair(candidates[i]->GetID(), damage.GetValue(candidates[i]->GetID())));
+ // City garrison replacement uses candidate order for otherwise equal ties.
+ // Preserve that order for danger; unit defender selection has an ID tie-break.
+ if (canonicalOrder)
+  std::sort(members.begin(), members.end());
+ key.state.push_back((int)members.size());
+ for (size_t i = 0; i < members.size(); ++i)
+ {
+  key.state.push_back(members[i].first);
+  key.state.push_back(members[i].second);
+ }
+}
+
+static void AppendStackDamage(StackForecastKey& key, const SUnitIDValueContainer& damage)
+{
+ vector<pair<int, int> > entries;
+ for (SUnitIDValueContainer::const_iterator it = damage.begin(); it != damage.end(); ++it)
+  if ((*it).second != 0)
+   entries.push_back(make_pair((*it).first, (*it).second));
+ std::sort(entries.begin(), entries.end());
+ key.state.push_back((int)entries.size());
+ for (size_t i = 0; i < entries.size(); ++i)
+ {
+  key.state.push_back(entries[i].first);
+  key.state.push_back(entries[i].second);
+ }
+}
+
+static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
+{
+ StackForecastKey key;
+ if (gStackForecastsActive)
+ {
+  key.state.push_back(unit->GetID());
+  key.state.push_back(plot->GetPlotIndex());
+  key.state.push_back(friendlyDamage.GetValue(unit->GetID()));
+  key.state.push_back(CvStacking::GetCityProtection(plot->getPlotCity()));
+  AppendStackCandidates(key, candidates, friendlyDamage, !plot->isCity() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0);
+  AppendStackDamage(key, enemyDamage);
+  StackDangerForecasts::const_iterator cached = gStackDangerForecasts.find(key);
+  if (cached != gStackDangerForecasts.end())
+  {
+   ++gStackDangerHits;
+   return cached->second;
+  }
+ }
+ if (gStackForecastsActive)
+  ++gStackDangerMisses;
+ const int result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
+ if (CanStoreStackForecast(key))
+ {
+  pair<StackDangerForecasts::iterator, bool> stored = gStackDangerForecasts.insert(make_pair(key, result));
+  if (stored.second)
+  {
+   const size_t payload = stored.first->first.state.capacity() * sizeof(int);
+   if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+    gStackKeyPayloadBytes += payload;
+   else
+   {
+    gStackDangerForecasts.erase(stored.first);
+    ++gStackInsertBypasses;
+   }
+  }
+ }
+ return result;
+}
+
+static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvPlot* from, const CvPlot* target,
+ const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool ranged, int attackerDamage)
+{
+ StackForecastKey key;
+ if (gStackForecastsActive)
+ {
+  key.state.push_back(attacker->GetID());
+  key.state.push_back(from ? from->GetPlotIndex() : -1);
+  key.state.push_back(target->GetPlotIndex());
+  key.state.push_back(ranged ? 1 : 0);
+  key.state.push_back(attackerDamage);
+  AppendStackCandidates(key, candidates, damage, CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0);
+  StackDefenderForecasts::const_iterator cached = gStackDefenderForecasts.find(key);
+  if (cached != gStackDefenderForecasts.end())
+  {
+   ++gStackDefenderHits;
+   return cached->second;
+  }
+ }
+ if (gStackForecastsActive)
+  ++gStackDefenderMisses;
+ const CvUnit* result = CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
+ if (CanStoreStackForecast(key))
+ {
+  pair<StackDefenderForecasts::iterator, bool> stored = gStackDefenderForecasts.insert(make_pair(key, result));
+  if (stored.second)
+  {
+   const size_t payload = stored.first->first.state.capacity() * sizeof(int);
+   if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+    gStackKeyPayloadBytes += payload;
+   else
+   {
+    gStackDefenderForecasts.erase(stored.first);
+    ++gStackInsertBypasses;
+   }
+  }
+ }
+ return result;
+}
+
+static void GetVirtualFriendlyStack(const CvTacticalPosition& position, const CvPlot* plot, const CvUnit* arriving,
+ int extraDamage, vector<const CvUnit*>& candidates, SUnitIDValueContainer& damage)
+{
+ const CvTacticalPlot* tactical = position.getTactPlot(plot->GetPlotIndex());
+ if (tactical)
+ {
+  candidates = tactical->getFixedFriendlyUnits();
+  const vector<STacticalUnit>& units = tactical->getUnitsAtPlot();
+  for (size_t i = 0; i < units.size(); ++i)
+  {
+   const CvUnit* unit = GET_PLAYER(position.getPlayer()).getUnit(units[i].iUnitID);
+   if (unit && unit->IsCombatUnit() && !unit->isCargo() && unit->getDomainType() != DOMAIN_AIR)
+   {
+    candidates.push_back(unit);
+    const SUnitStats* stats = position.GetUnitStats(unit->GetID());
+    if (stats)
+     damage.SetValue(unit->GetID(), stats->iSelfDamage);
+   }
+  }
+ }
+ if (arriving)
+ {
+  if (std::find(candidates.begin(), candidates.end(), arriving) == candidates.end())
+   candidates.push_back(arriving);
+  damage.SetValue(arriving->GetID(), extraDamage);
+ }
 }
 
 static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition)
 {
-	int iDanger = 0;
+ int iDanger = 0;
+ if (CvStacking::IsEnabled() && pUnit->IsCombatUnit() && pUnit->getDomainType() != DOMAIN_AIR)
+ {
+  vector<const CvUnit*> candidates;
+  SUnitIDValueContainer friendlyDamage;
+  GetVirtualFriendlyStack(assumedPosition, pPlot, pUnit, iSelfDamage, candidates, friendlyDamage);
+  iDanger = GetCachedStackDanger(pUnit, pPlot, candidates, friendlyDamage, assumedPosition.GetUnitDamageDealt());
+ }
+ else if (!gTactPosStorage.getDangerCache().findDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger))
+ {
+  iDanger = pUnit->GetDanger(pPlot, assumedPosition.GetUnitDamageDealt(), iSelfDamage);
+  gTactPosStorage.getDangerCache().storeDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger);
+ }
+ return iDanger == INT_MAX ? 10 * pUnit->GetMaxHitPoints() : iDanger;
+}
 
-	//first try the cache
-	if (!gTactPosStorage.getDangerCache().findDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger))
-	{
-		iDanger = pUnit->GetDanger(pPlot, assumedPosition.GetUnitDamageDealt(), iSelfDamage);
-		//can happen with garrisons, catch this case as it messes up the math
-		if (iDanger == INT_MAX)
-			iDanger = 10 * pUnit->GetMaxHitPoints();
-
-		gTactPosStorage.getDangerCache().storeDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger);
-	}
-
-	return iDanger;
+// Value actual protection and its cost in collateral exposure. This considers
+// the candidate position, including friendly units omitted from the search.
+static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDamage, const CvTacticalPosition& position)
+{
+ if (!StackPreferencesEnabled())
+  return 0;
+ vector<const CvUnit*> candidates;
+ SUnitIDValueContainer damage;
+ GetVirtualFriendlyStack(position, plot, unit, selfDamage, candidates, damage);
+ if (candidates.size() < 2)
+  return 0;
+ const vector<CvUnit*> attackers = GET_PLAYER(unit->getOwner()).GetPossibleAttackers(*plot, NO_TEAM);
+ if (attackers.empty())
+  return 0;
+ bool cavalryThreat = false, collateralThreat = false, antiCavalry = false;
+ int otherProtectors = 0;
+ const CvUnit* vulnerable = NULL;
+ for (size_t i = 0; i < attackers.size(); ++i)
+ {
+  cavalryThreat |= CvStacking::CanFlank(attackers[i]);
+  collateralThreat |= CvStacking::GetCollateralTargetLimit(attackers[i]) > 0 && CvStacking::GetInt("CollateralPercent", 20) > 0;
+ }
+ for (size_t i = 0; i < candidates.size(); ++i)
+ {
+  const CvUnit* other = candidates[i];
+  if (other->GetCurrHitPoints() <= damage.GetValue(other->GetID()) || other->getDomainType() != unit->getDomainType())
+   continue;
+  antiCavalry |= CvStacking::IsAntiCavalry(other);
+  if (other != unit && !other->IsCanAttackRanged())
+   ++otherProtectors;
+  if (other->IsCanAttackRanged() && (!vulnerable || other->GetCurrHitPoints() < vulnerable->GetCurrHitPoints()))
+   vulnerable = other;
+ }
+ int score = 0;
+ if (vulnerable)
+ {
+  vector<const CvUnit*> solo(1, vulnerable);
+  int alone = GetCachedStackDanger(vulnerable, plot, solo, damage, position.GetUnitDamageDealt());
+  int protectedDamage = GetCachedStackDanger(vulnerable, plot, candidates, damage, position.GetUnitDamageDealt());
+  // INT_MAX means city capture; do not let sentinel arithmetic overflow.
+  alone = min(alone, vulnerable->GetMaxHitPoints());
+  protectedDamage = min(protectedDamage, vulnerable->GetMaxHitPoints());
+  int saved = max(0, alone - protectedDamage);
+  score += saved * CvStacking::GetInt("AIStackProtectionWeight", 20) / max(1, vulnerable->GetMaxHitPoints());
+  if (saved > 0 && ((unit == vulnerable && otherProtectors > 0) || (!unit->IsCanAttackRanged() && otherProtectors == 0)))
+   score += CvStacking::GetInt("AIStackJoinBonus", 12);
+  if (cavalryThreat && antiCavalry)
+   score += CvStacking::GetInt("AIStackAntiFlankBonus", 12);
+ }
+ if (collateralThreat)
+ {
+  int vulnerableCount = 0;
+  const int floorPercent = CvStacking::GetInt("CollateralHPFloorPercent", 50);
+  for (size_t i = 0; i < candidates.size(); ++i)
+  {
+   const CvUnit* member = candidates[i];
+   if (!member->IsCombatUnit() || member->isCargo() || member->getDomainType() == DOMAIN_AIR || !CvStacking::IsCollateralTargetDomain(member->getDomainType())
+    || (member->getDomainType() == DOMAIN_LAND && plot->needsEmbarkation(member)))
+    continue;
+   const int floorHP = (member->GetMaxHitPoints() * floorPercent + 99) / 100;
+   if (member->GetCurrHitPoints() - damage.GetValue(member->GetID()) > floorHP)
+    ++vulnerableCount;
+  }
+  int penalty = max(0, vulnerableCount - CvStacking::GetInt("AIStackConcentrationFreeUnits", 2)) * CvStacking::GetInt("AIStackConcentrationPenalty", 10);
+  penalty = penalty * (100 - CvStacking::GetCityProtection(plot->getPlotCity())) / 100;
+  score -= penalty;
+ }
+ return score;
 }
 
 // what is the rough state looking like after this assignment
@@ -7231,6 +7733,30 @@ static SUnitStats GetNextUnit(const SUnitStats& previousUnit, const STacticalAss
 	newUnit.iMovesLeft = assignment->iRemainingMoves;
 
 	return newUnit;
+}
+
+static int VirtualFlankPower(const CvTacticalPosition& position, const CvPlot* plot, DomainTypes domain, bool friendly, const CvUnit* exclude)
+{
+ int power = 0;
+ CvPlot** neighbors = GC.getMap().getNeighborsUnchecked(plot);
+ for (int d = 0; d < NUM_DIRECTION_TYPES; ++d)
+ {
+  if (!neighbors[d])
+   continue;
+  const CvTacticalPlot* tactical = position.getTactPlot(neighbors[d]->GetPlotIndex());
+  if (!tactical)
+   continue;
+  vector<const CvUnit*> units;
+  SUnitIDValueContainer damage;
+  if (friendly)
+   GetVirtualFriendlyStack(position, neighbors[d], NULL, 0, units, damage);
+  else
+  { units = tactical->getEnemyUnits(); damage = position.GetUnitDamageDealt(); }
+  for (size_t i = 0; i < units.size(); ++i)
+   if (units[i] != exclude && !units[i]->isEmbarked() && units[i]->getDomainType() == domain && damage.GetValue(units[i]->GetID()) < units[i]->GetCurrHitPoints())
+    power += units[i]->GetFlankPower();
+ }
+ return power;
 }
 
 //note that the score returned from this function is not multiplied by 10 yet
@@ -7277,7 +7803,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		int iPrevUnitDamage = 0;
 		int iPrevUnitHitPoints = 0;
 
-		pEnemyUnit = tactPlot->getEnemyUnit();
+		pEnemyUnit = const_cast<CvUnit*>(TacticalAIHelpers::GetSimulatedGarrison(pEnemyCity, tactPlot->getEnemyUnits(), assumedPosition.GetUnitDamageDealt()));
 		if (pEnemyUnit)
 		{
 			iPrevUnitDamage = assumedPosition.GetUnitDamage(pEnemyUnit->GetID());
@@ -7291,7 +7817,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		//first try the cache
 		if (!cache.findAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived))
 		{
-			iCityDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pEnemyCity, pUnit, pUnitPlot, iDamageReceived, iGarrisonDamage, true, iSelfDamage, iPrevUnitDamage, iPrevUnitDamage, true, true, pEnemyUnit);
+			iCityDamageDealt = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pEnemyCity, pUnit, pUnitPlot, iDamageReceived, iGarrisonDamage, true, iSelfDamage, iPrevCityDamage, iPrevUnitDamage, true, true, pEnemyUnit);
 			cache.storeAttack(pUnit->GetID(),pUnitPlot->GetPlotIndex(), pEnemyCity->GetID(), pEnemyUnit ? pEnemyUnit->GetID() : -1, iSelfDamage, iPrevUnitDamage, iPrevCityDamage, iGarrisonDamage, iCityDamageDealt, iDamageReceived);
 		}
 
@@ -7354,7 +7880,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	}
 	else if (tactPlot->isEnemyCombatUnit())
 	{
-		pEnemyUnit = tactPlot->getEnemyUnit();
+		pEnemyUnit = const_cast<CvUnit*>(SelectCachedStackDefender(pUnit, pUnitPlot, pTestPlot, tactPlot->getEnemyUnits(), assumedPosition.GetUnitDamageDealt(), bRanged, iSelfDamage));
 		if (!pEnemyUnit)
 		{
 			result->SetImpossible();
@@ -7385,9 +7911,23 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		{
 			//it works both ways!
 			//note that this can go quite wrong if we're facing multiple enemy players!
-			int iDelta = tactPlot->getNumAdjacentFriendlies(DomainForUnit(pUnit), assumedPlot->getPlotIndex()) - assumedPlot->getNumAdjacentEnemies(DomainForUnit(pUnit));
-			iUnitDamageDealt += (iDelta * iUnitDamageDealt) / 10;
-			iDamageReceived -= (iDelta * iDamageReceived) / 10;
+   int iDelta = tactPlot->getNumAdjacentFriendlies(DomainForUnit(pUnit), assumedPlot->getPlotIndex()) - assumedPlot->getNumAdjacentEnemies(DomainForUnit(pUnit));
+   if (CvStacking::IsEnabled())
+   {
+    iDelta = VirtualFlankPower(assumedPosition, pTestPlot, pEnemyUnit->getDomainType(), true, pUnit)
+     - VirtualFlankPower(assumedPosition, pUnitPlot, pUnit->getDomainType(), false, pEnemyUnit);
+    const int modifier = max(0, GD_INT_GET(BONUS_PER_ADJACENT_FRIEND));
+    const int ratio = 100 + abs(iDelta) * modifier;
+    // A stack can provide far more than six flankers. A linear subtraction
+    // would turn retaliation negative and reward fictitious healing.
+    iUnitDamageDealt = iDelta >= 0 ? iUnitDamageDealt * ratio / 100 : iUnitDamageDealt * 100 / ratio;
+    iDamageReceived = iDelta >= 0 ? iDamageReceived * 100 / ratio : iDamageReceived * ratio / 100;
+   }
+   else
+   {
+    iUnitDamageDealt += (iDelta * iUnitDamageDealt) / 10;
+    iDamageReceived -= (iDelta * iDamageReceived) / 10;
+   }
 		}
 
 		//repeat attacks may give extra bonus
@@ -7424,15 +7964,15 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 			if (!adjacentTactPlot)
 				continue;
 
-			CvUnit* pAdjacentUnit = adjacentTactPlot->getEnemyUnit();
-			if (!pAdjacentUnit)
-				continue;
-
-			if (pAdjacentPlot->isFortification(pAdjacentUnit->getTeam()))
-				continue;
-
-			prevUnitHitPoints.SetValue(pAdjacentUnit->GetID(), pAdjacentUnit->GetCurrHitPoints() - assumedPosition.GetUnitDamage(pAdjacentUnit->GetID()));
-			unitDamageDealt.ChangeValue(pAdjacentUnit->GetID(), iSplashDamage);
+   const vector<const CvUnit*>& adjacentEnemies = adjacentTactPlot->getEnemyUnits();
+   for (size_t j = 0; j < adjacentEnemies.size(); ++j)
+   {
+    const CvUnit* pAdjacentUnit = adjacentEnemies[j];
+    if (pAdjacentPlot->isFortification(pAdjacentUnit->getTeam()))
+     continue;
+    prevUnitHitPoints.SetValue(pAdjacentUnit->GetID(), pAdjacentUnit->GetCurrHitPoints() - assumedPosition.GetUnitDamage(pAdjacentUnit->GetID()));
+    unitDamageDealt.ChangeValue(pAdjacentUnit->GetID(), iSplashDamage);
+   }
 		}
 	}
 
@@ -7453,6 +7993,21 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		iCityDamageDealt += iCityDamageDealt / 5;
 		iDamageReceived -= iDamageReceived / 5;
 	}
+
+ if (CvStacking::IsEnabled() && bRanged)
+ {
+  const int primaryDamage = pEnemyCity ? iCityDamageDealt : (pEnemyUnit ? unitDamageDealt.GetValue(pEnemyUnit->GetID()) : 0);
+  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(pUnit, pTestPlot,
+   pEnemyCity ? NULL : pEnemyUnit, primaryDamage, tactPlot->getEnemyUnits(), assumedPosition.GetUnitDamageDealt(),
+   pEnemyCity ? pEnemyUnit : NULL, pEnemyCity && pEnemyUnit ? unitDamageDealt.GetValue(pEnemyUnit->GetID()) : 0);
+  for (size_t i = 0; i < collateral.size(); ++i)
+  {
+   const CvUnit* victim = collateral[i].first;
+   prevUnitHitPoints.SetValue(victim->GetID(), victim->GetCurrHitPoints() - assumedPosition.GetUnitDamage(victim->GetID()));
+   unitDamageDealt.ChangeValue(victim->GetID(), collateral[i].second);
+   iBonusScore += collateral[i].second * (StackCollateralWeight() - 100) / 100;
+  }
+ }
 
 	int iTotalUnitDamageDealt = 0;
 	SUnitIDValueContainer actualDamageDealt;
@@ -7558,7 +8113,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 	{
 		if (bRanged)
 			result->eAssignmentType = A_RANGEKILL;
-		else if (pUnitPlot->isFortification(pUnit->getTeam()) || iPrevCityHitPoints > 0)
+		else if (pTestPlot->isFortification(pEnemyUnit->getTeam()) || iPrevCityHitPoints > 0 || tactPlot->getEnemyUnits().size() > 1)
 			result->eAssignmentType = A_MELEEKILL_NO_ADVANCE;
 		else
 			result->eAssignmentType = A_MELEEKILL;
@@ -7765,17 +8320,19 @@ static int HealAdjacentUnits(SUnitIDValueContainer& unitHealing, int& iDamageDel
 
 static int DamageUnitInPlot(SUnitIDValueContainer& unitDamage, int& iDamageDelta, const CvPlot* pPlot, const CvTacticalPlot* tactPlot, int iDamageAmount, const CvTacticalPosition& assumedPosition)
 {
-	CvUnit* pUnit = tactPlot->getEnemyUnit();
-	if (!pUnit)
-		return 0;
-
-	if (pPlot->isFortification(pUnit->getTeam()))
-		return 0;
-
-	int iActualDamageAmount = min(iDamageAmount, pUnit->GetCurrHitPoints() - assumedPosition.GetUnitDamage(pUnit->GetID()));
-	unitDamage.ChangeValue(pUnit->GetID(), iActualDamageAmount);
-	iDamageDelta += iActualDamageAmount;
-	return iDamageDelta;
+ int total = 0;
+ const vector<const CvUnit*>& enemies = tactPlot->getEnemyUnits();
+ for (size_t i = 0; i < enemies.size(); ++i)
+ {
+  const CvUnit* unit = enemies[i];
+  if (pPlot->isFortification(unit->getTeam()))
+   continue;
+  const int hit = min(iDamageAmount, max(0, unit->GetCurrHitPoints() - assumedPosition.GetUnitDamage(unit->GetID())));
+  unitDamage.ChangeValue(unit->GetID(), hit);
+  total += hit;
+ }
+ iDamageDelta += total;
+ return total;
 }
 
 static int DamageAdjacentUnits(SUnitIDValueContainer& unitDamage, int& iDamageDelta, const CvPlot* pPlot, int iDamageAmount, const CvTacticalPosition& assumedPosition)
@@ -7889,6 +8446,14 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	// * ZOC is unclear during simulation
 	// * freshly revealed enemy units are not considered
 	int iNumAdjFriendlies = (evalMode==EM_FINAL) ? testPlot->getNumAdjacentFriendliesEndTurn(eRelevantDomain) : testPlot->getNumAdjacentFriendlies(eRelevantDomain, -1);
+ if (StackPreferencesEnabled())
+ {
+  vector<const CvUnit*> stack;
+  SUnitIDValueContainer damage;
+  GetVirtualFriendlyStack(assumedPosition, pTestPlot, pUnit, iSelfDamage, stack, damage);
+  iNumAdjFriendlies += max(0, (int)stack.size() - 1);
+ }
+
 	if (bRelaxedCheck) //assume we have friends which might catch up to us later
 		iNumAdjFriendlies++;
 	bool bIsFrontlineCitadelOrCity = (TacticalAIHelpers::IsPlayerCitadel(pTestPlot, assumedPosition.getPlayer()) || pTestPlot->isCity()) && pUnit->getDomainType() == DOMAIN_LAND && testPlot->getEnemyDistance() < 3;
@@ -7911,7 +8476,9 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		
 		iDanger = max(iMaxHitPoints / 2, iDanger);
 	}
-	if (!MOD_COMBATAI_TWO_PASS_DANGER && !bOnlyCheckImpossible)
+	// Stack danger already assigns each hit to its actual protecting member.
+	// Legacy adjacent-cover discount would credit that protection a second time.
+	if (!MOD_COMBATAI_TWO_PASS_DANGER && !bOnlyCheckImpossible && !CvStacking::IsEnabled())
 	{
 		if (iDanger > 0 && (iDanger > iMaxHitPoints || !testPlot->isEdgePlot()) && testPlot->hasCoverFromOtherUnits(assumedPosition))
 			//check for cover and assume this would help us
@@ -8290,6 +8857,29 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 	//in that case we want to prefer the one which has more movement points left to make the movement animation look better
 	iExtra += result->iRemainingMoves / GD_INT_GET(MOVE_DENOMINATOR);
 
+ if (StackPreferencesEnabled())
+ {
+  iDangerScore += ScoreStackPosition(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition);
+  if (bMoving && !pUnit->IsCanAttackRanged())
+  {
+   const CvPlot* source = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
+   vector<const CvUnit*> before;
+   SUnitIDValueContainer damage;
+   GetVirtualFriendlyStack(assumedPosition, source, pUnit, unit.iSelfDamage, before, damage);
+   vector<const CvUnit*> after = before;
+   after.erase(std::remove(after.begin(), after.end(), pUnit), after.end());
+   for (size_t i = 0; i < after.size(); ++i)
+   {
+    const CvUnit* ranged = after[i];
+    if (!ranged->IsCanAttackRanged())
+     continue;
+    const int oldDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, before, damage, assumedPosition.GetUnitDamageDealt()));
+    const int newDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, after, damage, assumedPosition.GetUnitDamageDealt()));
+    if (newDanger > oldDanger)
+     iBonusScore -= (newDanger - oldDanger) * CvStacking::GetInt("AIStackLeaveProtectorPenalty", 30) / max(1, ranged->GetMaxHitPoints());
+   }
+  }
+ }
 	result->SetScore(iPlotScore * 10 + iDangerScore + iExtra, iBonusScore, iDamageDelta);
 
 	return result;
@@ -8522,7 +9112,7 @@ static STacticalAssignment* ScorePlotForAdmiralHeal(const SUnitStats& unit, cons
 }
 
 CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const vector<const CvUnit*>& allOurUnits) :
-	pPlot(NULL) //important, invalid by default
+	pPlot(NULL), eSimPlayer(ePlayer), bEnemyCityPresent(false) //important, invalid by default
 {
 	if (!plot || ePlayer == NO_PLAYER)
 		return;
@@ -8551,8 +9141,8 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 	bEnemyCivilianPresent = false;
 	bEdgeOfTheKnownWorld = false;
 	nAdjacentEnemyImprovementDamage = 0;
-	pFirstEnemyCombatUnit = NULL;
-	pSecondEnemyCombatUnit = NULL;
+	vEnemyUnits.clear();
+	vFixedFriendlyUnits.clear();
 
 	//set only once
 	bFriendlyDefenderEndTurn = false;
@@ -8578,33 +9168,23 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 	aiRangedAttackEnemyDistance[TD_LAND] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
 	aiRangedAttackEnemyDistance[TD_SEA] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
 
-	//enemy distance alone is not enough
-	//there may be multiple enemy combat units but we only care about the best defender
-	//also ignore the official visibility, we only add tactical plots if we can see them in the sim
-	//note that AI can see all submarines at this stage (might be ignored as tactical target though)
-	pFirstEnemyCombatUnit = pPlot->getBestDefender(NO_PLAYER,ePlayer,NULL,true,true);
-	pSecondEnemyCombatUnit = pPlot->getBestDefender(NO_PLAYER, ePlayer, NULL, true, true, false, false, pFirstEnemyCombatUnit);
-
-	//concerning embarkation. this is complex because it allows combat units to stack, violating the 1UPT rule.
-	//note that there are other exceptions as well, eg a fort can hold a naval unit and a land unit.
-	//therefore we check for "native domain". we consider non-native domain units in the simulation but only allow moves into the native domain.
-	//this means that 1UPT is still valid for all our simulated moves and we can ignore embarked defenders etc.
-
+	// Keep all defenders. Attack-specific selection uses virtual HP later.
 	//so here comes tricky logic to figure out whether we can use this plot
 	for (int i = 0; i < pPlot->getNumUnits(); i++)
 	{
 		CvUnit* pPlotUnit = pPlot->getUnitByIndex(i);
 
-		//ignore zombies
-		if (pPlotUnit->isDelayedDeath())
+		// Cargo uses its transport, never a combat stacking slot.
+		if (!pPlotUnit || pPlotUnit->isDelayedDeath() || pPlotUnit->isCargo())
 			continue;
 
 		//enemies
 		if (GET_PLAYER(ePlayer).IsAtWarWith(pPlotUnit->getOwner()))
 		{
 			//combat units (embarked or not)
-			if (pPlotUnit->IsCanDefend())
+			if (pPlotUnit->IsCanDefend() && !pPlotUnit->isCargo())
 			{
+				vEnemyUnits.push_back(pPlotUnit);
 				//enemy distance for other plots will be set afterwards in refreshVolatilePlotProperties
 				//but we need to set the zeros here!
 				aiEnemyDistance[TD_BOTH] = 0;
@@ -8621,7 +9201,7 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 		else if (ePlayer != pPlotUnit->getOwner())
 		{
 			//check if we can use the plot for combat units
-			if (pPlotUnit->IsCanDefend())
+			if (pPlotUnit->IsCanDefend() && (!CvStacking::IsEnabled() || !pPlotUnit->IsStackingUnit()))
 			{
 				if (pPlotUnit->getDomainType() == DOMAIN_LAND)
 					bfBlockedByNonSimCombatUnit |= 1;
@@ -8630,7 +9210,7 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 			}
 
 			//rules for cities are complex so just don't try it
-			if (pPlot->isCity())
+			if (pPlot->isCity() && (!CvStacking::IsEnabled() || pPlot->getOwner() != ePlayer))
 				bfBlockedByNonSimCombatUnit |= 3;
 		}
 		//owned units not included in sim
@@ -8638,12 +9218,13 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 		{
 			if (pPlotUnit->IsCanDefend())
 			{
+				vFixedFriendlyUnits.push_back(pPlotUnit);
 				//mark as friendly
 				bfBlockedByNonSimCombatUnit |= 4;
 
-				if (pPlotUnit->getDomainType() == DOMAIN_LAND)
+				if (!CvStacking::IsEnabled() && pPlotUnit->getDomainType() == DOMAIN_LAND)
 					bfBlockedByNonSimCombatUnit |= 1;
-				else if (pPlotUnit->getDomainType() == DOMAIN_SEA)
+				else if (!CvStacking::IsEnabled() && pPlotUnit->getDomainType() == DOMAIN_SEA)
 					bfBlockedByNonSimCombatUnit |= 2;
 
 				if (pPlotUnit->TurnProcessed())
@@ -8655,7 +9236,7 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 
 				//rules for cities are complex so just don't try it
 				//note that owned cities without a garrison are fine to use for tactsim
-				if (pPlot->isCity())
+				if (!CvStacking::IsEnabled() && pPlot->isCity())
 					bfBlockedByNonSimCombatUnit |= 3;
 			}
 		}
@@ -8664,6 +9245,7 @@ CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const ve
 	//important, not every enemy city has a garrison!
 	if (pPlot->isCity() && GET_PLAYER(ePlayer).IsAtWarWith(pPlot->getOwner()))
 	{
+		bEnemyCityPresent = true;
 		aiEnemyDistance[TD_BOTH] = 0;
 		aiEnemyDistance[TD_LAND] = 0;
 		aiEnemyDistance[TD_SEA] = 0;
@@ -8689,8 +9271,25 @@ void CvTacticalPlot::resetVolatileProperties()
 	aiRangedAttackEnemyDistance[TD_SEA] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
 }
 
+int CvTacticalPlot::getFixedFriendlyCount(DomainTypes eDomain) const
+{
+ int count = 0;
+ for (size_t i = 0; i < vFixedFriendlyUnits.size(); ++i)
+  if (!vFixedFriendlyUnits[i]->isCargo() && !vFixedFriendlyUnits[i]->IsStackingUnit() && (eDomain == NO_DOMAIN || vFixedFriendlyUnits[i]->getDomainType() == eDomain))
+   ++count;
+ return count;
+}
+
 bool CvTacticalPlot::isBlockedByNonSimUnit(eTactPlotDomain eDomain, bool bMustBeFriendly) const
 {
+ if (CvStacking::IsEnabled() && pPlot)
+ {
+  const bool landFull = getFixedFriendlyCount(DOMAIN_LAND) >= CvStacking::GetCapacity(eSimPlayer, DOMAIN_LAND, pPlot->isCity());
+  const bool seaFull = getFixedFriendlyCount(DOMAIN_SEA) >= CvStacking::GetCapacity(eSimPlayer, DOMAIN_SEA, pPlot->isCity());
+  if ((eDomain == TD_BOTH && (landFull || seaFull)) || (eDomain == TD_LAND && landFull) || (eDomain == TD_SEA && seaFull))
+   return true;
+ }
+
 	if (bMustBeFriendly && (bfBlockedByNonSimCombatUnit & 4) == 0)
 		return false;
 
@@ -8807,9 +9406,7 @@ void CvTacticalPlot::changeNeighboringUnitCount(CvTacticalPosition& currentPosit
 
 void CvTacticalPlot::friendlyUnitMovingIn(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment)
 {
-	//no more enemies here
-	removeEnemyUnitIfPresent();
-	removeEnemyUnitIfPresent(); // there may be several units in the plot
+	// Casualties are removed explicitly before advancing; movement never deletes defenders.
 	bEnemyCivilianPresent = false;
 
 	CvUnit* pUnit = GET_PLAYER(currentPosition.getPlayer()).getUnit(assignment.iUnitID);
@@ -8854,35 +9451,28 @@ int CvTacticalPlot::getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain) con
 	return aiFriendlyCombatUnitsAdjacentEndTurn[eDomain]; 
 }
 
-bool CvTacticalPlot::removeEnemyUnitIfPresent()
+bool CvTacticalPlot::removeEnemyUnitIfPresent(int iUnitID)
 {
-	bool bReturn = false;
-	if (pFirstEnemyCombatUnit)
-		pFirstEnemyCombatUnit = NULL;
-	else
-		pSecondEnemyCombatUnit = NULL;
+ for (vector<const CvUnit*>::iterator it = vEnemyUnits.begin(); it != vEnemyUnits.end(); ++it)
+ {
+  if ((*it)->GetID() != iUnitID)
+   continue;
+  vEnemyUnits.erase(it);
+  aiEnemyDistance[TD_BOTH] = bEnemyCityPresent || !vEnemyUnits.empty() ? 0 : TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
+  aiEnemyDistance[TD_LAND] = aiEnemyDistance[TD_SEA] = bEnemyCityPresent ? 0 : TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
+  for (size_t i = 0; i < vEnemyUnits.size(); ++i)
+   aiEnemyDistance[DomainForUnit(vEnemyUnits[i])] = 0;
+  return true;
+ }
+ return false;
+}
 
-	if (aiEnemyDistance[TD_BOTH] == 0)
-	{
-		if (!pSecondEnemyCombatUnit)
-			aiEnemyDistance[TD_BOTH] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
-		bReturn = true;
-	}
-	if (aiEnemyDistance[TD_LAND]==0)
-	{
-		if (!pSecondEnemyCombatUnit)
-			aiEnemyDistance[TD_LAND] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
-		bReturn = true;
-	}
-	if (aiEnemyDistance[TD_SEA]==0)
-	{
-		if (!pSecondEnemyCombatUnit)
-			aiEnemyDistance[TD_SEA] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
-		bReturn = true;
-	}
-
-	//need to call refreshVolatilePlotProperties if return value is true
-	return bReturn;
+void CvTacticalPlot::clearCapturedCity()
+{
+ vEnemyUnits.clear();
+ bEnemyCityPresent = false;
+ bEnemyCivilianPresent = false;
+ aiEnemyDistance[TD_BOTH] = aiEnemyDistance[TD_LAND] = aiEnemyDistance[TD_SEA] = TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
 }
 
 unsigned char CvTacticalPlot::getEnemyDistance(eTactPlotDomain eDomain) const
@@ -9174,7 +9764,7 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 				continue;
 
 			//make sure we have a chance to execute this move ... so skip it if there is an unmoveable block
-			if (IsCombatUnit(unit) && testPlot->IsSimUnitBlocking(DomainForUnit(pUnit)))
+			if (IsCombatUnit(unit) && testPlot->IsSimUnitBlocking(DomainForUnit(pUnit)) && !CvStacking::IsEnabled())
 				continue;
 
 			bool bPreviousWasMove = unit.eLastAssignment == A_MOVE_SWAP || unit.eLastAssignment == A_MOVE_SWAP_REVERSE;
@@ -9245,7 +9835,7 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 	//don't return more than requested unless there is a tie
 	if (gPossibleMoves.size() > (size_t)nMaxCount)
 	{
-		while (gPossibleMoves[nMaxCount].score == gPossibleMoves[nMaxCount - 1].score && (size_t)nMaxCount < gPossibleMoves.size())
+		while ((size_t)nMaxCount < gPossibleMoves.size() && gPossibleMoves[nMaxCount].score == gPossibleMoves[nMaxCount - 1].score)
 			nMaxCount++;
 
 		gPossibleMoves.erase(gPossibleMoves.begin() + nMaxCount, gPossibleMoves.end());
@@ -9287,6 +9877,21 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 		//this always returns at least one move
 		getPreferredAssignmentsForUnit(availableUnits_w[i], 1);
 		availableUnits_w[i].iImportanceScore = gPossibleMoves.front().score;
+  if (StackPreferencesEnabled())
+  {
+   const CvUnit* unit = availableUnits_w[i].pUnit;
+   for (size_t j = 0; j < availableUnits_w.size(); ++j)
+   {
+    const CvUnit* other = availableUnits_w[j].pUnit;
+    if (i != j && unit->getDomainType() == other->getDomainType() && unit->IsCanAttackRanged() != other->IsCanAttackRanged()
+     && plotDistance(*unit->plot(), *other->plot()) <= CvStacking::GetInt("AIStackPairRecruitRange", 1))
+    {
+     availableUnits_w[i].iImportanceScore += CvStacking::GetInt("AIStackPairRecruitBonus", 25);
+     break;
+    }
+   }
+  }
+
 		gAssignmentStorage.reset(false);
 	}
 
@@ -9294,6 +9899,34 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 	eAggression = actualLevel;
 
 	std::stable_sort(availableUnits_w.begin(), availableUnits_w.end());
+
+ if (StackPreferencesEnabled() && (int)availableUnits_w.size() > iMaxUnitsToKeep)
+ {
+  vector<SUnitStats> ordered;
+  set<int> chosen;
+  for (size_t i = 0; i < availableUnits_w.size() && (int)ordered.size() < iMaxUnitsToKeep; ++i)
+  {
+   const SUnitStats& candidate = availableUnits_w[i];
+   if (chosen.count(candidate.iUnitID))
+    continue;
+   ordered.push_back(candidate);
+   chosen.insert(candidate.iUnitID);
+   if (!candidate.pUnit->IsCanAttackRanged() || (int)ordered.size() >= iMaxUnitsToKeep)
+    continue;
+   // Preserve a nearby protective partner before filling remaining slots.
+   for (size_t j = 0; j < availableUnits_w.size(); ++j)
+   {
+    const SUnitStats& partner = availableUnits_w[j];
+    if (!chosen.count(partner.iUnitID) && !partner.pUnit->IsCanAttackRanged() && candidate.pUnit->getDomainType() == partner.pUnit->getDomainType()
+     && plotDistance(candidate.iPlotIndex, partner.iPlotIndex) <= CvStacking::GetInt("AIStackPairRecruitRange", 1))
+    { ordered.push_back(partner); chosen.insert(partner.iUnitID); break; }
+   }
+  }
+  for (size_t i = 0; i < availableUnits_w.size(); ++i)
+   if (!chosen.count(availableUnits_w[i].iUnitID))
+    ordered.push_back(availableUnits_w[i]);
+  availableUnits_w.swap(ordered);
+ }
 
 	//simply consider those extra units as blocked.
 	//since addAssignment will modify availableUnits, we copy the relevant units first
@@ -9305,6 +9938,7 @@ void CvTacticalPosition::dropSuperfluousUnits(int iMaxUnitsToKeep)
 		{
 			vector<SUnitStats>::iterator toDrop = find_if(availableUnits_w.begin(), availableUnits_w.end(), PrMatchingUnit(itUnit->iUnitID));
 			availableUnits_w.erase(toDrop);
+			finishedUnits.write().push_back(*itUnit);
 			STacticalAssignment blocked;
 			blocked.init(itUnit->iPlotIndex, itUnit->iPlotIndex, itUnit->iUnitID, itUnit->iMovesLeft, itUnit->eMoveStrategy, A_BLOCKED, GetPrevPlotScore(itUnit->iUnitID, *this));
 			blocked.SetScore(0, 0, 0);
@@ -9597,31 +10231,23 @@ bool CvTacticalPosition::isMoveBlockedByOtherUnit(const STacticalAssignment& mov
 
 int CvTacticalPosition::countBlockingUnitsAtPlot(int iPlotIndex, eUnitMovementStrategy moveType, DomainTypes eDomain) const
 {
-	int result = 0;
-
-	const CvTacticalPlot* tactPlot = getTactPlot(iPlotIndex);
-	if (!tactPlot)
-		return result;
-
-	const vector<STacticalUnit>& units = tactPlot->getUnitsAtPlot();
-	const CvPlayer& kPlayer = GET_PLAYER(ePlayer);
-
-	for (size_t i = 0; i < units.size(); i++)
-	{
-		DomainTypes eOtherDomain = kPlayer.getUnit(units[i].iUnitID)->getDomainType();
-		if (eOtherDomain != DOMAIN_SEA)
-			eOtherDomain = DOMAIN_LAND;
-
-		if (eOtherDomain != eDomain)
-			continue;
-
-		if (isCombatUnit(moveType) && isCombatUnit(units[i].eMoveType))
-			result++;
-		if (isEmbarkedUnit(moveType) && isEmbarkedUnit(units[i].eMoveType))
-			result++;
-	}
-
-	return result;
+ const CvTacticalPlot* plot = getTactPlot(iPlotIndex);
+ if (!plot)
+  return 0;
+ int count = 0;
+ const bool stackCombat = CvStacking::IsEnabled() && (isCombatUnit(moveType) || isEmbarkedUnit(moveType));
+ const vector<STacticalUnit>& units = plot->getUnitsAtPlot();
+ for (size_t i = 0; i < units.size(); ++i)
+ {
+  const CvUnit* other = GET_PLAYER(ePlayer).getUnit(units[i].iUnitID);
+  if (!other || other->getDomainType() != eDomain || other->IsStackingUnit())
+   continue;
+  if (stackCombat ? other->IsCombatUnit() : ((isCombatUnit(moveType) && isCombatUnit(units[i].eMoveType)) || (isEmbarkedUnit(moveType) && isEmbarkedUnit(units[i].eMoveType))))
+   ++count;
+ }
+ if (stackCombat)
+  return max(0, count + plot->getFixedFriendlyCount(eDomain) - CvStacking::GetCapacity(ePlayer, eDomain, plot->getPlot()->isCity()) + 1);
+ return count;
 }
 
 int CvTacticalPosition::getFirstBlockingUnitIDAtPlot(int iPlotIndex, eUnitMovementStrategy moveType, DomainTypes eDomain) const
@@ -9637,6 +10263,9 @@ int CvTacticalPosition::getFirstBlockingUnitIDAtPlot(int iPlotIndex, eUnitMoveme
 
 	for (size_t i = 0; i < units.size(); i++)
 	{
+		const SUnitStats* blocker = getAvailableUnitStats(units[i].iUnitID);
+		if (CvStacking::IsEnabled() && (!blocker || blocker->iMovesLeft <= 0))
+			continue;
 		DomainTypes eOtherDomain = kPlayer.getUnit(units[i].iUnitID)->getDomainType();
 		if (eOtherDomain != DOMAIN_SEA)
 			eOtherDomain = DOMAIN_LAND;
@@ -9709,6 +10338,10 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 
 		if (bAccept)
 		{
+			// Replace only position value. Reapplying synthetic finish damage or
+			// bonuses would count earlier attacks/healing a second time.
+			if (CvStacking::IsEnabled() && nextAssignment->IsAcceptable())
+				plotScores.write()[unit.iUnitID] = STacticalAssignment::ClampShort(nextAssignment->GetPlotScore());
 			//if the score is acceptable, end their turn. unless the unit is blocked, then we may use them for other tasks
 			if (unit.eLastAssignment != A_BLOCKED)
 			{
@@ -9731,6 +10364,14 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 		const SUnitStats& unit = availableUnits_r[i];
 		if (unit.eLastAssignment == A_INITIAL)
 			plotScores.write()[unit.iUnitID] += isEarlyFinish() ? 123 : 45;
+	}
+
+	if (CvStacking::IsEnabled())
+	{
+		iTotalScore = (iDamageDelta + iBonusScore) * 10;
+		const map<int, short>& finalScores = plotScores.read();
+		for (map<int, short>::const_iterator it = finalScores.begin(); it != finalScores.end(); ++it)
+			iTotalScore += it->second;
 	}
 
 	//scores look good and target was killed, we're done
@@ -9895,18 +10536,13 @@ void CvTacticalPosition::countEnemiesAndCheckVisibility()
 			else if (bEnemyBarbarianCamp)
 				nOriginalEnemies++;
 
-			for (int iI = 0; iI < tactPlots_w[i].getPlot()->getNumUnits(); iI++)
-			{
-				CvUnit* pEnemyUnit = tactPlots_w[i].getPlot()->getUnitByIndex(iI);
-				if (pEnemyUnit->IsCombatUnit())
-					nOriginalEnemies++;
-			}
+			nOriginalEnemies += (int)tactPlots_w[i].getEnemyUnits().size();
 			enemyPlots_w.push_back(tactPlots_w[i].getPlotIndex());
 		}
 
 		//also count our non-sim units which are close to the front
-		if (tactPlots_w[i].isBlockedByNonSimUnit(CvTacticalPlot::TD_BOTH, true) && tactPlots_w[i].getEnemyDistance() < 3)
-			nOurOriginalUnits++;
+		if (tactPlots_w[i].getEnemyDistance() < 3)
+			nOurOriginalUnits += tactPlots_w[i].getFixedFriendlyCount(NO_DOMAIN);
 
 		//ignore range 1, we can always see those plots so they are boring
 		//ignore range 4+, this is too far out and we don't have those plots cached
@@ -10099,14 +10735,14 @@ void CvTacticalPosition::refreshVolatilePlotProperties(bool bInitial)
 		for (vector<CvTacticalPlot>::iterator it = tactPlots_w.begin(); it != tactPlots_w.end(); ++it)
 		{
 			//even if we're not sure whether the unit is going to stay, we can get temporary benefits
-			if (it->isBlockedByNonSimUnit(CvTacticalPlot::TD_LAND))
+			if (it->getFixedFriendlyCount(DOMAIN_LAND) > 0)
 			{
 				it->changeNeighboringUnitCount(*this, MS_FIRSTLINE, CvTacticalPlot::TD_LAND, +1);
 				if (it->isCombatEndTurn())
 					it->setCombatUnitEndTurn(*this, CvTacticalPlot::TD_LAND, true);
 			}
 			//don't count cities twice
-			if (it->isBlockedByNonSimUnit(CvTacticalPlot::TD_SEA) && !it->getPlot()->isCity())
+			if (it->getFixedFriendlyCount(DOMAIN_SEA) > 0 && !it->getPlot()->isCity())
 			{
 				it->changeNeighboringUnitCount(*this, MS_FIRSTLINE, CvTacticalPlot::TD_SEA, +1);
 				if (it->isCombatEndTurn())
@@ -10485,97 +11121,61 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 			ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
 		break;
 	}
-	case A_RANGEATTACK:
-	case A_MELEEATTACK:
-	{
-		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
-		itUnit->iAttacksLeft--;
-		itUnit->iSelfDamage += newAssignment.iSelfDamage;
-		for (SUnitIDValueContainer::const_iterator it = newAssignment.unitDamage.begin(); it != newAssignment.unitDamage.end(); ++it)
-			ChangeUnitDamage((*it).first, (*it).second);
-		if (newAssignment.iDamagedCityId != -1)
-			ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
-		break;
-	}
-	case A_RANGEKILL:
-	{
-		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
-		itUnit->iAttacksLeft--;
-		getTactPlotMutable(newAssignment.iToPlotIndex)->removeEnemyUnitIfPresent();
-		refreshVolatilePlotProperties();
-		bRecomputeAllMoves = true; //ZOC changed
-		for (SUnitIDValueContainer::const_iterator it = newAssignment.unitDamage.begin(); it != newAssignment.unitDamage.end(); ++it)
-			ChangeUnitDamage((*it).first, (*it).second);
-		if (newAssignment.iDamagedCityId != -1)
-			ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
-		freedPlots.write().push_back(newAssignment.iToPlotIndex);
-		nKilledEnemies++;
-		if (!getTactPlot(newAssignment.iToPlotIndex)->getEnemyUnit())
-		{
-			PlotIndexContainer& enemyPlots_w = enemyPlots.write();
-			enemyPlots_w.erase(std::remove(enemyPlots_w.begin(), enemyPlots_w.end(), newAssignment.iToPlotIndex), enemyPlots_w.end());
-		}
-		break;
-	}
-	case A_MELEEKILL_NO_ADVANCE:
-	case A_MELEEKILL:
-	{
-		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
-		itUnit->iAttacksLeft--;
-		itUnit->iSelfDamage += newAssignment.iSelfDamage;
+ case A_RANGEATTACK:
+ case A_MELEEATTACK:
+ case A_RANGEKILL:
+ case A_MELEEKILL_NO_ADVANCE:
+ case A_MELEEKILL:
+ {
+  itUnit->iMovesLeft = newAssignment.iRemainingMoves;
+  itUnit->iAttacksLeft--;
+  itUnit->iSelfDamage += newAssignment.iSelfDamage;
+  for (SUnitIDValueContainer::const_iterator it = newAssignment.unitDamage.begin(); it != newAssignment.unitDamage.end(); ++it)
+   ChangeUnitDamage((*it).first, (*it).second);
+  if (newAssignment.iDamagedCityId != -1)
+   ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
 
-		if (newAssignment.eAssignmentType == A_MELEEKILL)
-		{
-			itUnit->iPlotIndex = newAssignment.iToPlotIndex; //this is because we're advancing
-
-			//do the visibility update first so all newly neighboring plots become part of the sim
-			//do this before the distance update
-			visibilityResult = doVisibilityUpdate(newAssignment);
-			
-			//now the accounting
-			getTactPlotMutable(newAssignment.iFromPlotIndex)->friendlyUnitMovingOut(*this, newAssignment); //this is because we're advancing
-			getTactPlotMutable(newAssignment.iToPlotIndex)->friendlyUnitMovingIn(*this, newAssignment); //this implicitly removes the enemyUnit flag
-		}
-		else //NO_ADVANCE
-			getTactPlotMutable(newAssignment.iToPlotIndex)->removeEnemyUnitIfPresent();
-
-		//includes splash damage
-		for (SUnitIDValueContainer::const_iterator it = newAssignment.unitDamage.begin(); it != newAssignment.unitDamage.end(); ++it)
-			ChangeUnitDamage((*it).first, (*it).second);
-		if (newAssignment.iDamagedCityId != -1)
-			ChangeCityDamage(newAssignment.iDamagedCityId, newAssignment.iCityDamage);
-
-		CvPlot* pFutureExEnemyPlot = GC.getMap().plotByIndexUnchecked(newAssignment.iToPlotIndex);
-		if (pFutureExEnemyPlot->isCity())
-		{
-			nKilledEnemies++;
-		}
-		else if (pFutureExEnemyPlot->getRevealedImprovementType(GET_PLAYER(ePlayer).getTeam()) == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT))
-		{
-			nKilledEnemies++;
-		}
-		for (int iI = 0; iI < pFutureExEnemyPlot->getNumUnits(); iI++)
-		{
-			CvUnit* pEnemyUnit = pFutureExEnemyPlot->getUnitByIndex(iI);
-			if (pEnemyUnit->IsCombatUnit())
-				nKilledEnemies++;
-		}
-
-		if (getTactPlot(newAssignment.iToPlotIndex)->getEnemyUnit() == NULL)
-		{
-			freedPlots.write().push_back(newAssignment.iToPlotIndex);
-			if (!getTactPlot(newAssignment.iToPlotIndex)->getEnemyUnit())
-			{
-				PlotIndexContainer& enemyPlots_w = enemyPlots.write();
-				enemyPlots_w.erase(std::remove(enemyPlots_w.begin(), enemyPlots_w.end(), newAssignment.iToPlotIndex), enemyPlots_w.end());
-			}
-		}
-
-		//important that we do the visibility update first!
-		refreshVolatilePlotProperties();
-		bRecomputeAllMoves = true; //ZOC changed
-		break;
-	}
+  CvTacticalPlot* target = getTactPlotMutable(newAssignment.iToPlotIndex);
+  const bool captureCity = newAssignment.eAssignmentType == A_MELEEKILL && target->isEnemyCity();
+  if (captureCity)
+  {
+   nKilledEnemies += 1 + (int)target->getEnemyUnits().size();
+   target->clearCapturedCity();
+  }
+  // Damage can kill primary or splash victims on any affected plot.
+  vector<CvTacticalPlot>& plots = tactPlots.write();
+  for (size_t i = 0; i < plots.size(); ++i)
+  {
+   vector<const CvUnit*> enemies = plots[i].getEnemyUnits();
+   bool changed = false;
+   for (size_t j = 0; j < enemies.size(); ++j)
+    if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
+    {
+     changed |= plots[i].removeEnemyUnitIfPresent(enemies[j]->GetID());
+     ++nKilledEnemies;
+    }
+   if ((changed || (captureCity && plots[i].getPlotIndex() == newAssignment.iToPlotIndex)) && !plots[i].isEnemy())
+   {
+    const int index = plots[i].getPlotIndex();
+    freedPlots.write().push_back(index);
+    PlotIndexContainer& enemyPlots_w = enemyPlots.write();
+    enemyPlots_w.erase(std::remove(enemyPlots_w.begin(), enemyPlots_w.end(), index), enemyPlots_w.end());
+   }
+   bRecomputeAllMoves |= changed || captureCity;
+  }
+  if (newAssignment.eAssignmentType == A_MELEEKILL && !getTactPlot(newAssignment.iToPlotIndex)->isEnemy())
+  {
+   itUnit->iPlotIndex = newAssignment.iToPlotIndex;
+   visibilityResult = doVisibilityUpdate(newAssignment);
+   getTactPlotMutable(newAssignment.iFromPlotIndex)->friendlyUnitMovingOut(*this, newAssignment);
+   getTactPlotMutable(newAssignment.iToPlotIndex)->friendlyUnitMovingIn(*this, newAssignment);
+   if (!captureCity && !GET_PLAYER(ePlayer).isBarbarian() && GC.getMap().plotByIndexUnchecked(newAssignment.iToPlotIndex)->getRevealedImprovementType(GET_PLAYER(ePlayer).getTeam()) == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT))
+    ++nKilledEnemies;
+  }
+  if (bRecomputeAllMoves)
+   refreshVolatilePlotProperties();
+  break;
+ }
 	case A_PILLAGE:
 		itUnit->iMovesLeft = newAssignment.iRemainingMoves;
 		if (TacticalAIHelpers::GetOtherPlayerImprovementDamage( GC.getMap().plotByIndexUnchecked(newAssignment.iToPlotIndex), getPlayer(), true) > 0)
@@ -10607,6 +11207,31 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 	default:
 		UNREACHABLE();
 	}
+
+ if ((newAssignment.eAssignmentType == A_MOVE || newAssignment.eAssignmentType == A_MOVE_FORCED || newAssignment.eAssignmentType == A_MOVE_SWAP
+  || newAssignment.eAssignmentType == A_MOVE_SWAP_REVERSE || newAssignment.eAssignmentType == A_CAPTURE || newAssignment.eAssignmentType == A_PILLAGE)
+  && newAssignment.unitDamage.begin() != newAssignment.unitDamage.end())
+ {
+  vector<CvTacticalPlot>& plots = tactPlots.write();
+  for (size_t i = 0; i < plots.size(); ++i)
+  {
+   vector<const CvUnit*> enemies = plots[i].getEnemyUnits();
+   bool changed = false;
+   for (size_t j = 0; j < enemies.size(); ++j)
+    if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
+    { changed |= plots[i].removeEnemyUnitIfPresent(enemies[j]->GetID()); ++nKilledEnemies; }
+   if (changed && !plots[i].isEnemy())
+   {
+    const int index = plots[i].getPlotIndex();
+    freedPlots.write().push_back(index);
+    PlotIndexContainer& enemyPlots_w = enemyPlots.write();
+    enemyPlots_w.erase(std::remove(enemyPlots_w.begin(), enemyPlots_w.end(), index), enemyPlots_w.end());
+   }
+   bRecomputeAllMoves |= changed;
+  }
+  if (bRecomputeAllMoves)
+   refreshVolatilePlotProperties();
+ }
 
 	//we update the moveplots lazily because it takes a while and we don't know yet if we will ever follow up on this position
 	if (bRecomputeAllMoves)
@@ -10678,15 +11303,24 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 	return RESULT_ADDED;
 }
 
+static bool EqualAssignedUnitValues(const SUnitIDValueContainer& left, const SUnitIDValueContainer& right)
+{
+ for (SUnitIDValueContainer::const_iterator it = left.begin(); it != left.end(); ++it)
+  if (right.GetValue((*it).first) != (*it).second)
+   return false;
+ for (SUnitIDValueContainer::const_iterator it = right.begin(); it != right.end(); ++it)
+  if (left.GetValue((*it).first) != (*it).second)
+   return false;
+ return true;
+}
+
 bool STacticalAssignment::operator==(const STacticalAssignment& rhs) const
 {
-	return iTotalScore == rhs.iTotalScore &&
-		iUnitID == rhs.iUnitID &&
-		iFromPlotIndex == rhs.iFromPlotIndex &&
-		iToPlotIndex == rhs.iToPlotIndex &&
-		iRemainingMoves == rhs.iRemainingMoves &&
-		eMoveType == rhs.eMoveType &&
-		eAssignmentType == rhs.eAssignmentType;
+ return iTotalScore == rhs.iTotalScore &&
+  iUnitID == rhs.iUnitID && iFromPlotIndex == rhs.iFromPlotIndex && iToPlotIndex == rhs.iToPlotIndex &&
+  iRemainingMoves == rhs.iRemainingMoves && eMoveType == rhs.eMoveType && eAssignmentType == rhs.eAssignmentType &&
+  iSelfDamage == rhs.iSelfDamage && iCityDamage == rhs.iCityDamage && iDamagedCityId == rhs.iDamagedCityId &&
+  EqualAssignedUnitValues(unitDamage, rhs.unitDamage) && EqualAssignedUnitValues(unitHealing, rhs.unitHealing);
 }
 
 //do not allow one unit to be present multiple times!
@@ -12219,6 +12853,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 	PlayerTypes ePlayer = vUnits.front()->getOwner();
 	TeamTypes ourTeam = GET_PLAYER(ePlayer).getTeam();
+	StackForecastScope stackForecastScope;
 
 	static vector<CvTacticalPosition*> openPositionsHeap;
 	static vector<CvTacticalPosition*> completedPositions;
@@ -12278,12 +12913,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		if (std::find(ourUnits.begin(), ourUnits.end(), pUnit) != ourUnits.end())
 			continue;
 
-		//units outside of their native domain are a problem because they violate 1UPT. 
-		//we accept them only if they are alone in the plot and only allow movement into the native domain.
-		//exception: since we ignore garrisoned units for tactsim, we can still use units (ships) in cities if a (land) garrison is present
+		// Embarked combat stacks use the same domain-slot accounting. Cargo and
+		// aircraft retain their separate transport/rebase handling. Legacy mode
+		// keeps its original restriction on non-native units sharing a plot.
 		if (pUnit && pUnit->canUseNow())
 		{
-			if (pUnit->isNativeDomain(pUnit->plot()) || pUnit->plot()->getNumUnits() == 1 || pUnit->plot()->isCity())
+			if ((CvStacking::IsEnabled() && pUnit->IsCombatUnit() && !pUnit->isCargo()) || pUnit->isNativeDomain(pUnit->plot()) || pUnit->plot()->getNumUnits() == 1 || pUnit->plot()->isCity())
 			{
 				ourUnits.push_back(vUnits[i]);
 				unitXP.push_back(vUnits[i]->getExperienceTimes100());
@@ -12461,6 +13096,14 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 			GET_PLAYER(ePlayer).GetTacticalAI()->LogTacticalMessage(CvString::format("tactsim around (%d:%d) with agg %d finished in %d ms. started with %d units and %d enemies on %d plots. used %d positions, %d completed.",
 				pTarget->getX(),pTarget->getY(), eAggLvl, durationMs, initialPosition->GetNumAvailableUnits(), initialPosition->getNumEnemies(), initialPosition->getNumPlots(), iUsedPositions, completedPositions.size()));
 		}
+
+		if (CvStacking::IsEnabled() && gStackForecastsActive)
+			GET_PLAYER(ePlayer).GetTacticalAI()->LogTacticalMessage(CvString::format("stack forecast cache: danger %lu hit/%lu miss (%u entries), defender %lu hit/%lu miss (%u entries); peak %u/%u entries, key bytes %u/%u, estimated bytes %u, insertion bypasses %lu, nested bypasses %lu",
+				gStackDangerHits, gStackDangerMisses, (unsigned int)gStackDangerForecasts.size(),
+				gStackDefenderHits, gStackDefenderMisses, (unsigned int)gStackDefenderForecasts.size(),
+				(unsigned int)(gStackDangerForecasts.size() + gStackDefenderForecasts.size()), (unsigned int)gStackEntryLimit,
+				(unsigned int)gStackKeyPayloadBytes, (unsigned int)gStackKeyPayloadLimit, (unsigned int)EstimatedStackForecastBytes(),
+				gStackInsertBypasses, gStackNestedBypasses));
 
 		//debug dump
 #if defined(MOD_CORE_DEBUGGING)

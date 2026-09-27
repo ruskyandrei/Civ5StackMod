@@ -103,6 +103,8 @@ CPP = [
     'CvGameCoreDLL_Expansion2\\Lua\\CvLuaTeamTech.cpp',
     'CvGameCoreDLL_Expansion2\\Lua\\CvLuaUnit.cpp',
     'CvGameCoreDLL_Expansion2\\CustomMods.cpp',
+    'CvGameCoreDLL_Expansion2\\CvStackingRules.cpp',
+    'CvGameCoreDLL_Expansion2\\CvStackMovement.cpp',
     'CvGameCoreDLL_Expansion2\\CvAchievementInfo.cpp',
     'CvGameCoreDLL_Expansion2\\CvAchievementUnlocker.cpp',
     'CvGameCoreDLL_Expansion2\\CvAdvisorCounsel.cpp',

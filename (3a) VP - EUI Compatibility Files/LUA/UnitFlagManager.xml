@@ -27,6 +27,11 @@
 		<WorldAnchor ID="Anchor">
 			<Container ID="Container" Anchor="C,C" Size="64.64" >
 
+
+                <!-- One selectable badge replaces overlapping friendly stack flags. -->
+                <GridButton ID="StackBadge" Anchor="C,C" Offset="28,-25" Size="36,24"
+                    Style="SmallButton2" Font="TwCenMT16" FontStyle="Stroke" Hidden="1"/>
+
 				<!-- Cargo Button for Carriers -->
 				<Grid ID="CargoBG" BranchAlpha="1.2" Anchor="C,C" Offset="30,0" Size="35,22" Style="Grid9FrameTurns">
 					<GridButton ID="Cargo" Size="35,22" Style="Grid9FrameTurnsButton" Font="TwCenMT14" ColorSet="Beige_Black_Alpha" FontStyle="Stroke" />

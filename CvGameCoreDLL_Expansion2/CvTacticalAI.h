@@ -869,7 +869,7 @@ public:
 	const vector<STacticalUnit>& getUnitsAtPlot() const { return vUnitsHere; }
 
 	bool isEnemy(eTactPlotDomain eDomain = TD_BOTH) const { return aiEnemyDistance[eDomain]==0; }
-	bool isEnemyCity() const { return isEnemy() && pPlot->isCity(); }
+	bool isEnemyCity() const { return bEnemyCityPresent; }
 	bool isEnemyCivilian() const { return bEnemyCivilianPresent; }
 
 	bool isEdgePlot() const { return bEdgeOfTheKnownWorld; }
@@ -887,15 +887,19 @@ public:
 	//update fictional state
 	void friendlyUnitMovingIn(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment);
 	void friendlyUnitMovingOut(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment);
-	bool removeEnemyUnitIfPresent();
+	bool removeEnemyUnitIfPresent(int iUnitID);
+	void clearCapturedCity();
+	const vector<const CvUnit*>& getEnemyUnits() const { return vEnemyUnits; }
+	const vector<const CvUnit*>& getFixedFriendlyUnits() const { return vFixedFriendlyUnits; }
+	int getFixedFriendlyCount(DomainTypes eDomain) const;
 
 	unsigned char getEnemyDistance(eTactPlotDomain eDomain = TD_BOTH) const;
 	void setEnemyDistance(eTactPlotDomain eDomain, int iDistance);
 	unsigned char getRangedAttackEnemyDistance(eTactPlotDomain eDomain = TD_BOTH) const;
 	void setRangedAttackEnemyDistance(eTactPlotDomain eDomain, int iDistance);
 	bool checkEdgePlotsForSurprises(const CvTacticalPosition& currentPosition, vector<int>& landEnemies, vector<int>& seaEnemies);
-	bool isEnemyCombatUnit() const { return pFirstEnemyCombatUnit != NULL || pSecondEnemyCombatUnit != NULL; }
-	CvUnit* getEnemyUnit() const { return pFirstEnemyCombatUnit != NULL ? pFirstEnemyCombatUnit : pSecondEnemyCombatUnit; }
+	bool isEnemyCombatUnit() const { return !vEnemyUnits.empty(); }
+	CvUnit* getEnemyUnit() const { return vEnemyUnits.empty() ? NULL : const_cast<CvUnit*>(vEnemyUnits.front()); }
 	bool isCombatEndTurn() const { return bFriendlyDefenderEndTurn; }
 	bool IsSimUnitBlocking(eTactPlotDomain tactDomain) const { return bSimUnitBlocking[tactDomain]; }
 	void changeNeighboringUnitCount(CvTacticalPosition& currentPosition, eUnitMovementStrategy moveType, eTactPlotDomain unitDomain, int iChange) const;
@@ -911,8 +915,10 @@ public:
 
 protected:
 	const CvPlot* pPlot; //null if invalid
-	CvUnit* pFirstEnemyCombatUnit; //there may also be enemy cities without garrison!
-	CvUnit* pSecondEnemyCombatUnit; //there may also be enemy cities without garrison!
+	vector<const CvUnit*> vEnemyUnits; // Every surviving defender, including over-capacity stacks.
+	vector<const CvUnit*> vFixedFriendlyUnits; // Owned units omitted from bounded search still occupy slots.
+	PlayerTypes eSimPlayer;
+	bool bEnemyCityPresent;
 	vector<STacticalUnit> vUnitsHere; //which (simulated) units are in this plot?
 
 	unsigned char aiEnemyDistance[3]; //distance to attack targets, not civilians. recomputed every time an enemy is killed or discovered
@@ -996,13 +1002,14 @@ struct DefendKey
 	int iPlotId;
 	int iPrevDamage;
 	size_t iDamageHash;
+	size_t iStackHash;
 
 	bool operator==(const DefendKey& rhs) const
 	{
 		return iDefenderId == rhs.iDefenderId &&
 			iPlotId == rhs.iPlotId &&
 			iPrevDamage == rhs.iPrevDamage &&
-			iDamageHash == rhs.iDamageHash;
+			iDamageHash == rhs.iDamageHash && iStackHash == rhs.iStackHash;
 	}
 };
 
@@ -1015,6 +1022,7 @@ struct DefendKeyHash
 		h ^= (size_t)k.iPlotId + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= (size_t)k.iPrevDamage + 0x9e3779b9 + (h << 6) + (h >> 2);
 		h ^= k.iDamageHash + 0x9e3779b9 + (h << 6) + (h >> 2);
+		h ^= k.iStackHash + 0x9e3779b9 + (h << 6) + (h >> 2);
 
 		return h;
 	}
@@ -1035,7 +1043,7 @@ struct AttackKey
 		return iAttackerId == rhs.iAttackerId &&
 			iAttackerPlot == rhs.iAttackerPlot &&
 			iDefenderId == rhs.iDefenderId &&
-			iGarrisonId == rhs.iGarrisonId;
+			iGarrisonId == rhs.iGarrisonId &&
 			iPrevSelfDamage == rhs.iPrevSelfDamage &&
 			iPrevUnitDamage == rhs.iPrevUnitDamage &&
 			iPrevCityDamage == rhs.iPrevCityDamage;
@@ -1062,8 +1070,8 @@ struct AttackKeyHash
 class CDangerCache {
 public:
 	void clear();
-	void storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger);
-	bool findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger) const;
+	void storeDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int iDanger, size_t iStackHash = 0);
+	bool findDanger(int iDefenderId, int iDefenderPlot, int iPrevDamage, const SUnitIDValueContainer& unitDamageDealt, int& iDanger, size_t iStackHash = 0) const;
 protected:
 	//key is defender id, plot, previous damage and a hash of unit damage dealt
 	std::tr1::unordered_map<DefendKey, int, DefendKeyHash> dangerStats;
@@ -1149,7 +1157,7 @@ protected:
 
 	//set in constructor, constant afterwards
 	PlayerTypes ePlayer;
-	unsigned char nFirstInterestingAssignment; //in case we want to skip INITIALs and BLOCKEDs
+	size_t nFirstInterestingAssignment; //in case we want to skip INITIALs and BLOCKEDs
 
 	bool bHasGeneral;
 	bool bHasAdmiral;
@@ -1300,9 +1308,9 @@ protected:
 
 	//set in constructor, constant afterwards
 	eAggressionLevel eAggression;
-	unsigned char nOurOriginalUnits; //movable units included in sim (inherited from root)
-	unsigned char nOriginalEnemies; //enemy units and cities. ignoring garrisons. not updated after sim-kills!
-	unsigned char nKilledEnemies;
+	int nOurOriginalUnits; //movable units included in sim (inherited from root)
+	int nOriginalEnemies; //enemy units and cities. ignoring garrisons. not updated after sim-kills!
+	int nKilledEnemies;
 	CvPlot* pTargetPlot;
 	bool bTargetDistanceRelevant;
 	bool bReturnToStartPositions;
@@ -1550,7 +1558,8 @@ namespace TacticalAIHelpers
 
 	std::vector<CvPlot*> GetPlotsForRangedAttack(const CvPlot* pTarget, const CvUnit* pUnit, int iRange, bool bCheckOccupied);
 	int GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefender, const CvUnit* pAttacker, const CvPlot* pDefenderPlot, const CvPlot* pAttackerPlot, int& iAttackerDamage, 
-									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraDefenderDamage=0, bool bQuickAndDirty = false);
+									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraDefenderDamage=0, bool bQuickAndDirty = false, bool bNextTurnThreat = false);
+	const CvUnit* GetSimulatedGarrison(const CvCity* city, const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage);
 	int GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, int& iAttackerDamage, int& iGarrisonDamage,
 									bool bIgnoreUnitAdjacencyBoni=false, int iExtraSelfDamage=0, int iExtraCityDamage=0, int iExtraGarrisonDamage=0, bool bQuickAndDirty = false,
 									bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL);

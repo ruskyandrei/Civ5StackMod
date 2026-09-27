@@ -10,6 +10,7 @@
 //			Jon Shafer - 03/2005
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingRules.h"
 #include "CvGlobals.h"
 #include "CvRandom.h"
 #include "ICvDLLUserInterface.h"
@@ -5284,6 +5285,7 @@ bool CvGlobals::GetHexDebugLayerString(CvPlot* pkPlot, const char* szLayerName, 
 
 void CvGlobals::cacheGlobals()
 {
+	CvStacking::ResetCache();
 	Database::Connection* pDB = GetGameDatabase();
 	pDB->Execute(m_kGlobalDefinesLookup, "SELECT Value from Defines where Name = ? LIMIT 1");
 
@@ -7258,6 +7260,7 @@ int CvGlobals::getNUM_CONTROL_TYPES() const
 
 void CvGlobals::deleteInfoArrays()
 {
+	CvStacking::ResetCache();
 	deleteInfoArray(m_paBuildingClassInfo);
 
 	deleteInfoArray(m_paLeaderHeadInfo);

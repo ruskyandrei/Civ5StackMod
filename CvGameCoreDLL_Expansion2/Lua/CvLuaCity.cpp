@@ -536,6 +536,7 @@ void CvLuaCity::PushMethods(lua_State* L, int t)
 	Method(CanRangeStrikeNow);
 	Method(CanRangeStrikeAt);
 	Method(HasPerformedRangedStrikeThisTurn);
+	Method(GetStackDefender);
 	Method(RangeCombatUnitDefense);
 	Method(RangeCombatDamage);
 	Method(GetAirStrikeDefenseDamage);
@@ -5434,6 +5435,15 @@ int CvLuaCity::lCanRangeStrikeAt(lua_State* L)
 int CvLuaCity::lHasPerformedRangedStrikeThisTurn(lua_State* L)
 {
 	return BasicLuaMethod(L, &CvCity::isMadeAttack);
+}
+//------------------------------------------------------------------------------
+// Select exactly the defender that an actual city ranged strike will use.
+int CvLuaCity::lGetStackDefender(lua_State* L)
+{
+    CvCity* pkCity = GetInstance(L);
+    CvPlot* pkPlot = CvLuaPlot::GetInstance(L, 2, false);
+    CvLuaUnit::Push(L, pkPlot ? pkCity->rangedStrikeTarget(pkPlot) : NULL);
+    return 1;
 }
 //------------------------------------------------------------------------------
 int CvLuaCity::lRangeCombatUnitDefense(lua_State* L)

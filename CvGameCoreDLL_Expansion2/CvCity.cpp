@@ -1,4 +1,4 @@
-﻿/*	-------------------------------------------------------------------------------------------------------
+/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.
@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingRules.h"
 #include "CvGlobals.h"
 #include "CvCity.h"
 #include "CvArea.h"
@@ -30560,15 +30561,18 @@ bool IsValidPlotForUnitType(CvPlot* pPlot, PlayerTypes ePlayer, CvUnitEntry* pkU
 	if (pkUnitInfo->GetCombat() == 0)
 		return true;
 
+	int iCombatOccupants = 0;
+	const int iCapacity = CvStacking::IsEnabled() ? CvStacking::GetCapacity(ePlayer, (DomainTypes)pkUnitInfo->GetDomainType(), pPlot->isCity()) : 1;
 	const IDInfo* pUnitNode = pPlot->headUnitNode();
 	while (pUnitNode != NULL)
 	{
 		const CvUnit* pLoopUnit = ::GetPlayerUnit(*pUnitNode);
-		if (pLoopUnit != NULL)
+		if (pLoopUnit != NULL && !pLoopUnit->isDelayedDeath() && !pLoopUnit->isCargo() && !pLoopUnit->IsStackingUnit())
 		{
-			// check stacking (see also CountStackingUnitsAtPlot)
+			// New units consume the same per-domain slots as moving units.
 			if (pLoopUnit->IsCombatUnit() && pLoopUnit->getDomainType() == pkUnitInfo->GetDomainType())
-				return false;
+				if (++iCombatOccupants >= iCapacity)
+					return false;
 		}
 
 		pUnitNode = pPlot->nextUnitNode(pUnitNode);
@@ -33241,6 +33245,16 @@ CvUnit* CvCity::rangedStrikeTarget(const CvPlot* pPlot) const
 {
 	VALIDATE_OBJECT();
 	CvUnit* pDefender = pPlot->getBestDefender(NO_PLAYER, getOwner(), NULL, true, false, false, /*bNoncombatAllowed*/ true);
+ if (CvStacking::IsEnabled() && pPlot->isVisible(getTeam()))
+ {
+  vector<const CvUnit*> candidates;
+  for (int i = 0; i < pPlot->getNumUnits(); ++i)
+   candidates.push_back(pPlot->getUnitByIndex(i));
+  const CvUnit* selected = CvUnitCombat::SelectStackDefenderForCity(this, pPlot, candidates, SUnitIDValueContainer());
+  if (selected)
+   pDefender = const_cast<CvUnit*>(selected);
+ }
+
 
 	if (pDefender)
 	{
@@ -33263,7 +33277,7 @@ CvUnit* CvCity::rangedStrikeTarget(const CvPlot* pPlot) const
 }
 
 //	--------------------------------------------------------------------------------
-int CvCity::rangeCombatUnitDefense(const CvUnit* pDefender, const CvPlot* pInPlot, bool bQuickAndDirty) const
+int CvCity::rangeCombatUnitDefense(const CvUnit* pDefender, const CvPlot* pInPlot, bool bQuickAndDirty, int iExtraDefenderDamage) const
 {
 	if (pInPlot == NULL)
 		pInPlot = pDefender->plot();
@@ -33281,18 +33295,18 @@ int CvCity::rangeCombatUnitDefense(const CvUnit* pDefender, const CvPlot* pInPlo
 		if ((!pInPlot && pDefender->isEmbarked()) || (pInPlot && pInPlot->needsEmbarkation(pDefender) && pDefender->CanEverEmbark()))
 			iDefenderStrength = pDefender->GetEmbarkedUnitDefense();
 		else
-			iDefenderStrength = pDefender->GetMaxRangedCombatStrength(NULL, this, false, pInPlot, plot(), false, bQuickAndDirty);
+			iDefenderStrength = pDefender->GetMaxRangedCombatStrength(NULL, this, false, pInPlot, plot(), false, bQuickAndDirty, iExtraDefenderDamage);
 	}
 	else
 	{
-		iDefenderStrength = pDefender->GetMaxDefenseStrength(pInPlot, NULL, NULL, /*bFromRangedAttack*/ true, bQuickAndDirty);
+		iDefenderStrength = pDefender->GetMaxDefenseStrength(pInPlot, NULL, NULL, /*bFromRangedAttack*/ true, bQuickAndDirty, iExtraDefenderDamage);
 	}
 
 	return iDefenderStrength;
 }
 
 //	--------------------------------------------------------------------------------
-int CvCity::rangeCombatDamage(const CvUnit* pDefender, bool bIncludeRand, const CvPlot* pInPlot, bool bQuickAndDirty) const
+int CvCity::rangeCombatDamage(const CvUnit* pDefender, bool bIncludeRand, const CvPlot* pInPlot, bool bQuickAndDirty, int iExtraDefenderDamage) const
 {
 	if (pDefender == NULL)
 		return 0;
@@ -33308,7 +33322,7 @@ int CvCity::rangeCombatDamage(const CvUnit* pDefender, bool bIncludeRand, const 
 		pInPlot = pDefender->plot();
 
 	int iAttackerStrength = getStrengthValue(true, false, pDefender);
-	int iDefenderStrength = rangeCombatUnitDefense(pDefender, pInPlot, bQuickAndDirty);
+	int iDefenderStrength = rangeCombatUnitDefense(pDefender, pInPlot, bQuickAndDirty, iExtraDefenderDamage);
 	int iModifier = 0 - pDefender->GetDamageReductionCityAssault(); //watch the minus
 	CvSeeder randomSeed;
 	if (bIncludeRand)

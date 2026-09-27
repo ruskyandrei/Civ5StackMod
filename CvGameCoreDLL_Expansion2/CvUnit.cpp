@@ -8,6 +8,8 @@
 
 #include "CvGameCoreDLLPCH.h"
 #include "CvUnit.h"
+#include "CvStackingRules.h"
+#include "CvDangerPlots.h"
 
 #include "CvAStar.h"
 #include "CvAchievementUnlocker.h"
@@ -62,6 +64,34 @@ int saiTaskWhenKilled[100] = {0};
 
 // for diagnosing movement problems, it's useful so set this flag to true on a breakpoint and examine the AI units in game
 bool g_bFreezeUnits = false;
+
+// Only notify opponents who can legitimately observe this unit or already
+// know it. Do not rebuild here: unit initialization/movement may be in progress.
+static vector<PlayerTypes> StackDangerObservers(const CvUnit* unit)
+{
+ vector<PlayerTypes> result;
+ if (!CvStacking::IsEnabled() || !unit || unit->getOwner() == NO_PLAYER || unit->getUnitType() == NO_UNIT || !unit->plot()
+  || (!unit->IsCombatUnit() && unit->getDomainType() != DOMAIN_AIR) || unit->isCargo())
+  return result;
+ const vector<PlayerTypes>& enemies = GET_PLAYER(unit->getOwner()).GetPlayersAtWarWith();
+ for (size_t i = 0; i < enemies.size(); ++i)
+ {
+  CvPlayer& observer = GET_PLAYER(enemies[i]);
+  if (!observer.isAlive() || !GET_TEAM(observer.getTeam()).isAtWar(unit->getTeam()))
+   continue;
+  CvDangerPlots* danger = observer.GetDangerPlots();
+  const bool visible = unit->plot()->isVisible(observer.getTeam()) && !unit->isInvisible(observer.getTeam(), false);
+  if (visible || (danger && danger->IsKnownAttacker(unit)))
+   result.push_back(enemies[i]);
+ }
+ return result;
+}
+
+static void DirtyStackDangerObservers(const vector<PlayerTypes>& observers)
+{
+ for (size_t i = 0; i < observers.size(); ++i)
+  GET_PLAYER(observers[i]).SetDangerPlotsDirty();
+}
 
 namespace FSerialization
 {
@@ -1249,6 +1279,8 @@ void CvUnit::initWithNameOffset(int iID, UnitTypes eUnit, int iNameOffset, UnitA
 	
 	if(bSetupGraphical)
 		setupGraphical();
+
+	DirtyStackDangerObservers(StackDangerObservers(this));
 
 	if (MOD_EVENTS_UNIT_CREATED)
 		GAMEEVENTINVOKE_HOOK(GAMEEVENT_UnitCreated, getOwner(), GetID(), getUnitType(), getX(), getY());
@@ -17677,15 +17709,15 @@ bool CvUnit::canAirDefend(const CvPlot* pPlot) const
 
 //	--------------------------------------------------------------------------------
 int CvUnit::GetAirCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand, int iAssumeExtraSelfDamage, int iAssumeExtraDefenderDamage,
-						const CvPlot* pTargetPlot, const CvPlot* pFromPlot, bool bQuickAndDirty) const
+						const CvPlot* pTargetPlot, const CvPlot* pFromPlot, bool bQuickAndDirty, bool bOverrideGarrison, const CvUnit* pGarrisonOverride) const
 {
-	return GetRangeCombatDamage(pDefender,pCity, iGarrisonMaxHP,iGarrisonDamage,bIncludeRand,iAssumeExtraSelfDamage,iAssumeExtraDefenderDamage,pTargetPlot,pFromPlot,false,bQuickAndDirty);
+	return GetRangeCombatDamage(pDefender,pCity, iGarrisonMaxHP,iGarrisonDamage,bIncludeRand,iAssumeExtraSelfDamage,iAssumeExtraDefenderDamage,pTargetPlot,pFromPlot,false,bQuickAndDirty,bOverrideGarrison,pGarrisonOverride);
 }
 
 
 //	--------------------------------------------------------------------------------
 int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand, int iAssumeExtraSelfDamage, int iAssumeExtraDefenderDamage,
-	const CvPlot* pTargetPlot, const CvPlot* pFromPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty) const
+	const CvPlot* pTargetPlot, const CvPlot* pFromPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, bool bOverrideGarrison, const CvUnit* pGarrisonOverride) const
 {
 	VALIDATE_OBJECT();
 	iGarrisonDamage = 0;
@@ -17707,7 +17739,7 @@ int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, i
 	}
 
 	int iAttackerStrength = GetMaxRangedCombatStrength(pDefender, pCity, true, 
-								pFromPlot, pTargetPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty);
+								pFromPlot, pTargetPlot, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraSelfDamage, iAssumeExtraDefenderDamage);
 	if (iAttackerStrength==0)
 		return 0;
 
@@ -17724,7 +17756,7 @@ int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, i
 	// City is Defender - unless it's a missile
 	if (pCity != NULL && AI_getUnitAIType() != UNITAI_MISSILE_AIR)
 	{
-		iDefenderStrength = pCity->getStrengthValue(false,ignoreBuildingDefense());
+		iDefenderStrength = pCity->getStrengthValue(false, ignoreBuildingDefense(), NULL, bOverrideGarrison, pGarrisonOverride);
 		//note: extra damage doesn't affect city strength
 	}
 	// Unit is Defender
@@ -17753,7 +17785,7 @@ int CvUnit::GetRangeCombatDamage(const CvUnit* pDefender, const CvCity* pCity, i
 				iDefenderStrength = pDefender->GetEmbarkedUnitDefense();
 			else
 			{
-				iDefenderStrength = pDefender->GetMaxRangedCombatStrength(this, /*pCity*/ NULL, false, pTargetPlot, pFromPlot, false, bQuickAndDirty, iAssumeExtraSelfDamage, iAssumeExtraDefenderDamage);
+				iDefenderStrength = pDefender->GetMaxRangedCombatStrength(this, /*pCity*/ NULL, false, pTargetPlot, pFromPlot, false, bQuickAndDirty, iAssumeExtraDefenderDamage, iAssumeExtraSelfDamage);
 			}
 		}
 		else
@@ -20281,6 +20313,8 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 	if (at(iX, iY))
 		return;
 
+	const vector<PlayerTypes> stackDangerObserversBefore = StackDangerObservers(this);
+
 	ASSERT(!isFighting());
 	ASSERT((iX == INVALID_PLOT_COORD) || (GC.getMap().plot(iX, iY)->getX() == iX));
 	ASSERT((iY == INVALID_PLOT_COORD) || (GC.getMap().plot(iX, iY)->getY() == iY));
@@ -21257,6 +21291,14 @@ void CvUnit::setXY(int iX, int iY, bool bGroup, bool bUpdate, bool bShow, bool b
 			//normally re-setting the garrison in pkPrevGarrisonedCity should have set this already, but better be safe
 			SetGarrisonedCity(-1);
 		}
+	}
+
+	// Re-index both the old threat footprint and the new one lazily. An enemy
+	// moving across already-visible tiles does not create a visibility event.
+	if (pOldPlot)
+	{
+		DirtyStackDangerObservers(stackDangerObserversBefore);
+		DirtyStackDangerObservers(StackDangerObservers(this));
 	}
 
 	ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
@@ -25593,6 +25635,7 @@ bool CvUnit::isDelayedDeathExported() const
 void CvUnit::startDelayedDeath()
 {
 	VALIDATE_OBJECT();
+	DirtyStackDangerObservers(StackDangerObservers(this));
 	m_bDeathDelay = true;
 }
 
@@ -25820,7 +25863,10 @@ const InvisibleTypes CvUnit::getInvisibleType() const
 void CvUnit::setInvisibleType(InvisibleTypes InvisibleType)
 {
 	VALIDATE_OBJECT();
+	if (m_eInvisibleType != InvisibleType)
+		DirtyStackDangerObservers(StackDangerObservers(this));
 	m_eInvisibleType = InvisibleType;
+	DirtyStackDangerObservers(StackDangerObservers(this));
 }
 
 //	--------------------------------------------------------------------------------
@@ -27998,6 +28044,7 @@ void CvUnit::setPromotionActive(PromotionTypes eIndex, bool bNewValue)
 	if (isPromotionActive(eIndex) == bNewValue)
 		return;
 
+	const vector<PlayerTypes> dangerObserversBefore = StackDangerObservers(this);
 	m_Promotions.SetPromotionActive(eIndex, bNewValue);
 	int iChange = (bNewValue ? 1 : -1);
 
@@ -28390,6 +28437,14 @@ void CvUnit::setPromotionActive(PromotionTypes eIndex, bool bNewValue)
 	if (getConvertDomainUnitType() == NO_UNIT && thisPromotion.GetConvertDomainUnit() != NO_UNIT)
 	{
 		ChangeConvertDomainUnit((UnitTypes)thisPromotion.GetConvertDomainUnit());
+	}
+
+	// Promotions may change range, sight, embarkation or movement footprints.
+	if (CvStacking::IsEnabled())
+	{
+		ClearPathCache();
+		DirtyStackDangerObservers(dangerObserversBefore);
+		DirtyStackDangerObservers(StackDangerObservers(this));
 	}
 
 	if (IsSelected())
@@ -29184,7 +29239,7 @@ int CvUnit::CountStackingUnitsAtPlot(const CvPlot* pPlot) const
 			if (pLoopUnit->IsCombatUnit())
 			{
 				//inside of cities mixing domains is ok
-				if (pPlot->isCoastalCityOrPassableImprovement(getOwner(),true,true))
+				if (CvStacking::IsEnabled() || pPlot->isCoastalCityOrPassableImprovement(getOwner(),true,true))
 				{
 					if (getDomainType()==pLoopUnit->getDomainType())
 						iNumUnitsOfSameType++;
@@ -29206,12 +29261,38 @@ int CvUnit::CountStackingUnitsAtPlot(const CvPlot* pPlot) const
 	return iNumUnitsOfSameType;
 }
 
+int CvUnit::GetStackingLimit(const CvPlot* pPlot) const
+{
+	if (!pPlot)
+		return 0;
+	if (CvStacking::IsEnabled() && IsCombatUnit() && !IsStackingUnit() &&
+		(getDomainType() == DOMAIN_LAND || getDomainType() == DOMAIN_SEA))
+		return CvStacking::GetCapacity(this, pPlot);
+	return pPlot->getUnitLimit();
+}
+
 bool CvUnit::CanStackUnitAtPlot(const CvPlot* pPlot) const
 {
-	if (pPlot)
-		return CountStackingUnitsAtPlot(pPlot) < pPlot->getUnitLimit();
+	if (!pPlot)
+		return false;
 
-	return false;
+	// Raising the per-owner cap must not legalize foreign combat stacks.
+	if (CvStacking::IsEnabled() && IsCombatUnit() && !isCargo() && !IsStackingUnit() &&
+		(getDomainType() == DOMAIN_LAND || getDomainType() == DOMAIN_SEA))
+	{
+		for (int i = 0; i < pPlot->getNumUnits(); ++i)
+		{
+			const CvUnit* other = pPlot->getUnitByIndex(i);
+			if (!other || other == this || other->getOwner() == getOwner() ||
+				other->isDelayedDeath() || other->IsDead() || other->isCargo() ||
+				!other->IsCombatUnit() || other->IsStackingUnit() ||
+				other->getDomainType() != getDomainType())
+				continue;
+			if (!GET_TEAM(getTeam()).isAtWar(other->getTeam()))
+				return false;
+		}
+	}
+	return CountStackingUnitsAtPlot(pPlot) < GetStackingLimit(pPlot);
 }
 
 bool CvUnit::canEverRangeStrikeAt(int iX, int iY) const
@@ -30383,6 +30464,16 @@ CvUnit::MoveResult CvUnit::UnitAttackWithMove(int iX, int iY, int iFlags)
 	if(!pDestPlot)
 		return CvUnit::MOVE_RESULT_CANCEL;
 
+    // Stack moves are movement only, even if another unit enters the target after preview.
+    if (iFlags & MOVEFLAG_STACK_SAFE)
+    {
+        CvPlot* pNext = m_kLastPath.GetFirstPlot();
+        if (getDomainType() == DOMAIN_AIR || !pNext || pNext->isEnemyCity(*this) ||
+            pNext->isVisibleEnemyUnit(this) || !canMoveInto(*pNext))
+            return MOVE_RESULT_CANCEL;
+        return MOVE_RESULT_NO_TARGET;
+    }
+
 	// Air mission
 	if(getDomainType() == DOMAIN_AIR)
 	{
@@ -30615,6 +30706,14 @@ int CvUnit::UnitPathTo(int iX, int iY, int iFlags)
 		}
 	}
 
+    if ((iFlags & MOVEFLAG_STACK_SAFE) &&
+        (!pPathPlot || pPathPlot->isEnemyCity(*this) || pPathPlot->isVisibleEnemyUnit(this) ||
+         !canMoveInto(*pPathPlot) || GetPathEndFirstTurnPlot() != pDestPlot))
+    {
+        ClearPathCache();
+        return MOVE_RESULT_CANCEL;
+    }
+
 	bool bDone = (pPathPlot == pDestPlot);
 	if ((iFlags & CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER) && (pPathPlot == m_kLastPath.GetTurnDestinationPlot(0) && !bDone))
 	{
@@ -30629,7 +30728,7 @@ int CvUnit::UnitPathTo(int iX, int iY, int iFlags)
 	}
 
 	// If we are mid move and can't stop, don't reset the flags. We want to still stop when available.
-	if (CountStackingUnitsAtPlot(plot()) < plot()->getUnitLimit())
+	if (CanStackUnitAtPlot(plot()))
 	{
 		SetSpottedEnemy(false);
 		SetSpottedRuin(false);
@@ -30637,9 +30736,9 @@ int CvUnit::UnitPathTo(int iX, int iY, int iFlags)
 	}
 
 	//todo: consider movement flags here. especially turn destination, not only path destination
-	bool bMoved = UnitMove(pPathPlot, IsCombatUnit(), NULL, bDone);
+	bool bMoved = UnitMove(pPathPlot, IsCombatUnit() && !(iFlags & MOVEFLAG_STACK_SAFE), NULL, bDone);
 
-	if (CountStackingUnitsAtPlot(pPathPlot) < pPathPlot->getUnitLimit())
+	if (CanStackUnitAtPlot(pPathPlot))
 	{
 		if (HasSpottedEnemy())
 		{
@@ -31139,7 +31238,7 @@ void CvUnit::PushMission(MissionTypes eMission, int iData1, int iData2, int iFla
 	}
 
 	// Cancel linking if mission was not pushed by an internal call that wants to keep it
-	if (MOD_SQUADS && eMission == CvTypes::getMISSION_MOVE_TO() && !(iFlags & MOVEFLAG_KEEP_LINK))
+	if ((MOD_SQUADS || (iFlags & MOVEFLAG_STACK_SAFE)) && eMission == CvTypes::getMISSION_MOVE_TO() && !(iFlags & MOVEFLAG_KEEP_LINK))
 	{
 		UnlinkUnits();
 	}

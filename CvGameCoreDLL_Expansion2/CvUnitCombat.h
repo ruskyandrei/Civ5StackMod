@@ -31,6 +31,23 @@ public:
 	    ATTACK_OPTION_NO_DEFENSIVE_SUPPORT = 1
 	};
 
+	// Shared deterministic stack calculations. Candidates may occupy hypothetical
+	// positions; extraDamage is damage already assigned by tactical simulation.
+	static const CvUnit* SelectStackDefender(const CvUnit* pAttacker, const CvPlot* pFromPlot,
+		const CvPlot* pTargetPlot, const std::vector<const CvUnit*>& candidates,
+		const SUnitIDValueContainer& extraDamage, bool bRangedAttack, int iExtraAttackerDamage = 0);
+	static const CvUnit* SelectStackDefenderForCity(const CvCity* pAttacker, const CvPlot* pTargetPlot,
+		const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& extraDamage);
+	static std::vector<std::pair<const CvUnit*, int> > GetStackCollateralDamage(
+		const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
+		int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
+		const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison = NULL, int iGarrisonDamage = 0);
+	// Preview is conditional on an air strike reaching its target (interception is
+	// probabilistic). Live successful interception aborts before collateral generation.
+	static void GetStackAttackPreview(const CvUnit* pAttacker, const CvPlot* pTargetPlot,
+		bool bRangedAttack, CvUnit*& pDefender, int& iDirectDamage,
+		std::vector<std::pair<const CvUnit*, int> >& collateral);
+
 	static void GenerateMeleeCombatInfo(CvUnit& kAttacker, CvUnit* pkDefender, CvPlot& kPlot, CvCombatInfo* pkCombatInfo);
 	static void GenerateRangedCombatInfo(CvUnit& kAttacker, CvUnit* pkDefender, CvPlot& kPlot, CvCombatInfo* pkCombatInfo);
 	static void GenerateRangedCombatInfo(CvCity& kAttacker, CvUnit* pkDefender, CvPlot& plot, CvCombatInfo* pkCombatInfo);

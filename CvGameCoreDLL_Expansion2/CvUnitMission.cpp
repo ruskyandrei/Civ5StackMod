@@ -359,6 +359,20 @@ void CvUnitMission::ContinueMission(CvUnit* hUnit, int iSteps)
 
 		//tutorial hints
 		const MissionData* pkMissionData = (HeadMissionData(hUnit->m_missionQueue));
+        // Stack orders never persist into another turn or become attacks when the board changes.
+        if (pkMissionData->eMissionType == CvTypes::getMISSION_MOVE_TO() &&
+            (pkMissionData->iFlags & CvUnit::MOVEFLAG_STACK_SAFE))
+        {
+            CvPlot* pStackTarget = GC.getMap().plot(pkMissionData->iData1, pkMissionData->iData2);
+            if (!pStackTarget || pkMissionData->iPushTurn != GC.getGame().getGameTurn() ||
+                !hUnit->canMove() || pStackTarget->isEnemyCity(*hUnit) ||
+                pStackTarget->isVisibleEnemyUnit(hUnit) ||
+                !hUnit->canMoveInto(*pStackTarget, CvUnit::MOVEFLAG_DESTINATION))
+            {
+                hUnit->ClearMissionQueue();
+                return;
+            }
+        }
 		if(pkMissionData->iPushTurn == GC.getGame().getGameTurn() || (pkMissionData->iFlags & CvUnit::MOVEFLAG_IGNORE_STACKING_SELF))
 		{
 			if(pkMissionData->eMissionType == CvTypes::getMISSION_MOVE_TO() && !hUnit->IsDoingPartialMove() && hUnit->canMove() && !hUnit->HasQueuedVisualizationMoves())
@@ -450,7 +464,7 @@ void CvUnitMission::ContinueMission(CvUnit* hUnit, int iSteps)
 			{
 				// check if we need to declare war first
 				// show a DOW popup only if the enemy unit is visible when the move order is given
-				if(hUnit->CheckDOWNeededForMove(pkMissionData->iData1, pkMissionData->iData2, hUnit->getOwner() == GC.getGame().getActivePlayer() && iSteps == 0 && pkMissionData->iPushTurn == GC.getGame().getGameTurn()))
+				if(!(pkMissionData->iFlags & CvUnit::MOVEFLAG_STACK_SAFE) && hUnit->CheckDOWNeededForMove(pkMissionData->iData1, pkMissionData->iData2, hUnit->getOwner() == GC.getGame().getActivePlayer() && iSteps == 0 && pkMissionData->iPushTurn == GC.getGame().getGameTurn()))
 				{
 					hUnit->ClearMissionQueue();
 					return;
@@ -493,6 +507,13 @@ void CvUnitMission::ContinueMission(CvUnit* hUnit, int iSteps)
 						hUnit->ClearMissionQueue();
 						return;
 					}
+
+                    if ((kMissionData.iFlags & CvUnit::MOVEFLAG_STACK_SAFE) &&
+                        hUnit->GetPathEndFirstTurnPlot() != pDestPlot)
+                    {
+                        hUnit->ClearMissionQueue();
+                        return;
+                    }
 
 					int iResult = CvUnit::MOVE_RESULT_CANCEL;
 

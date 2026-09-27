@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Deploy" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Default</Configuration>
@@ -20,6 +20,14 @@
     <SupportsMac>true</SupportsMac>
     <AssemblyName>Mod Template</AssemblyName>
     <RootNamespace>Mod Template</RootNamespace>
+    <ModContent>
+      <Content xmlns="">
+        <Type>InGameUIAddin</Type>
+        <Name>Stack roster</Name>
+        <Description>Stack roster and tile-local group movement</Description>
+        <FileName>LUA/StackPanel.xml</FileName>
+      </Content>
+    </ModContent>
     <ModActions>
       <Action>
         <Set>OnModActivated</Set>
@@ -91,6 +99,14 @@
     <PackageMod>false</PackageMod>
   </PropertyGroup>
   <ItemGroup>
+    <Content Include="LUA/StackPanel.lua">
+      <SubType>Lua</SubType>
+      <ImportIntoVFS>True</ImportIntoVFS>
+    </Content>
+    <Content Include="LUA/StackPanel.xml">
+      <SubType>Lua</SubType>
+      <ImportIntoVFS>False</ImportIntoVFS>
+    </Content>
     <Content Include="EUI\DC45_EventsOverview.dds">
       <SubType>Lua</SubType>
       <ImportIntoVFS>True</ImportIntoVFS>
