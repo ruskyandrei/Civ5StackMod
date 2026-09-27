@@ -38,6 +38,22 @@ The exact Spain target (103,20) now completes with 24 assignments; unit 7508 rec
 
 Evidence: `work/test-runs/turn240-fixed-20260927`, including `crash/CvMiniDump_20260927_103644_5.4.6-7-g13252af_Release.dmp` (SHA256 `D874C2A67ADD84C070312E0E7AF8412E3F48D2BD8A1ABEFF39143D51836C9D0C`). Investigation of the separate fault is pending. Turn 246 has not been reached.
 
+## Final integrated replay
+
+Release `20260927-105159` (`Release-5.4.6-8-gef54698 Clean`) includes the checked endpoint and both requested UI changes. DLL SHA256: `D25416742EE592C3673DFED18F1C6816D8A4685C91707362C2B5DDA3A26BC3E7`; matching PDB: `141182FE191B4B2E02FB3CD459683C8849E37CD4601CCEBDCF3B3E63FAD44F5C`. Deployment archive `deployment-replaced-20260927-105445-e3f58adf` verified all 2,367 mapped files. The loaded DLL and original CC9D8749... autosave hashes were recorded before replay.
+
+The fresh process resumed the saved autoplay settings without changing the return player/count. Native Verbose was selected in the actual observer-only panel. The read-only console check at turn 244 reported remaining autoplay 4757, observer player 10, and no injected Lua observer. The retained trace reaches **turn 246, player 41**: 5,836 records, 573 selected-plan records, 161 complete combat brackets, no LONG_PLAN warnings and no TRUNCATED markers. The formerly failing Spain target (103,20) completes with 24 assignments; Tercio 7508 receives the proper temporary/final finish markers. That plan took 405 ms, with 1,524 searched states and 256 completed candidates.
+
+The 176 external memory samples peak at 2,541,572,096 private bytes, with at least 919,613,440 bytes free and a 759,496,704-byte largest free block. The three-minute guard closes the game at 180.034 seconds during turn 246. The attempt to signal completion happened after this stop, so the outcome is **a bounded replay that reached partway through turn 246**, not a normal return or completion of that turn. Crash-log size/time remained unchanged (15,925 bytes, 09:36:45 UTC), and no new minidump appeared. This is the first replay that passed both observed crash sites without another crash.
+
+Evidence: `work/test-runs/turn240-final-20260927/{Logs,memory,memory.out,native-summary.json,provenance.json}`. The original autosave and test-generated replacements are preserved separately. The observer-only Diagnostics control was visible and usable in this build.
+
+## Final normal-play UI check and cleanup
+
+A separate fresh process loaded the original `auto_test_1` at turn 0 with the same final DLL. No autoplay, fixture setup, Lua commands, turn advance or movement order was used. Diagnostics was absent from the normal-play map. Selecting the existing Warrior/Pathfinder stack opened the Land 2/2 roster; left-clicking an empty grassland hex dismissed it. Selecting the same Warrior flag reopened it, and selecting the Pathfinder row left it open. Starting Move Stack and left-clicking the map cancelled the pending order; a further empty-map click dismissed the roster. Both units remained at 100 HP, with their original 2 and 1 movement points. The game then closed normally without a manual save.
+
+Evidence: `work/test-runs/ui-final-20260927/{provenance.json,ui-observations.json,Lua.log}`. The three autosaves automatically rewritten by tests (initial turn 0, post-turn 0, post-turn 240) were preserved under `autosaves-generated-by-tests` and restored from the original crash archive. All eight archived autosave hashes matched afterward, and the original manual `auto_test_1` hash remained unchanged. See `autosave-restoration.json`.
+
 ## Limits
 
-The earlier 41 native AI checks cover individual decision boundaries, not live proof of all five new tactical behaviors. The logger does not provide exhaustive alternative-choice reasoning. Whole-campaign memory stability, large-game logging overhead, and balance still require longer playtests after the no-op planner loop is fixed. Raw archives remain local and are not committed or uploaded.
+The 41 native AI checks cover individual decision boundaries, not live proof of all five new tactical behaviors. The logger does not provide exhaustive alternative-choice reasoning. Whole-campaign memory stability, large-game logging overhead, and balance still require longer playtests. Raw archives remain local and are not committed or uploaded.

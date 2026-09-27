@@ -4,11 +4,11 @@ This is the repository for the Civ V SDK + Vox Populi Mod.
 
 ## Local stacking prototype
 
-This checkout contains a unit-stacking prototype based on Vox Populi 5.4.6, on branch `b-stack-prototype`. It adds XML-configurable capacity and combat rules, AI stack forecasts/preferences, a stack roster and group movement. Release20260927-093917 (`Release-5.4.6-6-gb7731f6 Clean`) is built and deployment-verified on this PC. Its native diagnostics controls and an actual combat trace work in game; a fresh-process Off/Verbose comparison matched all captured fields for 60 units and 30 cities after one autoplay turn. The bounded late-game replay is still pending. Earlier focused runtime evidence retains its original build provenance.
+This checkout contains a unit-stacking prototype based on Vox Populi 5.4.6, on branch `b-stack-prototype`. It adds XML-configurable capacity and combat rules, AI stack forecasts/preferences, a stack roster and group movement. Release20260927-105159 (`Release-5.4.6-8-gef54698 Clean`) is built and deployment-verified on this PC. A bounded replay now passes the previous failures and progresses from the original Turn 240 save into turn 246 without a new crash, then stops at the 180-second test limit. Earlier diagnostics checks matched captured fields for 60 units and 30 cities with logging Off versus Verbose, and verified an actual combat trace. This remains an experimental prototype; long-campaign stability and broader AI quality are not established.
 
 Start with the [playing guide](docs/stacking-playing.md), [XML configuration reference](docs/stacking-configuration.md), [native build/deployment guide](work/BUILD-LOCAL.md), and [test coverage and remaining limitations](work/REQUIREMENTS-AUDIT-20260927.md). Local saves, test evidence, backups, toolchains and compiled binaries remain under `work` outside Git. The upstream project description follows.
 
-Built-in autoplay diagnostics, the latest AI refinements and their completed offline checks are tracked alongside remaining runtime work in [the stacking TODO](docs/stacking-todo.md). The [Turn 245 crash investigation](work/CRASH-245-20260927.md) confirms an allocation failure; its underlying long-history/memory-growth cause and crash prevention remain unproved.
+Built-in autoplay diagnostics, the latest AI refinements and their completed offline checks are tracked alongside remaining runtime work in [the stacking TODO](docs/stacking-todo.md). The [Turn 245 crash investigation](work/CRASH-245-20260927.md) documents the assignment loop, its correction, a separate null-endpoint diagnostic fault, and the final bounded replay. The latest run supports the targeted repairs; it does not establish universal crash prevention.
 
 ## What is Vox Populi
 

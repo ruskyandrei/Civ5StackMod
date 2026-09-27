@@ -13,9 +13,9 @@ The tested prototype is installed on this PC. Launch Civ V in DX11 windowed mode
 
 Choose **Next**, then **Single Player** from the Mods screen and set up a new game. The stacking changes are part of the Community Patch DLL and EUI files; there is no separate stacking checkbox. Modpack Maker need not be enabled. Use the Mods route again when loading a campaign made with this prototype.
 
-The tested native Release DLL is `work/msvc-output/Release/20260927-030606/CvGameCore_Expansion2.dll`, SHA256 `CC8F233774E4608EA3891471FA10E551DED25CBBE566393EF9A76F976B5621CC`. Exact default XML is restored. Build/deployment instructions and recovery options are in [BUILD-LOCAL.md](../work/BUILD-LOCAL.md).
+The tested native Release DLL is `work/msvc-output/Release/20260927-105159/CvGameCore_Expansion2.dll`, SHA256 `D25416742EE592C3673DFED18F1C6816D8A4685C91707362C2B5DDA3A26BC3E7`. Gameplay defaults are unchanged; diagnostics default to Off. Build/deployment instructions and recovery options are in [BUILD-LOCAL.md](../work/BUILD-LOCAL.md).
 
-This is an experimental playable build. Focused tests cover actual combat, XML overrides, stack movement, completed production, and save/reload. The final three-turn AI test completed in about 5.7, 3.8 and 3.0 seconds per observed AI interval, then reloaded with all 46 units and 11 cities matching their recorded state. Protective stacking is demonstrated; deliberate spreading against siege collateral, broad naval/air strategy and long-campaign balance still need playtesting. Multiplayer and unrelated mod combinations have not been validated.
+This is an experimental playable build. Focused tests cover actual combat, XML overrides, stack movement, completed production, and save/reload. An earlier build's three-turn AI test completed in about 5.7, 3.8 and 3.0 seconds per observed AI interval, then reloaded with all 46 units and 11 cities matching their recorded state. Protective stacking is demonstrated; deliberate spreading against siege collateral, broad naval/air strategy and long-campaign balance still need playtesting. Multiplayer and unrelated mod combinations have not been validated.
 
 ## Capacity and combat
 
