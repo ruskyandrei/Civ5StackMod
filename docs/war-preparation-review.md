@@ -1,0 +1,38 @@
+# Pre-war preparation and assault continuity review — 2026-09-27
+
+Investigation and todo only. No C++, Lua, XML, installed files, diagnostic level or live game state changed. User reported Russia declaring against the Ottomans around 115 without an initial offensive force ready. Current fresh autoplay uses PID 22544, native session `Stacking-20260927T130616-455-p22544-r1`, DLL `Release-5.4.6-11-g9c33e26 Clean`, Summary diagnostics. Raw read-only log prefixes are archived at `C:/Users/rusit/Documents/Codex/Civ5StackMod-analysis/russia-ottomans-prewar-20260927-133240` with capture times/SHA256. Since play continued, these files are not an atomic snapshot and absence of an event from Summary logging is not proof that it never happened.
+
+## Confirmed sequence in this campaign
+
+| Turn | Evidence |
+|---|---|
+|101|Russia's diplomatic approach to the Ottomans becomes WAR; formal war has not started.|
+|105|Operation 2721 / army 2722 recruits five units for the city at 75:31 (Istanbul), initially mustering at 70:32 (Novgorod): spearmen 2698,1913,1986; catapult 2697; composite bowman 2512. It immediately enters gathering. The maximum formation size is 9; empty optional slots alone do not establish a recruitment failure.|
+|109|Operation transitions to movement, center 66:32 and target 75:31.|
+|110–111|Center advances to 67:32 then 69:32.|
+|112|Operation log records `Discovered by enemy`, then `Transition to finished stage; unit distance near 6; far 11`, and `POST Completed`. These are hex distances, not travel-time estimates.|
+|113|Diplomatic and military logs record Russia declaring on the Ottomans. Operation 2721 ends as success. Tactical zones around Istanbul choose `P_WITHDRAW`.|
+|114|The same three spearmen receive homeland sentry orders:1986 to 59:33,1913 to 69:32,2698 to 65:33. These are logged destinations, not confirmation that every unit arrived.|
+|115–117|Russia requests another Istanbul attack from Novgorod but logs that it is impossible for lack of units. The Istanbul land zone continues choosing withdrawal through 118.|
+
+This is a prepared force being released too early, not proof that Russia did no preparation. The timing, discovery marker and source control flow strongly identify the ordinary sneak-attack readiness path; no dedicated war-origin/call-site diagnostic exists to exclude every other declaration trigger absolutely. The operation target matches the military target list; its original three melee IDs match the later sentry records. Do not infer casualties or the later fate of the catapult/bowman from this short sequence.
+
+## Source findings
+
+- `CvAIOperationMilitary::CheckTransitionToNextStage`, `CvAIOperation.cpp` around 1638–1673: normally tests army center against deployment range and furthest-unit spread. While at peace, however, more than two members on plots known visible to the target team overrides a failed distance test and sets `bInPlace=true`. It then sets `ArmyInPlaceForAttack`, marks the operation successful and schedules the army for release. A scout, broad border visibility, or three stacked visible members can therefore satisfy the shortcut without a strong nearby offensive force. In this replay it explicitly fired at 6–11 hexes.
+- `CvDiplomacyAI::DoMakeWarOnPlayer`, around 27638–27651: ordinary voluntary war uses that readiness boolean (subject to approach/cooperative-war checks). VP already supports pre-war recruitment/marching; we should strengthen this bridge rather than invent a second unrelated controller.
+- The visibility shortcut and success/release handoff are also present in the checked upstream `Release-5.4.6` source. The latest mod changes gathering cohesion and reserve allocation but did not introduce this shortcut. No matched upstream replay was run, so its exact contribution to this campaign's timing remains unmeasured.
+- `CvAIOperation::ShouldAbort` around 692–699 marks successful members recently deployed before cleanup; `CvArmyAI::ReleaseAllUnits` frees their operation assignments. `OperationalAIHelpers::IsUnitSuitableForRecruitment` around 3266 excludes recently deployed units; `CvUnit::IsRecentlyDeployedFromOperation` uses `AI_TACTICAL_MAP_TEMP_ZONE_TURNS` (default 5, inclusive comparison). This can compound an early release by delaying re-recruitment. The Summary logs do not prove that this specific exclusion caused each failed request on 115–117.
+- The new `CvStackingAI::TryReinforceRearUnit` routes to offensive operations only when already at war with their enemy. `ReadyWithAvailableUnits` also deliberately requires an existing war, so its relaxed readiness did not approve this pre-war army. Both boundaries need deliberate treatment when supporting pre-war staging; do not simply remove every war check.
+- `CvDiplomacyAI::DoUpdateCoopWarStates`/`CanStartCoopWar`/`DoStartCoopWar` uses `COOP_WAR_SOON_COUNTER` (default 10) and diplomatic validity, without requiring staged armies for both participants. Cooperative preparations should make use of that advance notice while respecting existing commitment rules. Immediate bribes, defensive pacts, forced/team wars and opportunistic diplomatic responses need distinct handling.
+
+## Proposed work — not implemented
+
+1. Represent voluntary war preparation explicitly: selected objective and legal staging area, committed core, roles, health/strength and expected time to the opening action. Keep sufficient home/other-front defense. Use legitimate known information and bounded path queries; do not require illegal entry into enemy territory before war.
+2. Separate discovery from readiness. Being spotted can change secrecy or staging decisions, but should not automatically assert that the army is within striking distance. Require a viable core and a bounded post-declaration attack ETA; reroute, delay or reconsider an unready exposed plan rather than blindly declaring or waiting forever.
+3. Preserve the assault objective and unit commitments across declaration. Convert/continue the staging operation or perform an explicit tactical handoff only when the local force can act. Avoid marking a remote approach successful and then sending its members to ordinary sentry duty. Apply recently-deployed protection to a real handoff, not to premature preparation completion.
+4. Let reserve allocation and production support a committed pre-war plan, subject to domain/role budgets, local defense, diplomacy and cancellation/reassignment rules. Check both promised cooperative armies where there was preparation time; retain immediate-war exceptions without blocking legal treaty/script obligations.
+5. Make new readiness thresholds, strength/health margins, staging/attack ETA limits, preparation review/cooldown ages and budgets XML-configurable. Keep the discovery threshold separate if retained. No proposed setting has been added in this investigation.
+6. Add Summary records for declaration origin/reason, chosen objective, readiness decision and operation handoff; Verbose records for role/health/path deficits and explicit recently-deployed rejection. Measure declaration-to-first meaningful offensive action and actual arrivals/contribution, not just nearby unit count or an operation flag.
+
+Regression targets: this Russia/Istanbul sequence; three members visible on one stack well outside attack reach; a scout exposing a distant army; legal staging at a closed border; a genuinely ready nearby force; one missing straggler versus missing capturer/siege support; simultaneous fronts; coastal/naval staging; cooperative countdowns; immediate bribed/pact wars; save/reload and stacking-disabled controls. Compare several campaigns so the change does not simply make all AI reluctant to declare war.
