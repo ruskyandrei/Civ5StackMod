@@ -68,3 +68,8 @@ clang-output/
 #do not ignore lua-language-server configuration (LuaCATS)
 !.luacheckrc
 !.luarc.json
+
+# Local stacking build/test workspace. Reviewed files already tracked in work/
+# remain versioned; new files require explicit review and git add -f.
+/work/*
+!/work/.gitignore

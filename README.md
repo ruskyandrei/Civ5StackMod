@@ -1,14 +1,18 @@
-# Community-Patch-DLL
+# Civ5StackMod
 
-This is the repository for the Civ V SDK + Vox Populi Mod. 
+An experimental unit-stacking and AI development fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V. The current base is **VP 5.4.6**, and development is on `b-stack-prototype`. Upstream history, credits and licensing are preserved.
 
-## Local stacking prototype
+## Stacking prototype
 
-This checkout contains a unit-stacking prototype based on Vox Populi 5.4.6, on branch `b-stack-prototype`. It adds XML-configurable capacity and combat rules, AI stack forecasts/preferences, a stack roster and group movement. Release20260927-105159 (`Release-5.4.6-8-gef54698 Clean`) is built and deployment-verified on this PC. A bounded replay now passes the previous failures and progresses from the original Turn 240 save into turn 246 without a new crash, then stops at the 180-second test limit. Earlier diagnostics checks matched captured fields for 60 units and 30 cities with logging Off versus Verbose, and verified an actual combat trace. This remains an experimental prototype; long-campaign stability and broader AI quality are not established.
+The prototype adds XML-configurable stack capacity and technology progression, best-defender selection, cavalry flanking and anti-cavalry protection, limited collateral damage, city fortification protection, stack-aware AI, a stack roster, group movement and optional native diagnostics. A first military-allocation pass also addresses garrison retention, rear reserves, recruitment and assembly; further offensive coordination remains planned. Long-campaign stability and broad AI quality are still being tested.
 
-Start with the [playing guide](docs/stacking-playing.md), [XML configuration reference](docs/stacking-configuration.md), [native build/deployment guide](work/BUILD-LOCAL.md), and [test coverage and remaining limitations](work/REQUIREMENTS-AUDIT-20260927.md). Local saves, test evidence, backups, toolchains and compiled binaries remain under `work` outside Git. The upstream project description follows.
+This repository currently shares **development source, not a packaged stacking release**. DLLs and other binaries inherited from upstream are not newly built stacking downloads. The tested installation uses VP with EUI and the standard civilization limit. The build/deployment scripts document the original development PC and contain machine-specific paths; review and configure them before use on another PC.
 
-Built-in autoplay diagnostics, the latest AI refinements and their completed offline checks are tracked alongside remaining runtime work in [the stacking TODO](docs/stacking-todo.md). The [Turn 245 crash investigation](work/CRASH-245-20260927.md) documents the assignment loop, its correction, a separate null-endpoint diagnostic fault, and the final bounded replay. The latest run supports the targeted repairs; it does not establish universal crash prevention.
+Start with the [playing guide](docs/stacking-playing.md), [XML configuration reference](docs/stacking-configuration.md), [native build/deployment guide](work/BUILD-LOCAL.md), and [test coverage and remaining limitations](work/REQUIREMENTS-AUDIT-20260927.md). The [stacking TODO](docs/stacking-todo.md) and [military AI plan](docs/military-ai-plan.md) distinguish implemented work from proposed changes. [Military allocation validation](work/MILITARY-AI-IMPLEMENTATION.md) records the later build checkpoint; the [Turn 245 crash investigation](work/CRASH-245-20260927.md) preserves the earlier repairs and bounded replay evidence.
+
+See [repository maintenance](docs/repository-workflow.md) for saving changes and merging future VP releases. Reviewed development scripts, fixtures and notes are tracked under `work`; local compiler downloads, build outputs, backups, saves and raw test evidence are excluded. Report stacking-specific issues in [this fork](https://github.com/ruskyandrei/Civ5StackMod/issues), with the build version and reproduction details.
+
+The following sections describe the upstream project. Their release links lead to ordinary VP, not this stacking prototype.
 
 ## What is Vox Populi
 

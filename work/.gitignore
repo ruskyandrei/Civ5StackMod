@@ -1,0 +1,5 @@
+# Keep generated builds, downloaded compilers, backups, saves and raw test logs
+# local. Existing tracked scripts, fixtures and notes remain versioned.
+# Review new development files individually before using git add -f.
+*
+!.gitignore
