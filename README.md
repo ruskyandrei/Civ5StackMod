@@ -2,6 +2,12 @@
 
 This is the repository for the Civ V SDK + Vox Populi Mod. 
 
+## Local stacking prototype
+
+This checkout contains a unit-stacking prototype based on Vox Populi 5.4.6, on branch `b-stack-prototype`. It adds XML-configurable capacity and combat rules, AI stack forecasts/preferences, a stack roster and group movement. The tested DLL and default configuration are installed on this PC.
+
+Start with the [playing guide](docs/stacking-playing.md), [XML configuration reference](docs/stacking-configuration.md), [native build/deployment guide](work/BUILD-LOCAL.md), and [test coverage and remaining limitations](work/REQUIREMENTS-AUDIT-20260927.md). Local saves, test evidence, backups, toolchains and compiled binaries remain under `work` outside Git. The upstream project description follows.
+
 ## What is Vox Populi
 
 Started in 2014, Vox Populi (formerly known as the "Community Balance Patch/Overhaul") is a collaborative effort to improve Civilization V's AI and gameplay. It consists of a collection of mods (see below) that are designed to work together seamlessly.

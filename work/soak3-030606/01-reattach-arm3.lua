@@ -1,0 +1,1 @@
+include("StackingAINaturalTests");local N=StackAINaturalTests;local ok,e=N.Try("Reattach");assert(ok,e);assert(N.state.kind=="dense" and Game.GetAIAutoPlay()==0);local ok,e=N.Try("Arm",3);assert(ok,e);print("SOAK3|ARMED|",Game.GetGameTurn(),N.limit)

@@ -1,0 +1,14 @@
+# XML manual-fixture prerequisite checks
+
+The core and XML variation helpers were tightened before the main/sea XML runs. This changes only manually invoked test setup and observation; gameplay C++, XML rules and the installed game were not changed by this work.
+
+- Core city setup requires a passable empty patch and at least four hexes between the intended new city and every existing city. Air-field setup selects an isolated neighboring airbase; city-target air setup retains its separate four-hex airbase search. CapacityDomains and Roles already select one isolated coastal city and do not create adjacent city pairs.
+- Every core spawned unit must remain at its requested coordinates. A relocated new unit remains tracked so cleanup can remove it.
+- Sea collateral chooses two adjacent empty, unowned, passable coast tiles without features. It no longer chooses arbitrary water neighbors across a land hex. The actual native range-strike check remains mandatory.
+- Core and final XML combat setup require a legal shot. Fire rejects a busy/fighting attacker, an illegal shot and a duplicate request. CheckShot retains evidence while units are busy/fighting, or while no attack has been spent and no target HP/city-damage delta exists. Cleanup checks all tracked units before killing any and clears stale shot state only after cleanup succeeds.
+
+Native API audit: SetHasTech and SetHasPromotion use boolean conversion; GetStackAttackPreview and CanRangeStrikeAt use optional booleans; GetRangeCombatDamage takes a boolean real-roll flag. These existing true/false arguments are correct. PushMission's append/manual flags use optional integers and remain numeric 0/1. InitCity's optional integer flags are omitted. IsImpassable receives the numeric team. City creation itself does not enforce founding distance, hence the explicit preflight.
+
+`work/test-xml-fixtures.py` loads both complete helper files in Lua5.1 without Game/Players/Map globals, then exercises their actual functions with deterministic map/unit stubs. The 136 checks cover distance-three rejection/distance-four acceptance, field versus city selection, impassable patches, exact/relocated spawns, all-or-nothing busy cleanup, stale-shot clearing, legal/busy/duplicate fire, pending-attack observation, exact existing HP assertions, repeated completed checks and adjacent sea selection including blocked or illegal alternatives. API argument-type assertions are included where mocked methods are invoked. Evidence and exact source SHA256 hashes are in `work/xml-fixture-regression/result.json`.
+
+The fixture suite does not emulate Civ V visibility, combat animation or full engine unit/city creation. The normal live main/sea comparison still must pass. No native DLL rebuild, deployment, game action or process control was used for these checks. Modinfo MD5 refresh and staging are coordinated separately after helper review.

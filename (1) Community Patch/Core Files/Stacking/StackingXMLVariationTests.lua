@@ -62,6 +62,21 @@ local function coastalSite(owner)
  end
  error("Need isolated coast site with three empty land and two clear coast neighbors")
 end
+local function seaSite(owner)
+ local team=Players[owner]:GetTeam()
+ local function clear(p)
+  return p and p:IsWater() and not p:IsCity() and p:GetOwner()==-1 and p:GetNumUnits()==0
+   and p:GetTerrainType()==GameInfoTypes.TERRAIN_COAST and p:GetFeatureType()==-1 and not p:IsImpassable(team)
+ end
+ for i=0,Map.GetNumPlots()-1 do
+  local source=Map.GetPlotByIndex(i)
+  if clear(source) then for d=0,5 do
+   local target=Map.PlotDirection(source:GetX(),source:GetY(),d)
+   if clear(target) and target:GetPlotIndex()~=source:GetPlotIndex() then return source,target end
+  end end
+ end
+ error("Need two adjacent empty passable clear-coast tiles for sea collateral")
+end
 function V.Data(profile)
  profile=profile or "main"
  local expected={Enabled=1,DefenderSelectionEnabled=1,FlankingEnabled=1,CollateralEnabled=1,AIEnabled=1,
@@ -184,6 +199,7 @@ function V.SetupFloor()
  s.preview=attacker:GetStackAttackPreview(s.target,true); s.primary=s.preview.DefenderID
  must("floor test protects strongest primary",s.primary,strong:GetID())
  must("two floor-limited secondary victims",s.preview.CollateralCount,2)
+ must("final floor fixture legal shot",attacker:CanRangeStrikeAt(s.target:GetX(),s.target:GetY()),true)
  print("STACKXML|READY|Call StackTests.Fire(), then StackTests.CheckShot() after combat; expected floors60 and ceil101*.6=61")
 end
 function V.SetupCity()
@@ -205,19 +221,20 @@ function V.SetupCity()
  city:SetNumRealBuilding(GameInfoTypes.BUILDING_BOMB_SHELTER,1)
  s.preview=Players[s.owner]:GetUnitByID(s.attacker):GetStackAttackPreview(s.target,true)
  check("restored protection cap",s.preview.CityProtection,65)
+ must("final city fixture legal shot",Players[s.owner]:GetUnitByID(s.attacker):CanRangeStrikeAt(s.target:GetX(),s.target:GetY()),true)
  print("STACKXML|READY|Call StackTests.Fire(), then StackTests.CheckShot() after combat; percentage/floor/minimum/protection read from variation DB")
 end
 function V.SetupSeaCollateral()
  local enabled=0
  for r in GameInfo.Stacking_CollateralDomains() do if r.DomainType=="DOMAIN_SEA" then enabled=tonumber(r.Enabled) end end
  must("sea-enabled profile loaded",enabled,1)
- local owner,enemy=begin(true); local _,_,sea=coastalSite(owner)
- local attacker=spawn(owner,"UNIT_FRIGATE",sea[1]); attacker:SetHasPromotion(GameInfoTypes.PROMOTION_DRILL_1,false); attacker:SetBaseRangedCombatStrength(30)
+ local owner,enemy=begin(true); local source,target=seaSite(owner)
+ local attacker=spawn(owner,"UNIT_FRIGATE",source); attacker:SetHasPromotion(GameInfoTypes.PROMOTION_DRILL_1,false); attacker:SetBaseRangedCombatStrength(30)
  local before={}
- for i=1,6 do local u=spawn(enemy,"UNIT_CARAVEL",sea[2]); before[u:GetID()]={hp=u:GetCurrHitPoints(),max=u:GetMaxHitPoints()} end
- must("sea fixture legal range strike",attacker:CanRangeStrikeAt(sea[2]:GetX(),sea[2]:GetY()),true)
- local preview=attacker:GetStackAttackPreview(sea[2],true)
+ for i=1,6 do local u=spawn(enemy,"UNIT_CARAVEL",target); before[u:GetID()]={hp=u:GetCurrHitPoints(),max=u:GetMaxHitPoints()} end
+ must("sea fixture legal range strike",attacker:CanRangeStrikeAt(target:GetX(),target:GetY()),true)
+ local preview=attacker:GetStackAttackPreview(target,true)
  must("sea collateral preview follows enabled XML domain",preview.CollateralCount,2)
- T().shot={owner=owner,enemy=enemy,attacker=attacker:GetID(),target=sea[2],before=before,primary=preview.DefenderID,preview=preview}
- print("STACKXML|READY|Call StackTests.Fire(), then StackTests.CheckShot() after combat. Requires removal of redundant naval-water early return before freezing comparison DLL.")
+ T().shot={owner=owner,enemy=enemy,attacker=attacker:GetID(),target=target,before=before,primary=preview.DefenderID,preview=preview}
+ print("STACKXML|READY|Call StackTests.Fire(), then StackTests.CheckShot() after combat. Use the same comparison DLL as the main XML profile.")
 end

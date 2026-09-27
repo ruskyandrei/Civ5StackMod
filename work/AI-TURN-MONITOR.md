@@ -1,0 +1,7 @@
+# Bounded AI-turn observation
+
+Load work/StackingAITurnMonitor.lua into the registered test script, then explicitly call StackAITurnMonitor.Start(10). The helper logs AI_START, optional AI_END, transitions between AI players, and HUMAN_RETURN, and detaches after the requested number of human-turn returns. It never ends a turn, enables autoplay, sleeps, polls or kills the game. Stop() detaches immediately. The end-of-player event is optional in VP; the next AI start and human return are fallback progress markers.
+
+Use the engine timestamps in Lua.log and tactical-search completion lines for progress, and inspect CPU/process responsiveness externally. A missing Lua event alone is not proof of a hang. For this fixture, the prior measured dense turn was approximately25 seconds;60 seconds with no new turn marker or tactical completion and a persistently unresponsive high-CPU process is a prompt stop/investigation threshold, not permission for unbounded waiting. Root may stop earlier when an actual freeze is clear, per the user. Avoid sending repeated Lua commands to a frozen game. Record the last marker and stack/log evidence, then stop the frozen game rather than leaving it consuming CPU.
+
+A successful long-run observation must show every requested HUMAN_RETURN, bounded elapsed turns, no crash, and separate capacity/survival probes. Merely reaching the observation limit does not establish strategic AI quality.

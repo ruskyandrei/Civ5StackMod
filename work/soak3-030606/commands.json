@@ -1,0 +1,34 @@
+{
+  "status": "executed_three_turns_and_exact_unit_city_reload_match",
+  "lua51_syntax": true,
+  "files": {
+    "01-reattach-arm3.lua": {
+      "bytes": 250,
+      "sha256": "0B90F2F1F1E874357DA0A5170660356CBB12E4387052DF8770D0431234D38AEA"
+    },
+    "02-finish-human-before-each-turn.lua": {
+      "bytes": 363,
+      "sha256": "9EDDBE5E9CA88FBB51485A3C4805EBE96A7B19167A73D65B1E8C0E00B36FBBBC"
+    },
+    "snapshot-all-units.lua": {
+      "bytes": 832,
+      "sha256": "5A0D21AB0A74240FC751F26F9996948E25353A88B8C1EEAE67A5AE908F8ADE84"
+    },
+    "snapshot-cities-optional.lua": {
+      "bytes": 704,
+      "sha256": "5AFC4F9EA59F034C84F04E95E5BAEEF7359AB457721A14C8FD482400F6E9AF17"
+    },
+    "after-return-1.lua": {
+      "bytes": 328,
+      "sha256": "B9624234AB4464B963C79FFAE492266EC71F945539643F94B88E5209017E821D"
+    },
+    "after-return-2.lua": {
+      "bytes": 328,
+      "sha256": "2393644368B953254CF4E67BECEED5A64814D6BBFB7D1581F08135786207AACB"
+    },
+    "after-return-3.lua": {
+      "bytes": 329,
+      "sha256": "1876DCD77C659E2E73AD70D35063750F8A5153C0814CC82A72EA916D138582CB"
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Actual melee stack fixture — 2026-09-27
 
-`StackingMeleeTests.lua` is registered as an import-only Community Patch helper. It defines functions until explicitly called. Lua5.1 syntax and an inert load without game globals pass. No actual Civ V result is claimed. Independent source review verified Lua bindings, deterministic damage inputs and normal mission arguments with no blocking mismatch. Its suggested busy/WAIT guards were applied: pending evidence is retained until combat/mission resolution and an observed attack. No C++ or installed files were changed by this fixture task.
+`StackingMeleeTests.lua` is registered as an import-only Community Patch helper. It defines functions until explicitly called. Lua5.1 syntax and an inert load without game globals pass. Actual024049 coverage is now archived at work/test-runs/melee-024049:246 passed,0 failed across five scenarios and six attacks. The runtime used explicit manual selection before attacks; the current helper automates that selection step. Independent source review verified Lua bindings, deterministic damage inputs and normal mission arguments with no blocking mismatch. Its suggested busy/WAIT guards were applied: pending evidence is retained until combat/mission resolution and an observed attack. No C++ or installed files were changed by this fixture task.
 
 ## What it verifies
 
@@ -67,3 +67,7 @@ If a precondition fails, investigate the site or modified roles instead of recor
 ## Companion gift helper
 
 `StackingGiftTests.lua` is now also registered as a manual import. See `work/GIFT-PLACEMENT-REGRESSION.md` for its explicit Setup/Separate/GiftSeparated/CheckGift sequence. It remains actual-live-unverified. ProductionTests, GiftTests and MeleeTests are imports only, with no automatically executing UI entry point.
+
+## Native combat adviser
+
+Fire explicitly calls UI.SelectUnit(attacker), verifies the selected owner/ID and looks at the target before queuing the normal mission. The ordinary combat-adviser confirmation uses Game.SelectionListMove and therefore acts on the current selection. If an adviser is open, confirm the intended attacker through the normal UI; do not alter adviser preferences. Check retains pending evidence with WAIT until the mission resolves. Never resubmit an unchecked pending mission unless original HP, coordinates, attack availability and moves are verified pristine. The024049 run recovered its initial selection/adviser issue this way and recorded no failed mechanic assertions.

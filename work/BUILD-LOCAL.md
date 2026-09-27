@@ -7,9 +7,11 @@ This checkout extends Vox Populi Release 5.4.6 in its existing gamecore DLL. Use
 Run from `E:\Projects\Civ5StackMod`:
 
 ```powershell
-.\work\build-vp.ps1 -Check
-.\work\build-vp.ps1 -Configuration release -Jobs 2
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\work\build-vp.ps1 -Check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\work\build-vp.ps1 -Configuration release -Jobs 2
 ```
+
+These commands set execution policy only for the child PowerShell process; they do not change user or machine policy. The unsigned local scripts need this explicit process-local option on this PC.
 
 The entry point defaults to Debug and six workers; specify Release and two workers as above for the current testing workflow. Use `-Configuration debug` for an unoptimized diagnostic DLL. `-Python` can select another Python 3.10+ executable. The configured default is the local Codex-bundled Python; no Python package is required by the builder.
 
@@ -29,8 +31,8 @@ Close Civ V before deployment. Stage the chosen DLL and its matching PDB explici
 $python = 'C:\Users\rusit\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
 & $python work\stage_vp.py --dll '<build directory>\CvGameCore_Expansion2.dll' --pdb '<build directory>\CvGameCore_Expansion2.pdb'
 & $python work\stage_vp.py --verify
-.\work\deploy-vp.ps1 -ValidateOnly
-.\work\deploy-vp.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\work\deploy-vp.ps1 -ValidateOnly
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\work\deploy-vp.ps1
 ```
 
 Staging reconstructs the FullEUI package from project file lists and refreshes checksums only in staged manifests. Deployment validates the prepared package, archives replaced mapped mod/DLC/cache content under `work/backups`, enables test logging, and verifies every installed file hash. It refuses to run while the game is open. It preserves saves, unrelated mods and current graphics preferences. Record `work/last-deployment-path.txt` and the result JSON when associating runtime evidence with a DLL.
@@ -51,10 +53,10 @@ Prefer an explicit `-CompletionSignalPath` naming a fresh, unique `*.signal` dir
 
 For a load guard, write its completion signal as soon as Continue Your Journey/the loaded game is visibly ready, then confirm `disarmed` in the watchdog log before ordinary play. For the natural AI benchmark, arm the external `-Phase ai-turn` guard before ending the human turn: it snapshots the current Lua.log offset and automatically disarms on a **new** `STACKNAT|HUMAN_RETURN|` marker, including split writes/log rotation. Old return markers cannot disarm a new test. Its explicit writable signal remains an available fallback after verifying completion. Automatic marker detection is specific to StackAINaturalTests; the generic turn monitor or another helper requires the explicit signal. Both completion checks run again immediately before a stop.
 
-Launch any background guard with `Start-Process -WindowStyle Hidden`; do not leave a load guard armed during ordinary play. The in-game observer does not advance turns and cannot stop a stalled game thread. Use the external guard plus observed responsiveness/logs, preserve the last progress marker, and stop an actual frozen high-CPU test promptly. After a completed turn, record that result even if a late manual disarm previously caused the process to be stopped afterward. See [natural benchmark procedure](AI-NATURAL-BENCHMARK.md) and [bounded observation](AI-TURN-MONITOR.md).
+Launch any background guard with `Start-Process -WindowStyle Hidden` and child arguments `-NoProfile -ExecutionPolicy Bypass -File <watchdog path> ...`. Redirect stdout and stderr to separate evidence files. **Require the exact PID's `armed` line in the fresh `load-watchdog.log` before the load or End Turn UI action.** An unsigned-script policy failure previously made a background launch exit before arming; neither a returned process object nor `-ValidateOnly` proves an active guard. See the complete [launch and arming-check example](WATCHDOG.md#launch-and-confirm-arming). The execution-policy flag is process-local; do not change OS/global policy. Do not leave a load guard armed during ordinary play. The in-game observer does not advance turns and cannot stop a stalled game thread. Use the external guard plus observed responsiveness/logs, preserve the last progress marker, and stop an actual frozen high-CPU test promptly. After a completed turn, record that result even if a late manual disarm previously caused the process to be stopped afterward. See [natural benchmark procedure](AI-NATURAL-BENCHMARK.md) and [bounded observation](AI-TURN-MONITOR.md).
 
 ## Recovery
 
 Re-stage a known successful DLL/PDB pair and deploy it to return to that build while keeping current source. Every deployment archives its predecessor. `work/restore-vp.ps1 -ValidateOnly` describes restoration of the original pre-5.4.6 installation backup, not merely the previous prototype. Restoration also preserves replaced content and does not overwrite saves. Game preferences change only with the explicit `-RestoreGamePreferences` option.
 
-Keep test results tied to exact DLL, XML and save hashes. A successful build, source review or stub regression is not a substitute for a completed in-game test.
+Keep test results tied to exact DLL, XML and save hashes. A successful build, source review or stub regression is not a substitute for a completed in-game test. See [local regression prerequisites](TEST-PREREQUISITES.md) for the Lua dependency, canonical helper inputs, and the historical air-calibration check that still requires a prebuilt native probe.

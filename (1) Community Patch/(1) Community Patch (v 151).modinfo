@@ -802,19 +802,21 @@
     <File md5="F10C5FF7AE8A7276B99B01F1A1066C65" import="1">Mapscripts/Terra.lua</File>
     <File md5="33AD5C8A71FB8CA6EF846D944269BA1C" import="0">Database Changes/StackingSchema.sql</File>
     <File md5="6617746C7E2E5FE030A193503B5AACD8" import="0">Database Changes/StackingConfig.xml</File>
-    <File md5="CBE26E5BBD68F10A1A4A3A2D5BE2E4DC" import="1">Core Files/Stacking/StackingTests.lua</File>
-    <File md5="A9AA8509DA8D90DFEC44C6E56BFE0213" import="1">Core Files/Stacking/StackingAITests.lua</File>
+    <File md5="B33D9F1EADAF2B5904824CCDE2A9E87D" import="1">Core Files/Stacking/StackingTests.lua</File>
+    <File md5="B9E7136E43EBEA274790522F9009F0BD" import="1">Core Files/Stacking/StackingAITests.lua</File>
     <File md5="BC08CFCF6766190CF6CE8ACC9FE44171" import="1">Core Files/Stacking/StackingAirWaveTests.lua</File>
     <File md5="683B1C60235B65744FDC480BA684F0B3" import="1">Core Files/Stacking/StackingProductionTests.lua</File>
-    <File md5="CA2E3D8BED611813F5CEB062DAC75240" import="1">Core Files/Stacking/StackingProductionTurnTests.lua</File>
+    <File md5="D512497B5BC184DEA14432531D836025" import="1">Core Files/Stacking/StackingProductionTurnTests.lua</File>
     <File md5="86C88356CD7C719F467099A83D5A0288" import="1">Core Files/Stacking/StackingMeleeTests.lua</File>
     <File md5="488224F4A8AC952C84719AFE6B9F10CD" import="1">Core Files/Stacking/StackingGiftTests.lua</File>
     <File md5="61A48D1CB6F4E1F16E72CD9B3DE156BC" import="1">Core Files/Stacking/StackingCityCombatTests.lua</File>
     <File md5="AB0BB3D24BBAA51CFB6D51800A56F3C8" import="1">Core Files/Stacking/StackingAINaturalTests.lua</File>
+    <File md5="FCFD78E8DB7BDCEF45332CCD0BF317E3" import="1">Core Files/Stacking/StackingAntiCavalryProbe.lua</File>
+    <File md5="EA4B14C609861F69271F6C04DD00F068" import="1">Core Files/Stacking/StackingDispersionTests.lua</File>
     <File md5="C48728F15774E13C5B2D575DB6839FBB" import="1">Core Files/Stacking/StackingAITurnTests.lua</File>
     <File md5="306D73D57C471C508EF5F4DAC1836D33" import="1">Core Files/Stacking/StackingMovementTests.lua</File>
-    <File md5="642A5FD4DE8A0418180DD6C8E6A8A317" import="1">Core Files/Stacking/StackingExtraRuntimeTests.lua</File>
-    <File md5="482E1AAF7D5D4D93D04F34C471F790FB" import="1">Core Files/Stacking/StackingXMLVariationTests.lua</File>
+    <File md5="FFEA3CB365B29AE524C1FA63FEA89555" import="1">Core Files/Stacking/StackingExtraRuntimeTests.lua</File>
+    <File md5="86A68B57B6008D8F894E0A0169E4A31E" import="1">Core Files/Stacking/StackingXMLVariationTests.lua</File>
   </Files>
   <Actions>
     <OnGetDLLPath>

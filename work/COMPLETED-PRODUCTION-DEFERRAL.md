@@ -1,6 +1,6 @@
 # Completed-unit production deferral
 
-Source change under review for the next DLL. This is separate from deployed Release024049; do not describe it as live-tested until a later built DLL passes the fixture.
+Committed as `5efb033` and compiled successfully in Release `20260927-030606` (`Release-5.4.6-4-g5efb033 Clean`). This change was absent from Release024049. Actual blocked-production/release runtime proof is still pending at this documentation checkpoint; source checks and build success do not establish it.
 
 ## Player behavior
 
@@ -52,12 +52,13 @@ Independent source review by `/root/ai_research` passed with no blocking issue. 
 - `CvCity.h`: `2D8CE27C08DBDE29FC37111E425D2FF4729C0A6508D8FE3203462F53B9054FE9`
 - `StackingConfig.xml`: `EA3B52F4569D9C7DAE212466A71CCD3F897AACF18C1E108FAFFE8FB1FB89D850`
 
-The44-check accounting and97-check queue/control-flow results refer to the exact frozen CvCity.cpp bytes above. No DLL build or live completion proof is implied by this checkpoint.
+The 44-check accounting and 97-check queue/control-flow results refer to the exact frozen CvCity.cpp bytes above. Together they provide 141 source-extracted checks; engine hooks and the earlier queue eligibility checks remain integration boundaries.
 
-## Queue/control-flow verification
+## Build and pending runtime checkpoint
 
-`work/test-completed-production-queue.py` additionally extracts the complete actual `popOrder`, `clearOrderQueue`, `swapOrder`, `doProduction`, `doDecay` and deferral helper bodies from the same frozen CvCity.cpp. Native VC9 validation passed97 checks. The queue uses stable linked-list nodes in the harness; player-making counters, operation commitment, notifications, UI and production service are deterministic stubs. The real production accounting is covered separately by the44-check suite above.
+The coordinator's `work/msvc-output/Release/20260927-030606/build-result.json` records `status: success` and version `Release-5.4.6-4-g5efb033 Clean`.
 
-Coverage verifies blocked repeat orders are not appended; original node/head/making/operation state is preserved; explicit clear/cancel terminates; one released slot produces once and advances/repeats once; fractional daily/overflow/feature production is transferred once; completed AI heads survive routine dirty reconsideration; explicit AI replacement/reorder remains possible; and only completed ordinary combat production is exempted from decay. Building/project/process behavior is also covered.
+- DLL SHA256: `CC8F233774E4608EA3891471FA10E551DED25CBBE566393EF9A76F976B5621CC`
+- Matching PDB SHA256: `35900E547A07CB28C9F70BD41AF26548C51EC185502302294C4187D6B512F4A6`
 
-The implementation agent independently reviewed this additional harness and its97-check result (`queue-result.json`) with no blocker. Combined coverage is141 checks. Stubbed canTrain/earlier doCheckProduction invalidation and runtime mod/event hooks remain integration boundaries; the natural in-game fixture is still required.
+`work/StackingProductionTurnTests.lua` provides the pending normal-UI sequence: fill natural city/ring slots, seed a real train order to its cost, end a normal turn, verify no unit/queue/accounting completion, move one tagged blocker outward normally, then end another turn and check exactly one completion. It never advances a turn automatically. The coordinator plans to load the normal-UI `StackProductionBase024049` baseline (SHA256 `1CD8AA14C7367A0BC964B99C3C070F68708C09747B660FE8600FEB26CF493BDB`; capital1087 at16,1; three eligible plots; turn1) under the new DLL. A baseline's successful load does not prove the later deferral behavior. Record actual runtime evidence separately when available.

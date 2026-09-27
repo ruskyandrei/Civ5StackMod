@@ -128,17 +128,17 @@ The `Core Files/Stacking/*Tests.lua` helpers are manual imports, not automatical
 
 ## Stack UI settings
 
-These `Stacking_Settings` values control the optional stack roster and Move Stack action. Dimensions and offsets are screen pixels. Restart the game after editing.
+These `Stacking_Settings` values control the optional stack roster and Move Stack action. Dimensions and offsets use Civ V UI coordinates; their physical size depends on interface/display scaling. Restart the game after editing.
 
 | Setting | Default | DLL range | Effective UI behavior |
 |---|---:|---:|---|
 | UIStackEnabled | 1 | 0–1 | Enable the stack panel/compact flags. |
 | UIStackMoveMinimumUnits | 2 | 2–10000 | Owned members needed for Move Stack; Lua also enforces minimum 2. |
-| UIStackRosterWidth | 360 | 1–10000 | Width in pixels; Lua enforces minimum 260. |
+| UIStackRosterWidth | 360 | 1–10000 | Width in UI coordinates; Lua enforces minimum 260. |
 | UIStackRosterRowHeight | 38 | 1–10000 | Requested minimum row height; initial Lua minimum 32, populated rows at least 40 for a 32px icon plus padding, and taller when measured text needs room. |
 | UIStackRosterMaximumHeight | 430 | 1–10000 | Scroll viewport cap; at least the initial row-height setting, and constrained by remaining screen height. Rows remain scrollable. |
-| UIStackRosterOffsetX | 110 | 0–10000 | Panel horizontal offset in pixels. |
-| UIStackRosterOffsetY | 220 | 0–10000 | Panel vertical offset in pixels; affects remaining viewport height. |
+| UIStackRosterOffsetX | 110 | 0–10000 | Panel horizontal offset in UI coordinates. |
+| UIStackRosterOffsetY | 220 | 0–10000 | Panel vertical offset in UI coordinates; affects remaining viewport height. |
 | UIStackFlagCollapseThreshold | 3 | 2–10000 | Occupant count before compact flags; Lua also enforces minimum 2. |
 | UIStackResultDelayMilliseconds | 250 | 0–10000 | Delay before reporting group-move results; Lua converts milliseconds to seconds. |
 

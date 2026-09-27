@@ -1,0 +1,1 @@
+local N=StackAINaturalTests;assert(Game.GetAIAutoPlay()==0 and Game.GetActivePlayer()==N.state.human and Players[N.state.human]:IsTurnActive());assert(N.returns==2 and N.aiTurns==2 and Game.GetGameTurn()==N.state.turn+2);assert(N.armed==true);print("SOAK3|RETURN_PASS|",2,Game.GetGameTurn(),N.armed);N.Snapshot("soak-return-2")

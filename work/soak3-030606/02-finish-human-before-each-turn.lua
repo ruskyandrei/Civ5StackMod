@@ -1,0 +1,1 @@
+local N=StackAINaturalTests;assert(N.armed and N.returns<3 and Game.GetAIAutoPlay()==0);local p=Players[Game.GetActivePlayer()];assert(Game.GetActivePlayer()==N.state.human and p:IsTurnActive());for u in p:Units() do u:FinishMoves() end;print("SOAK3|HUMAN_MOVES_FINISHED|",Game.GetGameTurn(),N.returns,"start/verify fresh75s watcher then normal UI EndTurn once")

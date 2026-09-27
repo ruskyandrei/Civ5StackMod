@@ -68,14 +68,15 @@ function P.Plan(cityID,unitType,repeatOrder)
  local id=type(unitType)=="number" and unitType or GameInfoTypes[unitType or "UNIT_WARRIOR"]
  local info=id and GameInfo.Units[id]
  assert(info and info.Domain=="DOMAIN_LAND" and info.Combat>0 and tonumber(info.NumberStackingUnits or 0)<=0,"Use an ordinary land combat unit")
- assert(c:CanTrain(id,false,false,false,false),"Choose a currently trainable unit")
+ -- CivLuaCity uses luaL_optint for these flags, not Lua booleans.
+ assert(c:CanTrain(id,0,0,0,0),"Choose a currently trainable unit")
  for other in player:Cities() do if other:GetID()~=c:GetID() then assert(other:GetProductionUnit()~=id,"Pause same-unit production in other cities for this controlled test") end end
  local sentinel
  local monument=GameInfoTypes.BUILDING_MONUMENT
- if monument and c:CanConstruct(monument,false,false,false) then sentinel=monument end
+ if monument and c:CanConstruct(monument,0,0,0,0) then sentinel=monument end
  if not sentinel then for row in GameInfo.Buildings() do
   local class=GameInfo.BuildingClasses[row.BuildingClass]
-  if row.Cost>0 and class and (class.MaxGlobalInstances or -1)<0 and (class.MaxPlayerInstances or -1)<0 and c:CanConstruct(row.ID,false,false,false) then sentinel=row.ID;break end
+  if row.Cost>0 and class and (class.MaxGlobalInstances or -1)<0 and (class.MaxPlayerInstances or -1)<0 and c:CanConstruct(row.ID,0,0,0,0) then sentinel=row.ID;break end
  end end
  assert(sentinel,"Need a legal ordinary building after the unit in the queue")
  local plots,seen={},{}
@@ -127,13 +128,14 @@ function P.Setup(cityID,unitType,repeatOrder)
  end
  -- Existing VP supply/resource rules remain authoritative; don't confuse a
  -- queue eligibility rejection with the new space deferral being tested.
- assert(c:CanTrain(s.unitType,true,false,false,false),"Supply/resources now prohibit training: cleanup and use a lower-capacity/coastal site")
+ assert(c:CanTrain(s.unitType,1,0,0,0),"Supply/resources now prohibit training: cleanup and use a lower-capacity/coastal site")
  local capPenalty=tonumber(GameDefines.MAX_UNIT_SUPPLY_PRODMOD or 0);local perUnit=tonumber(GameDefines.PRODUCTION_PENALTY_PER_UNIT_OVER_SUPPLY or 0)
  if capPenalty>0 and perUnit>0 then assert(player:GetNumUnitsOutOfSupply()+2<math.floor(capPenalty/perUnit),"Need supply margin for the completed unit; cleanup and choose a smaller natural ring/lower cap") end
  assert(player:GetGold()>=math.max(50,-player:CalculateGoldRate()*3),"Need enough gold to avoid unrelated debt disbanding")
  c:ClearOrderQueue()
- c:PushOrder(OrderTypes.ORDER_TRAIN,s.unitType,-1,s.repeatOrder and 1 or 0,false,true,false)
- c:PushOrder(OrderTypes.ORDER_CONSTRUCT,s.sentinel,-1,0,false,true,false)
+ -- PushOrder save/force are integers; pop/append use lua_toboolean.
+ c:PushOrder(OrderTypes.ORDER_TRAIN,s.unitType,-1,s.repeatOrder and 1 or 0,false,true,0)
+ c:PushOrder(OrderTypes.ORDER_CONSTRUCT,s.sentinel,-1,0,false,true,0)
  c:SetUnitProduction(s.unitType,s.needed)
  requireThat("seeded real train order",c:GetProductionUnit(),s.unitType)
  requireThat("completed production threshold",c:GetProductionTimes100(),s.needed*100)
@@ -143,6 +145,7 @@ function P.Setup(cityID,unitType,repeatOrder)
  P.handler=function(owner,cityID,newID,bGold,bFaith)
   if P.state~=s or owner~=s.owner or cityID~=s.city then return end
   local u=unit(s,newID);local e={id=newID,unitType=u and u:GetUnitType()or-1,gold=bGold,faith=bFaith,turn=Game.GetGameTurn(),xp=u and u:GetExperienceTimes100()or-1,productionXP=c:GetProductionExperience(s.unitType)}
+  if u and e.unitType==s.unitType and not s.allBefore[newID] then u:SetScriptData(TAG..s.id) end
   s.events[#s.events+1]=e;log("CITY_TRAINED","id="..newID.." type="..e.unitType.." turn="..e.turn.." gold="..tostring(bGold).." faith="..tostring(bFaith).." xp100="..e.xp)
  end
  GameEvents.CityTrained.Add(P.handler)
@@ -151,7 +154,7 @@ function P.Setup(cityID,unitType,repeatOrder)
 end
 function P.CheckBlocked()
  local s,c=current();assert(Game.GetGameTurn()>s.turn,"Use normal UI EndTurn first")
- requireThat("still eligible to train",c:CanTrain(s.unitType,true,false,false,false),true)
+ requireThat("still eligible to train",c:CanTrain(s.unitType,1,0,0,0),true)
  check("blocked queue preserved exactly",queueKey(queue(c)),queueKey(s.queue))
  check("blocked making counter unchanged",Players[s.owner]:GetUnitClassMaking(s.unitClass),s.making)
  check("blocked completion count unchanged",c:GetNumThingsProduced(),s.things)
@@ -216,7 +219,7 @@ function P.Cleanup()
  if P.handler then GameEvents.CityTrained.Remove(P.handler);P.handler=nil end
  for _,r in ipairs(s.units) do local u=unit(s,r.id);assert(not u or (not u:IsBusy() and not u:IsFighting()),"Wait for fixture units") end
  for _,r in ipairs(s.units) do local u=unit(s,r.id);if u and u:GetScriptData()==TAG..s.id then u:Kill(false,-1) end end
- local made=s.produced and unit(s,s.produced);if made and made:GetScriptData()==TAG..s.id then made:Kill(false,-1) end
+ for _,e in ipairs(s.events) do local made=unit(s,e.id);if made and made:GetScriptData()==TAG..s.id then made:Kill(false,-1) end end
  P.state=nil;log("CLEANUP","Tracked units/hook removed. City queue, production, economy and turns remain changed; discard this disposable world without saving.")
 end
 function P.Try(name,...)

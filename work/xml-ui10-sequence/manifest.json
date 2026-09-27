@@ -1,0 +1,46 @@
+{
+  "scope": "Preparation-time Lua syntax and file-hash manifest. These exact manual blocks were subsequently executed on030606 MAIN; see README and archived main-readout.json for separate actual UI observations and the unobserved final toast.",
+  "lua51_syntax": true,
+  "files": {
+    "01-includes-originals.lua": {
+      "bytes": 484,
+      "sha256": "37CE72F464C39847B867D17529FD121B6A69F47F56D71AD06C57B50CEC570A34"
+    },
+    "02-nine-natural-combat.lua": {
+      "bytes": 878,
+      "sha256": "53631F7632F4FE6093582478E382AA2CF50717290AC8DABAB1E6A14D7286BB78"
+    },
+    "03-stage-late-unit.lua": {
+      "bytes": 780,
+      "sha256": "5609D96BCED25BED525DE7516126BA41C04C99C0C36A64C017C3598734568F7A"
+    },
+    "04-normal-late-arrival.lua": {
+      "bytes": 530,
+      "sha256": "82583EE27204DD3963ED26C46152ACFFCE2027B39F267A02E8F3DBFC831DE88E"
+    },
+    "05-check-outside-order.lua": {
+      "bytes": 731,
+      "sha256": "AD2A62B9D951B9F96112A64F6760364D02C008529D04B3B18F37996244A58F70"
+    },
+    "06-stationary-change.lua": {
+      "bytes": 528,
+      "sha256": "D7E684771D89E27AE9467EACDB7E1AF0CA334FC30C6DAEBC532037E3D4B6227F"
+    },
+    "07-check-stationary.lua": {
+      "bytes": 465,
+      "sha256": "AFEE565C1097FAFD09522CAE87A61EAEB5A7ECE8AAE531FA80499277178B5BFD"
+    },
+    "08-new-ten-member-order.lua": {
+      "bytes": 592,
+      "sha256": "0EFDC317B016F64E59261346D81C6F13EB33A84FDA64BB9454E6FB2E4C8D68AD"
+    },
+    "09-check-actual-ui-move.lua": {
+      "bytes": 821,
+      "sha256": "748F8B1EE9FC19D8930E567BDAB9D4FF1133126AF5319418B526B205D869C2BB"
+    },
+    "10-cleanup.lua": {
+      "bytes": 438,
+      "sha256": "DB855463253DD5FC38869B1BD868B1DD71D7A2715768AA206A39B59498A2DAB3"
+    }
+  }
+}

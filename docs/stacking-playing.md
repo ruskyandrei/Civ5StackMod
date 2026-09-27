@@ -2,6 +2,21 @@
 
 This is the development prototype for Vox Populi 5.4.6. The configuration reference is [stacking-configuration.md](stacking-configuration.md); current test coverage and remaining work are recorded in `work/REQUIREMENTS-AUDIT-20260927.md`.
 
+## Start a game
+
+The tested prototype is installed on this PC. Launch Civ V in DX11 windowed mode, choose **Mods**, and enable the tested set:
+
+- (1) Community Patch
+- (2) Vox Populi
+- (3a) VP - EUI Compatibility Files
+- (4a) Squads for VP
+
+Choose **Next**, then **Single Player** from the Mods screen and set up a new game. The stacking changes are part of the Community Patch DLL and EUI files; there is no separate stacking checkbox. Modpack Maker need not be enabled. Use the Mods route again when loading a campaign made with this prototype.
+
+The tested native Release DLL is `work/msvc-output/Release/20260927-030606/CvGameCore_Expansion2.dll`, SHA256 `CC8F233774E4608EA3891471FA10E551DED25CBBE566393EF9A76F976B5621CC`. Exact default XML is restored. Build/deployment instructions and recovery options are in [BUILD-LOCAL.md](../work/BUILD-LOCAL.md).
+
+This is an experimental playable build. Focused tests cover actual combat, XML overrides, stack movement, completed production, and save/reload. The final three-turn AI test completed in about 5.7, 3.8 and 3.0 seconds per observed AI interval, then reloaded with all 46 units and 11 cities matching their recorded state. Protective stacking is demonstrated; deliberate spreading against siege collateral, broad naval/air strategy and long-campaign balance still need playtesting. Multiplayer and unrelated mod combinations have not been validated.
+
 ## Capacity and combat
 
 Combat units share a tile up to their owner's current capacity, counted separately for land and sea. Cities use the same combat capacity. Civilian, support, aircraft and carrier-cargo rules retain their separate VP handling.
@@ -24,7 +39,9 @@ Cities retain VP's ordinary city damage and garrison absorption. New collateral 
 
 A gifted combat unit stays on its current tile. The resulting stack must fit the recipient's capacity and contain no other owner's combat units of the same domain. To gift one member of your stack, first separate it onto a legal gift tile. A refused gift keeps the unit and its cargo; it does not create a replacement or award gift benefits. The ordinary VP territory, native-domain, diplomacy and unit-type restrictions still apply.
 
-Completed production retains one VP exception to the capacity limit: if the city and all adjacent plots have no legal placement, the completed unit is placed in the city anyway. This can create an over-capacity city stack; move the excess unit out. Normal purchases require an available legal placement. Keep a free slot near a producing city when practical. This fallback has not been changed by the prototype.
+With stacking enabled, a completed ordinary land or sea combat unit waits if the city and every adjacent tile have no legal space. A notification asks you to make room. Its queue entry and stored production remain; keep or select the unit in production and it retries during a normal production update after a slot opens. You can still cancel or reorder production. Additional production accumulates and settles through VP's normal overflow and excess-gold rules when the unit completes.
+
+Normal purchases require an available legal placement. Civilian, aircraft and special support production retain their existing rules. Resource, supply, obsolescence and other ordinary training restrictions can still invalidate an order; waiting for space does not bypass them.
 
 ## Reading and moving a stack
 
@@ -50,6 +67,6 @@ Edit these source files, then stage/deploy and restart Civ V into a fresh test g
 - `(1) Community Patch/Database Changes/StackingConfig.xml`: capacity, technology rows, combat roles, collateral, city protection, AI preferences and UI layout.
 - `(2) Vox Populi/Database Changes/StackingVPConfig.xml`: VP's siege attack-strength penalty against land units.
 
-No DLL rebuild is needed for those XML changes. The default technology bonuses sum to nine; changing only `MaximumCapacity` to ten does not grant an additional slot. Change the base or a technology bonus as well when configuring ten combat units.
+No DLL rebuild is needed for those XML changes. The default base capacity plus technology bonuses totals nine; changing only `MaximumCapacity` to ten does not grant an additional slot. Change the base or a technology bonus as well when configuring ten combat units.
 
 The detailed reference describes role precedence, permitted values, special unit exclusions and rounding. The local native build/deployment workflow is documented in `work/BUILD-LOCAL.md`. Fully restart after changing UI Lua/XML; the full UI reload event is not a reliable VP/EUI testing shortcut in this installation.

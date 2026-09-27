@@ -1,0 +1,33 @@
+{
+  "scope": "Manual command blocks, not imported or executed. Exact saved test world only; checks do not reseed production or rebuild queue. Steps3/4 explicitly submit ordinary move/sleep and install a temporary observer; parent alone executes and drives one UI turn.",
+  "save_sha256": "6AB3B83261695E8EE7EB24B712A1E240DE50404BD35339F30A32BBFA0CD75BB3",
+  "lua51_compile_only": true,
+  "files": {
+    "01-check-queue.lua": {
+      "bytes": 741,
+      "sha256": "FFCCF9BA44AAE5D90DAE1DE02AEA667756F5DAFD84F2B70F1E6A921C79F981DE"
+    },
+    "02-check-units.lua": {
+      "bytes": 552,
+      "sha256": "EFC720E7D5BFF5F07EA5A85D23431114C4494CAE5B8B92D5276D3D8EEB195ECA"
+    },
+    "02b-check-blocked-turn.lua": {
+      "bytes": 504,
+      "sha256": "3035C3AAB1837E200439B321633EC8F33FA7294EC166A3D18E189FA511954427"
+    },
+    "03-open-slot.lua": {
+      "bytes": 709,
+      "sha256": "81BA2609B72511A33EDD56230061FA87CC9E5D837C5D75F98CABAA559F4D9B70"
+    },
+    "04-check-open.lua": {
+      "bytes": 499,
+      "sha256": "75EEF34C58A74668B265FA616253F08CA5109E51CAE7E9B47E99A46E5587E1B6"
+    },
+    "05-check-complete.lua": {
+      "bytes": 795,
+      "sha256": "4A3C7F6641655CDAECA5486BF0FD524133C967137A4C629FD6DFDFFEA897C786"
+    }
+  },
+  "sequence": "01,02; one normal UI blocked turn;02b,03,04; one normal UI completion turn;05",
+  "saved_zero_movement_preserved": true
+}

@@ -16,9 +16,14 @@ function T.Summary() log("SUMMARY", "checks", T.passed .. " passed", T.failed ..
 function T.Cleanup()
   for _, v in ipairs(T.spawned) do
     local u = Players[v.owner]:GetUnitByID(v.id)
+    assert(not u or (not u:IsBusy() and not u:IsFighting()), "Wait for fixture combat/missions before Cleanup")
+  end
+  for _, v in ipairs(T.spawned) do
+    local u = Players[v.owner]:GetUnitByID(v.id)
     if u then u:Kill(false, -1) end
   end
   T.spawned = {}
+  T.shot = nil
 end
 function T.Spawn(owner, unitType, plot)
   local id = GameInfoTypes[unitType]
@@ -26,13 +31,29 @@ function T.Spawn(owner, unitType, plot)
   local u = Players[owner]:InitUnit(id, plot:GetX(), plot:GetY())
   assert(u, "Unit creation failed: " .. unitType)
   table.insert(T.spawned, { owner = owner, id = u:GetID() })
+  assert(u:GetX() == plot:GetX() and u:GetY() == plot:GetY(), "Unit relocated during fixture creation: " .. unitType)
   return u
 end
 local function plain(p)
-  return p and not p:IsWater() and not p:IsMountain() and not p:IsCity() and p:GetNumUnits() == 0 and p:GetOwner() == -1
+  local team = Players[Game.GetActivePlayer()]:GetTeam()
+  return p and not p:IsWater() and not p:IsMountain() and not p:IsCity()
+    and not p:IsImpassable(team) and p:GetNumUnits() == 0 and p:GetOwner() == -1
 end
-function T.Plots()
-  -- Find an empty patch; actual movement/visibility remains under game rules.
+function T.Plots(cityLocation)
+  -- City initialization does not enforce founding distance. Check it before mutation.
+  local cities = {}
+  if cityLocation then
+    for i = 0, Map.GetNumPlots() - 1 do
+      local p = Map.GetPlotByIndex(i)
+      if p:IsCity() then cities[#cities+1] = p end
+    end
+  end
+  local function isolated(p)
+    for _, c in ipairs(cities) do
+      if Map.PlotDistance(p:GetX(),p:GetY(),c:GetX(),c:GetY()) < 4 then return false end
+    end
+    return true
+  end
   for i = 0, Map.GetNumPlots() - 1 do
     local p = Map.GetPlotByIndex(i)
     if plain(p) then
@@ -41,10 +62,16 @@ function T.Plots()
         local n = Map.PlotDirection(p:GetX(), p:GetY(), d)
         if plain(n) then table.insert(around, n) end
       end
-      if #around == 6 then return p, around end
+      if #around == 6 then
+        if cityLocation == "source" then
+          for j, n in ipairs(around) do
+            if isolated(n) then around[1],around[j]=around[j],around[1]; return p,around end
+          end
+        elseif not cityLocation or isolated(p) then return p,around end
+      end
     end
   end
-  error("No empty land test patch exists")
+  error("No empty passable land patch with the required city spacing exists")
 end
 function T.Players()
   local active = Game.GetActivePlayer()
@@ -135,9 +162,11 @@ function T.SetupCollateral(unitType)
   T.Cleanup()
   local owner, enemy = T.Players()
   Teams[Players[owner]:GetTeam()]:DeclareWar(Players[enemy]:GetTeam(),false,owner)
-  local target, adjacent = T.Plots()
-  if GameInfo.Units[GameInfoTypes[unitType or "UNIT_CATAPULT"]].Domain == "DOMAIN_AIR" then
-    Players[owner]:InitCity(adjacent[1]:GetX(),adjacent[1]:GetY())
+  local isAir = GameInfo.Units[GameInfoTypes[unitType or "UNIT_CATAPULT"]].Domain == "DOMAIN_AIR"
+  local target, adjacent = T.Plots(isAir and "source" or nil)
+  if isAir then
+    local city = Players[owner]:InitCity(adjacent[1]:GetX(),adjacent[1]:GetY())
+    assert(city and adjacent[1]:GetPlotCity() and adjacent[1]:GetPlotCity():GetOwner()==owner, "Unable to create valid spaced airbase")
   end
   local attacker = T.Spawn(owner,unitType or "UNIT_CATAPULT",adjacent[1])
   local protector = T.Spawn(owner,"UNIT_WARRIOR",adjacent[1])
@@ -148,7 +177,7 @@ function T.SetupCollateral(unitType)
   victims[6]:SetMaxHitPointsBase(101)
   victims[6]:SetDamage(48)
   local preview = attacker:GetStackAttackPreview(target,true)
-  T.Check("stacked ranged unit can fire",attacker:CanRangeStrikeAt(target:GetX(),target:GetY()),true)
+  assert(T.Check("stacked ranged unit can fire",attacker:CanRangeStrikeAt(target:GetX(),target:GetY()),true), "Fixture has no legal ranged shot")
   T.Check("collateral victim cap",preview.CollateralCount <= attacker:GetStackRoleInfo().CollateralTargets,true)
   T.Check("collateral produces secondary damage",preview.CollateralCount > 0,true)
   local before = {}
@@ -216,12 +245,36 @@ function T.RecordShotRoll()
 end
 local previousFire = T.Fire
 function T.Fire()
+  local s = assert(T.shot,"Set up a collateral scenario first")
+  assert(not s.fired,"This shot has already been requested; CheckShot before another setup")
+  local attacker = assert(Players[s.owner]:GetUnitByID(s.attacker))
+  assert(not attacker:IsBusy() and not attacker:IsFighting(),"Wait for prior combat/mission animation")
+  assert(attacker:CanRangeStrikeAt(s.target:GetX(),s.target:GetY()),"Fixture has no legal ranged shot")
   T.RecordShotRoll()
+  s.cityDamageBefore = s.city and s.city:GetDamage() or nil
+  s.fired = true
   previousFire()
 end
 local previousCheck = T.CheckShot
 function T.CheckShot()
   local s = assert(T.shot)
+  assert(s.fired,"Fire before checking a shot")
+  if s.checked then return T.failed == 0 end
+  local attacker = Players[s.owner]:GetUnitByID(s.attacker)
+  if attacker and (attacker:IsBusy() or attacker:IsFighting()) then
+    print("STACKTEST|WAIT|Attacker combat/mission still resolving; call CheckShot again"); return false
+  end
+  local changed = s.city and s.city:GetDamage() ~= s.cityDamageBefore or false
+  for id,b in pairs(s.before) do
+    local u = Players[s.enemy]:GetUnitByID(id)
+    if u and (u:IsBusy() or u:IsFighting()) then
+      print("STACKTEST|WAIT|Defender combat/mission still resolving; call CheckShot again"); return false
+    end
+    if (u and u:GetCurrHitPoints() or 0) ~= b.hp then changed = true end
+  end
+  if attacker and not attacker:IsOutOfAttacks() and not changed then
+    print("STACKTEST|WAIT|Mission has not spent an attack or changed HP; pending evidence retained"); return false
+  end
   if not s.city then previousCheck() end
   local citySecondaryHits = 0
   for id,b in pairs(s.before) do
@@ -258,7 +311,9 @@ function T.CheckShot()
     local attacker=Players[s.owner]:GetUnitByID(s.attacker)
     T.Check("city secondary hit count bounded",citySecondaryHits <= attacker:GetStackRoleInfo().CollateralTargets,true)
   end
+  s.checked = true
   T.Summary()
+  return T.failed == 0
 end
 local originalSetup = T.SetupCollateral
 function T.SetupCollateral(unitType)
@@ -274,7 +329,7 @@ end
 function T.SetupCityCollateral(protected,unitType)
   T.Cleanup()
   local owner,enemy=T.Players()
-  local target,adjacent=T.Plots()
+  local target,adjacent=T.Plots("target")
   local city=Players[enemy]:InitCity(target:GetX(),target:GetY())
   assert(city,"Unable to create target test city")
   Teams[Players[owner]:GetTeam()]:DeclareWar(Players[enemy]:GetTeam(),false,owner)
@@ -323,7 +378,7 @@ function T.SetupCityCollateral(protected,unitType)
   local before={}
   for _,u in ipairs(victims) do before[u:GetID()]={hp=u:GetCurrHitPoints(),max=u:GetMaxHitPoints()} end
   T.shot={owner=owner,enemy=enemy,attacker=attacker:GetID(),target=target,before=before,primary=-1,preview=preview}
-  T.Check("city attack can be made",attacker:CanRangeStrikeAt(target:GetX(),target:GetY()),true)
+  assert(T.Check("city attack can be made",attacker:CanRangeStrikeAt(target:GetX(),target:GetY()),true), "Fixture has no legal city shot")
   T.Check("city collateral has targets",preview.CollateralCount>0,true)
   T.Summary()
 end

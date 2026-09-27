@@ -2,7 +2,7 @@ from pathlib import Path
 import sys,json,hashlib
 root=Path(__file__).resolve().parents[1];sys.path.insert(0,str(root/'work/lua-validation'))
 from lupa.lua51 import LuaRuntime
-code=(root/'work/StackingMeleeTests.lua').read_text(encoding='utf-8-sig');lua=LuaRuntime(unpack_returned_tuples=True);lua.execute('assert(loadstring(...))',code);lua.execute(code)
+code=(root/'(1) Community Patch/Core Files/Stacking/StackingMeleeTests.lua').read_text(encoding='utf-8-sig');lua=LuaRuntime(unpack_returned_tuples=True);lua.execute('assert(loadstring(...))',code);lua.execute(code)
 lua.execute('''
 Game={GetGameTurn=function()return 0 end,GetAIAutoPlay=function()return 0 end}
 ActivityTypes={ACTIVITY_AWAKE=0};MissionTypes={MISSION_MOVE_TO=9}
