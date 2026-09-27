@@ -12556,12 +12556,17 @@ void CvCity::changeProductionTimes100(int iChange)
 										// if origin has completed production
 										if (iOverflow >= 0)
 										{
-											pOriginCity->produce(eUnit, NO_UNITAI, false);
-
-											if (pkUnitInfo)
+											if (pOriginCity->IsUnitProductionBlockedByStacking(eUnit))
+												pOriginCity->NotifyUnitProductionBlockedByStacking(eUnit);
+											else
 											{
-												localizedText = Localization::Lookup(((isLimitedUnitClass(eUnitClass)) ? "TXT_KEY_MISC_TRAINED_UNIT_IN_LIMITED" : "TXT_KEY_MISC_TRAINED_UNIT_IN"));
-												localizedText << pkUnitInfo->GetTextKey() << getNameKey();
+												pOriginCity->produce(eUnit, NO_UNITAI, false);
+
+												if (pkUnitInfo)
+												{
+													localizedText = Localization::Lookup(((isLimitedUnitClass(eUnitClass)) ? "TXT_KEY_MISC_TRAINED_UNIT_IN_LIMITED" : "TXT_KEY_MISC_TRAINED_UNIT_IN"));
+													localizedText << pkUnitInfo->GetTextKey() << getNameKey();
+												}
 											}
 										}
 									}
@@ -29488,6 +29493,16 @@ void CvCity::popOrder(int iNum, bool bFinish, bool bChoose)
 		return;
 	}
 
+	// A completed combat unit waits in its existing order until a legal slot
+	// opens. Do this before repeat insertion, making counters or commitments.
+	// Cancellation (bFinish=false) must always remove the order normally.
+	if (bFinish && pOrderNode->eOrderType == ORDER_TRAIN &&
+		IsUnitProductionBlockedByStacking(static_cast<UnitTypes>(pOrderNode->iData1)))
+	{
+		NotifyUnitProductionBlockedByStacking(static_cast<UnitTypes>(pOrderNode->iData1));
+		return;
+	}
+
 	if (bFinish && pOrderNode->bSave)
 	{
 		pushOrder(pOrderNode->eOrderType, pOrderNode->iData1, pOrderNode->iData2, true, false, true);
@@ -29852,9 +29867,54 @@ bool CvCity::CleanUpQueue(void)
 }
 
 //	--------------------------------------------------------------------------------
+// Completed production uses the same ordinary-combat scope as movement caps.
+// Civilians, aircraft and special stacking/support units retain VP behavior.
+bool CvCity::IsStackingProductionUnit(UnitTypes eUnitType) const
+{
+	if (!CvStacking::IsEnabled() || eUnitType == NO_UNIT)
+		return false;
+	const CvUnitEntry* pkUnitInfo = GC.getUnitInfo(eUnitType);
+	return pkUnitInfo && pkUnitInfo->GetCombat() > 0 && pkUnitInfo->GetNumberStackingUnits() <= 0 &&
+		(pkUnitInfo->GetDomainType() == DOMAIN_LAND || pkUnitInfo->GetDomainType() == DOMAIN_SEA);
+}
+
+bool CvCity::IsUnitProductionBlockedByStacking(UnitTypes eUnitType) const
+{
+	return IsStackingProductionUnit(eUnitType) && !CanPlaceUnitHere(eUnitType);
+}
+
+void CvCity::NotifyUnitProductionBlockedByStacking(UnitTypes eUnitType) const
+{
+	CvNotifications* pNotifications = GET_PLAYER(getOwner()).GetNotifications();
+	const CvUnitEntry* pkUnitInfo = GC.getUnitInfo(eUnitType);
+	if (!pNotifications || !pkUnitInfo)
+		return;
+	Localization::String text = Localization::Lookup("TXT_KEY_STACKING_UNIT_READY_NO_SPACE");
+	text << pkUnitInfo->GetTextKey() << getNameKey();
+	Localization::String summary = Localization::Lookup("TXT_KEY_STACKING_UNIT_READY_NO_SPACE_SUMMARY");
+	summary << getNameKey();
+	const CvString message = text.toUTF8();
+	// Repeated completion probes must not flood the notification list. Existing
+	// notifications are already serialized; no extra city save state is needed.
+	for (int i = 0; i < pNotifications->GetNumNotifications(); ++i)
+	{
+		if (pNotifications->GetNotificationStr(i) == message &&
+			(!pNotifications->IsNotificationDismissed(i) || pNotifications->GetNotificationTurn(i) == GC.getGame().getGameTurn()))
+			return;
+	}
+	pNotifications->Add(NOTIFICATION_GENERIC, message.c_str(), summary.toUTF8(), getX(), getY(), GetID(), getOwner());
+}
+
 /// Create unit by completing production in city, separated out from popOrder() so other functions can call this
 void CvCity::produce(UnitTypes eTrainUnit, UnitAITypes eTrainAIUnit, bool bCanOverflow)
 {
+	// Also protect direct production callers (for example siphoned production).
+	// Retain exact stored production and investment; this is not a failed build.
+	if (IsUnitProductionBlockedByStacking(eTrainUnit))
+	{
+		NotifyUnitProductionBlockedByStacking(eTrainUnit);
+		return;
+	}
 	m_iThingsProduced++;
 
 	CvPlayerAI& kOwner = GET_PLAYER(getOwner());
@@ -31947,7 +32007,13 @@ void CvCity::doProduction(bool bAllowNoProduction)
 {
 	VALIDATE_OBJECT();
 
-	if (!isHuman(ISHUMAN_AI_CITY_PRODUCTION) || isProductionAutomated())
+	// Routine dirty-production reconsideration must not discard a finished
+	// head just before its placement retry. Explicit cancel/reorder and other
+	// intentional AI production choices remain available through their APIs.
+	const UnitTypes eReadyUnit = getProductionUnit();
+	const bool bPreserveCompletedHead = eReadyUnit != NO_UNIT && IsStackingProductionUnit(eReadyUnit) &&
+		static_cast<int64>(getUnitProductionTimes100(eReadyUnit)) >= static_cast<int64>(getProductionNeeded(eReadyUnit)) * 100;
+	if ((!isHuman(ISHUMAN_AI_CITY_PRODUCTION) || isProductionAutomated()) && !bPreserveCompletedHead)
 	{
 		if (!isProduction() || isProductionProcess() || AI_isChooseProductionDirty())
 		{
@@ -32061,6 +32127,11 @@ void CvCity::doDecay()
 		{
 			if (getProductionUnit() != eUnit)
 			{
+				// Completed deferred units remain paid for after an intentional
+				// queue change; unfinished production keeps the normal decay rules.
+				if (IsStackingProductionUnit(eUnit) && static_cast<int64>(getUnitProductionTimes100(eUnit)) >=
+					static_cast<int64>(getProductionNeeded(eUnit)) * 100)
+					continue;
 				if (getUnitProduction(eUnit) > 0)
 				{
 					changeUnitProductionTime(eUnit, 1);

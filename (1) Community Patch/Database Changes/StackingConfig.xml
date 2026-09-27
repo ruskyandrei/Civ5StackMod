@@ -96,4 +96,12 @@
     <Row DomainType="DOMAIN_SEA" Enabled="0" />
     <Row DomainType="DOMAIN_AIR" Enabled="0" />
   </Stacking_CollateralDomains>
+  <Language_en_US>
+    <Row Tag="TXT_KEY_STACKING_UNIT_READY_NO_SPACE">
+      <Text>{1_UnitName} is ready in {2_CityName}, but no legal stacking space is available in the city or an adjacent tile. Move a combat unit to make room. Stored production is retained; keep or select this unit in production to retry once space opens.</Text>
+    </Row>
+    <Row Tag="TXT_KEY_STACKING_UNIT_READY_NO_SPACE_SUMMARY">
+      <Text>{1_CityName}: unit awaiting space</Text>
+    </Row>
+  </Language_en_US>
 </GameData>

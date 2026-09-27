@@ -5,6 +5,7 @@ from pathlib import Path
 SEARCH = re.compile(r"tactsim around \((-?\d+):(-?\d+)\) with agg (\d+) finished in (\d+) ms\. started with (\d+) units and (\d+) enemies on (\d+) plots\. used (\d+) positions, (\d+) completed\.")
 CACHE = re.compile(r"stack forecast cache: danger (\d+) hit/(\d+) miss \((\d+) entries\), defender (\d+) hit/(\d+) miss \((\d+) entries\)")
 MEMORY = re.compile(r"peak (\d+)/(\d+) entries, key bytes (\d+)/(\d+), estimated bytes (\d+), insertion bypasses (\d+), nested bypasses (\d+)")
+RETENTION = re.compile(r"retained (\d+) entries/(\d+) key bytes, evictions (\d+) danger/(\d+) defender")
 LUA = re.compile(r"^\[([\d.]+)\].*?STACKNAT\|([^|]+)\|(.*)$")
 KV = re.compile(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)")
 def values(text):
@@ -46,7 +47,12 @@ def tactical(paths, player=None, turn=None):
                 if memory:
                     cache.update(zip(('peak_entries', 'entry_limit', 'key_bytes', 'key_limit', 'estimated_bytes', 'insertion_bypasses', 'nested_bypasses'), map(int, memory.groups())))
                     cache['bounds_ok'] = cache['peak_entries'] <= cache['entry_limit'] and cache['key_bytes'] <= cache['key_limit']
-                    cache['entry_counts_consistent'] = cache['peak_entries'] == cache['danger_entries'] + cache['defender_entries']
+                    retained = RETENTION.search(parts[2])
+                    if retained:
+                        cache.update(zip(('retained_entries', 'retained_key_bytes', 'danger_evictions', 'defender_evictions'), map(int, retained.groups())))
+                        cache['entry_counts_consistent'] = (cache['retained_entries'] == cache['danger_entries'] + cache['defender_entries'] and cache['retained_entries'] <= cache['peak_entries'] and cache['retained_key_bytes'] <= cache['key_bytes'])
+                    else:
+                        cache['entry_counts_consistent'] = cache['peak_entries'] == cache['danger_entries'] + cache['defender_entries']
                 previous['cache'] = cache
     return searches, warnings, hashes
 
@@ -83,6 +89,8 @@ def summarize(searches):
         insertion_bypasses=sum(r['insertion_bypasses'] for r in bounded) if bounded else None,
         nested_bypasses=sum(r['nested_bypasses'] for r in bounded) if bounded else None)
     for name in ('danger', 'defender'):
+        evictions = [r[name+'_evictions'] for r in rows if name+'_evictions' in r]
+        result[name+'_evictions'] = sum(evictions) if evictions else None
         hits, misses = sum(r[name+'_hits'] for r in rows), sum(r[name+'_misses'] for r in rows)
         result[name+'_hits'] = hits if rows else None; result[name+'_misses'] = misses if rows else None
         result[name+'_hit_ratio'] = hits/(hits+misses) if hits+misses else None

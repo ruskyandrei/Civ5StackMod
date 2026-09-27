@@ -801,10 +801,14 @@
     <File md5="C94DD0DDF8E82E5B09B728BD7FCD951A" import="1">Mapscripts/Highlands.lua</File>
     <File md5="F10C5FF7AE8A7276B99B01F1A1066C65" import="1">Mapscripts/Terra.lua</File>
     <File md5="33AD5C8A71FB8CA6EF846D944269BA1C" import="0">Database Changes/StackingSchema.sql</File>
-    <File md5="6BB07439D2842598722CF1BC8C9A1074" import="0">Database Changes/StackingConfig.xml</File>
+    <File md5="6617746C7E2E5FE030A193503B5AACD8" import="0">Database Changes/StackingConfig.xml</File>
     <File md5="CBE26E5BBD68F10A1A4A3A2D5BE2E4DC" import="1">Core Files/Stacking/StackingTests.lua</File>
     <File md5="A9AA8509DA8D90DFEC44C6E56BFE0213" import="1">Core Files/Stacking/StackingAITests.lua</File>
-    <File md5="A8F9123C649728B7D8EF71A3DC9EB133" import="1">Core Files/Stacking/StackingAirWaveTests.lua</File>
+    <File md5="BC08CFCF6766190CF6CE8ACC9FE44171" import="1">Core Files/Stacking/StackingAirWaveTests.lua</File>
+    <File md5="683B1C60235B65744FDC480BA684F0B3" import="1">Core Files/Stacking/StackingProductionTests.lua</File>
+    <File md5="CA2E3D8BED611813F5CEB062DAC75240" import="1">Core Files/Stacking/StackingProductionTurnTests.lua</File>
+    <File md5="86C88356CD7C719F467099A83D5A0288" import="1">Core Files/Stacking/StackingMeleeTests.lua</File>
+    <File md5="488224F4A8AC952C84719AFE6B9F10CD" import="1">Core Files/Stacking/StackingGiftTests.lua</File>
     <File md5="61A48D1CB6F4E1F16E72CD9B3DE156BC" import="1">Core Files/Stacking/StackingCityCombatTests.lua</File>
     <File md5="AB0BB3D24BBAA51CFB6D51800A56F3C8" import="1">Core Files/Stacking/StackingAINaturalTests.lua</File>
     <File md5="C48728F15774E13C5B2D575DB6839FBB" import="1">Core Files/Stacking/StackingAITurnTests.lua</File>

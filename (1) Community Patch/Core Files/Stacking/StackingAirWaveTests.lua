@@ -53,7 +53,7 @@ function W.Setup()
  local limit=oneAttempt(aa)
  must("guaranteed intercept probability",aa:CurrInterceptionProbability()>=100,true)
  W.state={owner=owner,enemy=enemy,base=city:Plot(),target=target,guard=guard:GetID(),archer=archer:GetID(),aa=aa:GetID(),maxAttempts=limit,bombers={}}
- print("STACKAIR|READY|Query('baseline'); AddBomber(); Query('one'); AddBomber(); Query('wave'); use separate commands/frames")
+ print("STACKAIR|READY|Query('baseline'); AddBomber(); CalibrateFirst(); next frame ValidateFirst(); Query('one'); AddBomber(); Query('wave'); use separate frames")
 end
 function W.AddBomber()
  local s=assert(W.state);assert(#s.bombers<2)
@@ -62,21 +62,50 @@ function W.AddBomber()
  for p in GameInfo.UnitPromotions() do if tonumber(p.EvasionChange or 0)~=0 and bomber:IsHasPromotion(p.ID) then bomber:SetHasPromotion(p.ID,false) end end
  s.bombers[#s.bombers+1]=bomber:GetID()
  local interceptor=bomber:GetBestInterceptor(s.target,bomber,false,false)
- must("intended AA is selected",interceptor and interceptor:GetID() or -1,s.aa)
+ local aa=assert(u(s.enemy,s.aa))
+ if #s.bombers==2 and s.shot and s.shot.index==1 and aa:isOutOfInterceptions() then
+  must("second bomber sees exhausted AA",interceptor==nil,true)
+ else must("intended AA is selected",interceptor and interceptor:GetID() or -1,s.aa) end
  must("bomber zero evasion",bomber:EvasionProbability(),0)
  must("bomber can strike",bomber:CanRangeStrikeAt(s.target:GetX(),s.target:GetY()),true)
  print("STACKAIR|ADDED|bomber="..bomber:GetID().."; query next frame")
 end
+function W.FogPerBomber()
+ local s=assert(W.state);local seen={};local n=0
+ if s.base:IsWater()~=s.target:IsWater() then return 0 end
+ for dx=-2,2 do for dy=-2,2 do
+  local p=Map.PlotXYWithRangeCheck(s.base:GetX(),s.base:GetY(),dx,dy,2)
+  if p and not seen[p:GetPlotIndex()] then
+   seen[p:GetPlotIndex()]=true
+   if not p:IsVisible(Players[s.enemy]:GetTeam()) and not p:IsImpassable(Players[s.owner]:GetTeam()) and Map.PlotDistance(p:GetX(),p:GetY(),s.target:GetX(),s.target:GetY())<=2 then n=n+1 end
+  end
+ end end
+ return n
+end
 function W.Query(stage)
- local s=assert(W.state);local guard=assert(u(s.enemy,s.guard))
- local danger=guard:GetDanger();print("STACKAIR|DANGER|"..stage.."="..danger)
- if stage=="baseline" then assert(#s.bombers==0);s.baseline=danger
- elseif stage=="one" then assert(#s.bombers==1 and s.baseline);s.one=danger;check("one bomber blocked without changing baseline harm",danger,s.baseline)
- elseif stage=="wave" then assert(#s.bombers==2 and s.one);s.wave=danger;check("second bomber outlasts single interceptor",danger>s.one,true)
- elseif stage=="exhausted" then s.exhausted=danger;check("spent AA cannot reduce wave danger",danger>=assert(s.wave),true)
- elseif stage=="partial" then check("partial interception cannot be treated as certain",danger>=assert(s.wave),true);check("partial interception no worse than zero protection",danger<=assert(s.exhausted),true)
- else error("Use baseline/one/wave/exhausted/partial") end
- T().Summary()
+ local s=assert(W.state);local per=W.FogPerBomber()
+ assert(not s.fogPerBomber or s.fogPerBomber==per,'Fog contribution changed; reset fixture instead of comparing different visibility')
+ s.fogPerBomber=per
+ local danger=assert(Players[s.enemy]:GetUnitByID(s.guard)):GetDanger()
+ local fog=#s.bombers*per;local combat=danger-fog
+ print('STACKAIR|DANGER|'..stage..' raw='..danger..' addedFog='..fog..' combat='..combat..' fogPerBomber='..per)
+ if stage=='baseline' then assert(#s.bombers==0);s.baseline=danger
+ elseif stage=='one' then assert(#s.bombers==1 and s.baseline);s.one=danger;check('one bomber blocked after measured fog adjustment',combat,s.baseline)
+ elseif stage=='wave' then assert(#s.bombers==2 and s.one);s.wave=danger;check('second bomber outlasts single interceptor after fog adjustment',combat>s.one-per,true)
+ elseif stage=='exhausted' then assert(#s.bombers==2);s.exhausted=danger;check('spent AA cannot reduce combat wave danger',combat>=assert(s.wave)-2*per,true)
+ elseif stage=='partial' then assert(#s.bombers==2);check('partial interception cannot be certain after fog adjustment',combat>=assert(s.wave)-2*per,true);check('partial no worse than zero protection after fog adjustment',combat<=assert(s.exhausted)-2*per,true)
+ else error('Use baseline/one/wave/exhausted/partial') end
+ StackTests.Summary()
+end
+function W.RecheckFog()
+ local s=assert(W.state);local per=W.FogPerBomber()
+ assert(s.baseline and s.one,'Need recorded baseline and one-bomber values')
+ assert(not s.fogPerBomber or s.fogPerBomber==per,'Fog contribution changed')
+ s.fogPerBomber=per
+ print('STACKAIR|FOG_RECHECK|perBomber='..per..' originalBaseline='..s.baseline..' originalOne='..s.one..'; original FAIL evidence retained')
+ check('recorded blocked bomber adds fog only',s.one-per,s.baseline)
+ if s.wave then check('recorded second bomber causes combat damage',s.wave-2*per>s.one-per,true) end
+ StackTests.Summary()
 end
 function W.ExhaustAA()
  local s=assert(W.state);local aa=assert(u(s.enemy,s.aa));aa:SetMadeInterception(true)
@@ -91,11 +120,60 @@ function W.RearmAA(partial)
  end
  print("STACKAIR|AA|chance="..aa:CurrInterceptionProbability().."; query next frame")
 end
+function W.InterceptionBound(b)
+ local s=assert(W.state);local aa=assert(Players[s.enemy]:GetUnitByID(s.aa));local im,dm=0,0
+ assert(not b:IsRangedSupportFire(),"Unsupported fake ranged unit")
+ for p in GameInfo.UnitPromotions() do
+  if aa:IsHasPromotion(p.ID) then im=im+math.max(0,tonumber(p.InterceptionCombatModifier or 0)) end
+  if b:IsHasPromotion(p.ID) then dm=dm+math.max(0,tonumber(p.InterceptionDefenseDamageModifier or 0)) end
+ end
+ assert(dm>-100 and im>-100,'Interception damage disabled by modifier')
+ local attack=math.floor(aa:GetMaxAttackStrength(nil,nil,b)*(100+im)/100)
+ local defense=math.max(1,b:GetBaseRangedCombatStrength()*10)
+ local ratio=math.max(attack,defense)/math.max(1,math.min(attack,defense))
+ ratio=math.min(1000,(((ratio+3)/4)^4+1)/2);if defense>attack then ratio=1/ratio end
+ local base=assert(tonumber(GameDefines.INTERCEPTION_SAME_STRENGTH_MIN_DAMAGE))
+ local extra=assert(tonumber(GameDefines.INTERCEPTION_SAME_STRENGTH_POSSIBLE_EXTRA_DAMAGE))
+ local bound=math.floor(math.floor(math.floor((base+math.max(0,extra-1))*ratio)*(100+dm)/100)/100)
+ return bound,attack,defense,im,dm
+end
+function W.CalibrateFirst()
+ local s=assert(W.state);local alive={}
+ for _,id in ipairs(s.bombers) do local b=Players[s.owner]:GetUnitByID(id);if b and b:GetCurrHitPoints()>0 then alive[#alive+1]=id end end
+ assert(#alive==1,'Need one surviving bomber')
+ s.bombers=alive;s.shot=nil;local b=Players[s.owner]:GetUnitByID(alive[1]);local aa=Players[s.enemy]:GetUnitByID(s.aa)
+ assert(not b:IsBusy() and not b:IsFighting(),'Wait for combat')
+ aa:SetDamage(0);local limit=math.max(1,math.min(100,aa:GetBaseCombatStrength()));local best=0
+ for strength=1,limit do aa:SetBaseCombatStrength(strength);if W.InterceptionBound(b)<b:GetCurrHitPoints()/4 then best=strength end end
+ assert(best>0,'No nonlethal AA strength found');aa:SetBaseCombatStrength(best);W.RearmAA(false)
+ s.interceptionProof=nil
+ print('STACKAIR|CALIBRATED|bomber='..alive[1]..' aaBase='..best..' maxDamageBound='..W.InterceptionBound(b)..'; next frame call ValidateFirst()')
+end
+function W.ValidateFirst()
+ local s=assert(W.state);assert(#s.bombers==1 and s.baseline,'Need one bomber and baseline')
+ local b=Players[s.owner]:GetUnitByID(s.bombers[1]);local aa=Players[s.enemy]:GetUnitByID(s.aa);local g=Players[s.enemy]:GetUnitByID(s.guard)
+ assert(aa:CurrInterceptionProbability()>=100 and b:EvasionProbability()==0,'Need certain interception')
+ assert(b:GetBestInterceptor(s.target,b,false,false):GetID()==s.aa,'Wrong interceptor')
+ local preview=b:GetStackAttackPreview(s.target,true)
+ assert(preview.DefenderID==s.guard and preview.DirectDamage>0,'Need positive unblocked damage to guard')
+ local protected=g:GetDanger();assert(protected==s.baseline+W.FogPerBomber(),'Protected damage mismatch')
+ W.ExhaustAA();local ok,spent=pcall(function()return g:GetDanger()end);W.RearmAA(false)
+ assert(ok and spent>protected and g:GetDanger()==protected,'Interception control failed')
+ local bound=W.InterceptionBound(b);assert(bound>0 and bound<b:GetCurrHitPoints(),'Nonlethal bound failed')
+ s.interceptionProof={id=b:GetID(),aaBase=aa:GetBaseCombatStrength()}
+ StackTests.Check('air-wave: calibrated certain abort forecast',true,true)
+ StackTests.Check('air-wave: conservative max interception is nonlethal',bound<b:GetCurrHitPoints(),true)
+ print('STACKAIR|INTERCEPTION_PROOF|bomber='..b:GetID()..' maxDamageBound='..bound..' HP='..b:GetCurrHitPoints())
+end
 function W.Fire(index)
  local s=assert(W.state);assert(index==1 or index==2)
  local bomber=assert(u(s.owner,s.bombers[index]));local aa=assert(u(s.enemy,s.aa))
  local best=bomber:GetBestInterceptor(s.target,bomber,false,false)
- if index==1 then must("first strike guaranteed AA",best and best:GetID()==s.aa and aa:CurrInterceptionProbability()>=100,true)
+ if index==1 then
+  must("first strike guaranteed AA",best and best:GetID()==s.aa and aa:CurrInterceptionProbability()>=100,true)
+  local proof=s.interceptionProof
+  assert(proof and proof.id==bomber:GetID() and proof.aaBase==aa:GetBaseCombatStrength(),"CalibrateFirst/ValidateFirst before adding second bomber")
+  must("calibrated interception is nonlethal",W.InterceptionBound(bomber)<bomber:GetCurrHitPoints(),true)
  else must("second strike has no remaining interceptor",best==nil,true) end
  must("actual bombing legal",bomber:CanRangeStrikeAt(s.target:GetX(),s.target:GetY()),true)
  local preview=bomber:GetStackAttackPreview(s.target,true)
