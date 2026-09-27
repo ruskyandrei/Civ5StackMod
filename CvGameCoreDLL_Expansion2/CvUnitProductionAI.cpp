@@ -8,6 +8,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvGameCoreDLLUtil.h"
 #include "CvUnitProductionAI.h"
+#include "CvStackingRules.h"
 #include "CvGameCoreUtils.h"
 #include "CvInfosSerializationHelper.h"
 #include "CvMilitaryAI.h"
@@ -246,7 +247,13 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 		for (int i = RING0_PLOTS; i < RING3_PLOTS && !bHavePlot; i++)
 		{
 			CvPlot* pNeighbor = iterateRingPlots(pCenter, i);
-			if (pNeighbor && pNeighbor->isValidMovePlot(m_pCity->getOwner()) && pNeighbor->GetNumCombatUnits() == 0)
+			if (CvStacking::IsEnabled())
+			{
+				// Use the same owner, domain and capacity rules as actual production.
+				if (pNeighbor && CvCity::IsValidPlotForUnitType(pNeighbor, m_pCity->getOwner(), pkUnitEntry))
+					bHavePlot = true;
+			}
+			else if (pNeighbor && pNeighbor->isValidMovePlot(m_pCity->getOwner()) && pNeighbor->GetNumCombatUnits() == 0)
 			{
 				if (pNeighbor->isWater() && pkUnitEntry->GetDomainType() == DOMAIN_SEA)
 					bHavePlot=true;

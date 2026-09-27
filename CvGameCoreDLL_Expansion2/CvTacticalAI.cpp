@@ -1,4 +1,4 @@
-/*	-------------------------------------------------------------------------------------------------------
+﻿/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cmath>
+#include <deque>
 #include "LintFree.h"
 
 //for easier debugging
@@ -7416,11 +7417,16 @@ typedef std::tr1::unordered_map<StackForecastKey, int, StackForecastKeyHash> Sta
 typedef std::tr1::unordered_map<StackForecastKey, const CvUnit*, StackForecastKeyHash> StackDefenderForecasts;
 static StackDangerForecasts gStackDangerForecasts;
 static StackDefenderForecasts gStackDefenderForecasts;
+// Node references survive unordered_map rehash; iterators do not. FIFO stores
+// only key pointers, not duplicate key vectors, and removes them before erase.
+static std::deque<const StackForecastKey*> gStackDangerOrder, gStackDefenderOrder;
 static bool gStackForecastsActive = false;
 static unsigned int gStackForecastDepth = 0;
 static unsigned long gStackDangerHits = 0, gStackDangerMisses = 0;
 static unsigned long gStackDefenderHits = 0, gStackDefenderMisses = 0;
 static unsigned long gStackInsertBypasses = 0, gStackNestedBypasses = 0;
+static unsigned long gStackDangerEvictions = 0, gStackDefenderEvictions = 0;
+static size_t gStackPeakEntries = 0, gStackPeakKeyBytes = 0, gStackPeakEstimatedBytes = 0;
 static size_t gStackKeyPayloadBytes = 0, gStackKeyPayloadLimit = 0, gStackEntryLimit = 0;
 
 struct StackForecastScope
@@ -7436,9 +7442,12 @@ struct StackForecastScope
    ++gStackNestedBypasses;
    return;
   }
+  gStackDangerOrder.clear(); gStackDefenderOrder.clear();
   gStackDangerForecasts.clear(); gStackDefenderForecasts.clear();
   gStackDangerHits = gStackDangerMisses = gStackDefenderHits = gStackDefenderMisses = 0;
   gStackInsertBypasses = gStackNestedBypasses = 0;
+  gStackDangerEvictions = gStackDefenderEvictions = 0;
+  gStackPeakEntries = gStackPeakKeyBytes = gStackPeakEstimatedBytes = 0;
   gStackKeyPayloadBytes = 0;
   gStackEntryLimit = (size_t)gTactPosStorage.getSizeLimit();
   // Memoization shares the existing search budget: at most one entry per
@@ -7452,6 +7461,8 @@ struct StackForecastScope
   if (gStackForecastDepth == 0)
   {
    // clear() can retain buckets. Release them as well in the 32-bit game.
+   std::deque<const StackForecastKey*>().swap(gStackDangerOrder);
+   std::deque<const StackForecastKey*>().swap(gStackDefenderOrder);
    StackDangerForecasts().swap(gStackDangerForecasts);
    StackDefenderForecasts().swap(gStackDefenderForecasts);
    gStackKeyPayloadBytes = 0;
@@ -7459,16 +7470,60 @@ struct StackForecastScope
  }
 };
 
+static bool EvictOldestStackForecast()
+{
+ // Refresh the larger pool first. This preserves the small, high-reuse
+ // selector pool without letting either table permanently starve the other.
+ if (!gStackDangerOrder.empty() && gStackDangerOrder.size() >= gStackDefenderOrder.size())
+ {
+  StackDangerForecasts::iterator victim = gStackDangerForecasts.find(*gStackDangerOrder.front());
+  if (victim == gStackDangerForecasts.end())
+   return false;
+  const size_t payload = victim->first.state.capacity() * sizeof(int);
+  if (payload > gStackKeyPayloadBytes)
+   return false;
+  gStackDangerOrder.pop_front();
+  gStackKeyPayloadBytes -= payload;
+  gStackDangerForecasts.erase(victim);
+  ++gStackDangerEvictions;
+  return true;
+ }
+ if (!gStackDefenderOrder.empty())
+ {
+  StackDefenderForecasts::iterator victim = gStackDefenderForecasts.find(*gStackDefenderOrder.front());
+  if (victim == gStackDefenderForecasts.end())
+   return false;
+  const size_t payload = victim->first.state.capacity() * sizeof(int);
+  if (payload > gStackKeyPayloadBytes)
+   return false;
+  gStackDefenderOrder.pop_front();
+  gStackKeyPayloadBytes -= payload;
+  gStackDefenderForecasts.erase(victim);
+  ++gStackDefenderEvictions;
+  return true;
+ }
+ return false;
+}
+
 static bool CanStoreStackForecast(const StackForecastKey& key)
 {
  if (!gStackForecastsActive)
   return false;
  const size_t payload = key.state.capacity() * sizeof(int);
- if (gStackDangerForecasts.size() + gStackDefenderForecasts.size() >= gStackEntryLimit ||
-  payload > gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+ // Reject a key that can never fit before evicting any useful entries.
+ if (gStackEntryLimit == 0 || payload > gStackKeyPayloadLimit)
  {
   ++gStackInsertBypasses;
   return false;
+ }
+ while (gStackDangerForecasts.size() + gStackDefenderForecasts.size() >= gStackEntryLimit ||
+  payload > gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+ {
+  if (!EvictOldestStackForecast())
+  {
+   ++gStackInsertBypasses;
+   return false;
+  }
  }
  return true;
 }
@@ -7477,7 +7532,60 @@ static size_t EstimatedStackForecastBytes()
 {
  const size_t entries = gStackDangerForecasts.size() + gStackDefenderForecasts.size();
  // Key payload is measured; allocator/node/bucket overhead is an estimate.
- return gStackKeyPayloadBytes + entries * (sizeof(StackForecastKey) + sizeof(const CvUnit*) + 8 * sizeof(void*));
+ // FIFO adds only one key pointer per retained entry plus its two containers.
+ return gStackKeyPayloadBytes + entries * (sizeof(StackForecastKey) + sizeof(const CvUnit*) + 9 * sizeof(void*))
+  + sizeof(gStackDangerOrder) + sizeof(gStackDefenderOrder);
+}
+
+static void UpdateStackForecastPeaks()
+{
+ gStackPeakEntries = max(gStackPeakEntries, gStackDangerForecasts.size() + gStackDefenderForecasts.size());
+ gStackPeakKeyBytes = max(gStackPeakKeyBytes, gStackKeyPayloadBytes);
+ gStackPeakEstimatedBytes = max(gStackPeakEstimatedBytes, EstimatedStackForecastBytes());
+}
+
+static void StoreStackDangerForecast(const StackForecastKey& key, int result)
+{
+ if (!CanStoreStackForecast(key))
+  return;
+ pair<StackDangerForecasts::iterator, bool> stored = gStackDangerForecasts.insert(make_pair(key, result));
+ if (stored.second)
+ {
+  const size_t payload = stored.first->first.state.capacity() * sizeof(int);
+  if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+  {
+   gStackKeyPayloadBytes += payload;
+   gStackDangerOrder.push_back(&stored.first->first);
+   UpdateStackForecastPeaks();
+  }
+  else
+  {
+   gStackDangerForecasts.erase(stored.first);
+   ++gStackInsertBypasses;
+  }
+ }
+}
+
+static void StoreStackDefenderForecast(const StackForecastKey& key, const CvUnit* result)
+{
+ if (!CanStoreStackForecast(key))
+  return;
+ pair<StackDefenderForecasts::iterator, bool> stored = gStackDefenderForecasts.insert(make_pair(key, result));
+ if (stored.second)
+ {
+  const size_t payload = stored.first->first.state.capacity() * sizeof(int);
+  if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+  {
+   gStackKeyPayloadBytes += payload;
+   gStackDefenderOrder.push_back(&stored.first->first);
+   UpdateStackForecastPeaks();
+  }
+  else
+  {
+   gStackDefenderForecasts.erase(stored.first);
+   ++gStackInsertBypasses;
+  }
+ }
 }
 
 static void AppendStackCandidates(StackForecastKey& key, const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool canonicalOrder = true)
@@ -7536,21 +7644,7 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
  if (gStackForecastsActive)
   ++gStackDangerMisses;
  const int result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
- if (CanStoreStackForecast(key))
- {
-  pair<StackDangerForecasts::iterator, bool> stored = gStackDangerForecasts.insert(make_pair(key, result));
-  if (stored.second)
-  {
-   const size_t payload = stored.first->first.state.capacity() * sizeof(int);
-   if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
-    gStackKeyPayloadBytes += payload;
-   else
-   {
-    gStackDangerForecasts.erase(stored.first);
-    ++gStackInsertBypasses;
-   }
-  }
- }
+ StoreStackDangerForecast(key, result);
  return result;
 }
 
@@ -7576,21 +7670,7 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
  if (gStackForecastsActive)
   ++gStackDefenderMisses;
  const CvUnit* result = CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
- if (CanStoreStackForecast(key))
- {
-  pair<StackDefenderForecasts::iterator, bool> stored = gStackDefenderForecasts.insert(make_pair(key, result));
-  if (stored.second)
-  {
-   const size_t payload = stored.first->first.state.capacity() * sizeof(int);
-   if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
-    gStackKeyPayloadBytes += payload;
-   else
-   {
-    gStackDefenderForecasts.erase(stored.first);
-    ++gStackInsertBypasses;
-   }
-  }
- }
+ StoreStackDefenderForecast(key, result);
  return result;
 }
 
@@ -13098,12 +13178,14 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		}
 
 		if (CvStacking::IsEnabled() && gStackForecastsActive)
-			GET_PLAYER(ePlayer).GetTacticalAI()->LogTacticalMessage(CvString::format("stack forecast cache: danger %lu hit/%lu miss (%u entries), defender %lu hit/%lu miss (%u entries); peak %u/%u entries, key bytes %u/%u, estimated bytes %u, insertion bypasses %lu, nested bypasses %lu",
+			GET_PLAYER(ePlayer).GetTacticalAI()->LogTacticalMessage(CvString::format("stack forecast cache: danger %lu hit/%lu miss (%u entries), defender %lu hit/%lu miss (%u entries); peak %u/%u entries, key bytes %u/%u, estimated bytes %u, insertion bypasses %lu, nested bypasses %lu; retained %u entries/%u key bytes, evictions %lu danger/%lu defender",
 				gStackDangerHits, gStackDangerMisses, (unsigned int)gStackDangerForecasts.size(),
 				gStackDefenderHits, gStackDefenderMisses, (unsigned int)gStackDefenderForecasts.size(),
-				(unsigned int)(gStackDangerForecasts.size() + gStackDefenderForecasts.size()), (unsigned int)gStackEntryLimit,
-				(unsigned int)gStackKeyPayloadBytes, (unsigned int)gStackKeyPayloadLimit, (unsigned int)EstimatedStackForecastBytes(),
-				gStackInsertBypasses, gStackNestedBypasses));
+				(unsigned int)gStackPeakEntries, (unsigned int)gStackEntryLimit,
+				(unsigned int)gStackPeakKeyBytes, (unsigned int)gStackKeyPayloadLimit, (unsigned int)gStackPeakEstimatedBytes,
+				gStackInsertBypasses, gStackNestedBypasses,
+				(unsigned int)(gStackDangerForecasts.size() + gStackDefenderForecasts.size()), (unsigned int)gStackKeyPayloadBytes,
+				gStackDangerEvictions, gStackDefenderEvictions));
 
 		//debug dump
 #if defined(MOD_CORE_DEBUGGING)

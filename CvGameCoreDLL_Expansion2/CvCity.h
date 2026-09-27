@@ -1609,6 +1609,7 @@ public:
 	int getProjectCount(ProjectTypes eProject) const;
 
 	CvPlot* GetPlotForNewUnit(UnitTypes eUnitType, bool bAllowCenterPlot=true) const;
+	static bool IsValidPlotForUnitType(CvPlot* pPlot, PlayerTypes ePlayer, CvUnitEntry* pkUnitInfo);
 	bool CanPlaceUnitHere(UnitTypes eUnitType) const;
 	bool IsCanPurchase(bool bTestPurchaseCost, bool bTestTrainable, UnitTypes eUnitType, BuildingTypes eBuildingType, ProjectTypes eProjectType, YieldTypes ePurchaseYield); //slow version
 	bool IsCanPurchase(const std::vector<int>& vPreExistingBuildings, bool bTestPurchaseCost, bool bTestTrainable, UnitTypes eUnitType, BuildingTypes eBuildingType, ProjectTypes eProjectType, YieldTypes ePurchaseYield); //fast version

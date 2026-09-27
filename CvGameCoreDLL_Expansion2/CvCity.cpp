@@ -30528,7 +30528,7 @@ int CvCity::getProjectCount(ProjectTypes eProject) const
 	return m_aiNumProjects[eProject];
 }
 
-bool IsValidPlotForUnitType(CvPlot* pPlot, PlayerTypes ePlayer, CvUnitEntry* pkUnitInfo)
+bool CvCity::IsValidPlotForUnitType(CvPlot* pPlot, PlayerTypes ePlayer, CvUnitEntry* pkUnitInfo)
 {
 	if (!pPlot->isValidMovePlot(ePlayer))
 		return false;
@@ -30569,10 +30569,19 @@ bool IsValidPlotForUnitType(CvPlot* pPlot, PlayerTypes ePlayer, CvUnitEntry* pkU
 		const CvUnit* pLoopUnit = ::GetPlayerUnit(*pUnitNode);
 		if (pLoopUnit != NULL && !pLoopUnit->isDelayedDeath() && !pLoopUnit->isCargo() && !pLoopUnit->IsStackingUnit())
 		{
-			// New units consume the same per-domain slots as moving units.
-			if (pLoopUnit->IsCombatUnit() && pLoopUnit->getDomainType() == pkUnitInfo->GetDomainType())
-				if (++iCombatOccupants >= iCapacity)
+			if (pLoopUnit->IsCombatUnit())
+			{
+				const bool bSameDomain = pLoopUnit->getDomainType() == pkUnitInfo->GetDomainType();
+				// A free slot never permits creation among foreign combat units of the
+				// same domain, or enemies of any domain (including embarked units).
+				// initUnit/setXY would otherwise displace an enemy without combat.
+				if (CvStacking::IsEnabled() && pLoopUnit->getOwner() != ePlayer &&
+					(bSameDomain || GET_TEAM(GET_PLAYER(ePlayer).getTeam()).isAtWar(pLoopUnit->getTeam())))
 					return false;
+				// New units consume the same per-domain slots as moving units.
+				if (bSameDomain && ++iCombatOccupants >= iCapacity)
+					return false;
+			}
 		}
 
 		pUnitNode = pPlot->nextUnitNode(pUnitNode);

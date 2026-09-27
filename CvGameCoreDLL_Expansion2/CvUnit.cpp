@@ -6132,6 +6132,29 @@ int CvUnit::GetScrapGold() const
 }
 
 //	--------------------------------------------------------------------------------
+// Gifting replaces this unit in place. Test the recipient's final stack before
+// creating anything; moving another donor unit first is preferable to teleporting.
+static bool CanGiftStackInPlace(const CvUnit* pDonor, const CvPlot* pPlot, PlayerTypes eRecipient)
+{
+	if (!CvStacking::IsEnabled() || !pDonor->IsCombatUnit() || pDonor->IsStackingUnit() || pDonor->isCargo() ||
+		(pDonor->getDomainType() != DOMAIN_LAND && pDonor->getDomainType() != DOMAIN_SEA))
+		return true;
+
+	int iRecipientOccupants = 0;
+	for (const IDInfo* pNode = pPlot->headUnitNode(); pNode; pNode = pPlot->nextUnitNode(pNode))
+	{
+		const CvUnit* pOther = ::GetPlayerUnit(*pNode);
+		if (!pOther || pOther == pDonor || pOther->IsDead() || pOther->isDelayedDeath() || pOther->isCargo() ||
+			!pOther->IsCombatUnit() || pOther->IsStackingUnit() || pOther->getDomainType() != pDonor->getDomainType())
+			continue;
+		if (pOther->getOwner() != eRecipient)
+			return false;
+		++iRecipientOccupants;
+	}
+
+	return iRecipientOccupants < CvStacking::GetCapacity(eRecipient, pDonor->getDomainType(), pPlot->isCity());
+}
+
 bool CvUnit::canGift(bool bTestVisible, bool bTestTransport) const
 {
 	VALIDATE_OBJECT();
@@ -6192,6 +6215,9 @@ bool CvUnit::canGift(bool bTestVisible, bool bTestTransport) const
 	if (GetDanger() > 0)
 		return false;
 
+	if (!CanGiftStackInPlace(this, pPlot, ePlotOwner))
+		return false;
+
 	// No for religious units
 	if (getUnitInfo().IsSpreadReligion() || getUnitInfo().IsRemoveHeresy())
 		return false;
@@ -6230,6 +6256,10 @@ void CvUnit::gift(bool bTestTransport)
 		return;
 
 	pPlot = plot();
+	// A gift permission hook may have changed occupancy after canGift checked it.
+	// Recheck before destroying cargo or creating the recipient's replacement.
+	if (!CanGiftStackInPlace(this, pPlot, pPlot->getOwner()))
+		return;
 
 	pUnitNode = pPlot->headUnitNode();
 	while (pUnitNode != NULL)

@@ -15015,7 +15015,12 @@ bool CvPlot::canPlaceCombatUnit(PlayerTypes ePlayer) const
 		if (ePlayer != NO_PLAYER && GET_TEAM(GET_PLAYER(ePlayer).getTeam()).isAtWar(pUnit->getTeam()))
 			return false;
 		if (!CvStacking::IsEnabled() || pUnit->getDomainType() == getDomain())
+		{
+			// A spare slot cannot be used by a different owner's combat unit.
+			if (CvStacking::IsEnabled() && ePlayer != NO_PLAYER && pUnit->getOwner() != ePlayer)
+				return false;
 			++iOccupants;
+		}
 	}
 	const int iCapacity = CvStacking::IsEnabled() && ePlayer != NO_PLAYER ? CvStacking::GetCapacity(ePlayer, getDomain(), isCity()) : getUnitLimit();
 	if (iOccupants >= iCapacity)
