@@ -125,3 +125,9 @@ The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an e
 
 - [ ] London follow-up: share insufficient-assault decisions with city-zone positioning/postures, so forces do not remain exposed in low-value skirmishes while bombardment is erased by healing. Compare safe staging/reinforcement, useful field/garrison damage, blockade and retreat/retarget costs. The turn-163 London simulation retained all 12 supplied units; raising the 13-unit search cap is not supported by that example. Audit the separate hard-coded 13-turn siege-damage horizon and make any new/revised number XML-configurable.
 - [ ] Add stable attacker/defender IDs and owners, plus city-versus-unit attacker kind, to compact combat diagnostics. The London Summary trace explains weak city damage but cannot identify every wounded unit or distinguish city shots from unit shots. Reuse captured combat participants; avoid new map scans or unrestricted Verbose logging.
+
+
+## Optional removal of city bombardment — 2026-09-30
+
+- [ ] Disable the city's own ranged/bombard attack for the stacking rules, with an XML toggle for balance comparisons. Ranged units stationed inside the city continue to provide ranged defense. This is a user-requested balance experiment because stacking can already provide substantial defensive firepower.
+- [ ] Apply the option consistently to human and AI attack eligibility, city bombardment UI, danger forecasts, siege readiness and tactical planning. Test cities with and without ranged defenders, toggle behavior and AI defense/capture decisions; measure attacker losses and city capture rates in comparative autoplays. TODO only; no gameplay changes made for this request.
