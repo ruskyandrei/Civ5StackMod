@@ -122,6 +122,7 @@ void captureTests(){init();CvPlot t(10,5),s(1),adj(2,4);CvCity city(10,&t);city.
  u.pathOK=true;++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"new route resumes siege");
  retaliation=100;for(int n=0;n<9;++n){++GC.game.turn;CvStackingOffensiveAI::ContinueSiege(0,&city);}check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"suicidal capturer not credited");
  CvUnit defender(3);defender.owner=1;put(defender,t);++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"useful collateral fire retained");defender.hp=50;++GC.game.turn;check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"victim floor is not useful collateral");
+ t.visible=false;++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"unseen city health/occupants are not reassessed");t.visible=true;
  city.damage=0;++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"healthy city preparatory fire retained");
  city.damage=290;retaliation=100;options["AICapturePlanPathQueriesPerTurn"]=1;CvUnit v(4);put(v,s);v.end=&adj;++GC.game.turn;
  check(CvStackingOffensiveAI::ContinueSiege(0,&city),"exhausted path budget is unknown, not an impossible capture verdict");

@@ -539,7 +539,7 @@ namespace CvStackingOffensiveAI
     }
     bool ContinueSiege(PlayerTypes owner,CvCity* city)
     {
-        if(!city || !Enabled(owner)) return true;
+        if(!city || !Enabled(owner) || !city->plot()->isVisible(GET_PLAYER(owner).getTeam())) return true;
         ObserveSiege(owner,city);
         std::map<ObjectiveKey,Objective>::iterator i=objectives.find(ObjectiveKey(owner,city->plot()->GetPlotIndex(),DOMAIN_LAND));
         if(i==objectives.end()) return true;
