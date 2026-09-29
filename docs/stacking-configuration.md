@@ -98,7 +98,7 @@ Default collateral limits are Catapult/Trebuchet 2, Cannon/Great Bombard 3, Fiel
 
 Defaults are Walls 10%, Castle 15%, Arsenal 20%, Military Base 25%, and the Bomb Shelter class 30%, subject to the 90% combined cap. These are initial tunable values. A modded bunker can be added by its building or building-class Type; the configuration does not assume a nonexistent `BUILDING_BUNKER` identifier.
 
-Protection applies to new collateral, not ordinary city damage or existing garrison absorption. The secondary HP floor is independent and is applied after ordinary garrison absorption. CollateralPercent=0 disables new secondary damage; a 100% floor leaves no secondary allowance; a 0% floor permits secondary casualties. CityProtectionMaximumPercent=100 permits complete new-collateral immunity even when CollateralMinimumDamage is positive. The damage base is the calculated primary hit after combat modifiers but before overkill clamping. For example, a calculated primary hit of 30 yields base collateral 6. At 75% city protection this becomes 1 after integer rounding; a target with 53/100 HP can lose at most 3 HP, and a target already at 50/100 HP loses none.
+Protection applies to new collateral, not ordinary city damage or existing garrison absorption. The secondary HP floor is independent and is applied after ordinary garrison absorption. CollateralPercent=0 disables new secondary damage; a 100% floor leaves no secondary allowance; a 0% floor permits secondary casualties. CityProtectionMaximumPercent=100 permits complete new-collateral immunity at full city HP even when CollateralMinimumDamage is positive. With CityProtectionScalesWithHP=1, damaged cities receive proportionally less protection. The damage base is the calculated primary hit after combat modifiers but before overkill clamping. For example, a calculated primary hit of 30 yields base collateral 6. At 75% city protection this becomes 1 after integer rounding; a target with 53/100 HP can lose at most 3 HP, and a target already at 50/100 HP loses none.
 
 ## AI tuning
 
@@ -189,7 +189,7 @@ These `Stacking_Settings` values control the optional stack roster and Move Stac
 | UIStackRosterRowHeight | 38 | 1–10000 | Requested minimum row height; initial Lua minimum 32, populated rows at least 40 for a 32px icon plus padding, and taller when measured text needs room. |
 | UIStackRosterMaximumHeight | 430 | 1–10000 | Scroll viewport cap; at least the initial row-height setting, and constrained by remaining screen height. Rows remain scrollable. |
 | UIStackRosterOffsetX | 110 | 0–10000 | Panel horizontal offset in UI coordinates. |
-| UIStackRosterOffsetY | 220 | 0–10000 | Panel vertical offset in UI coordinates; affects remaining viewport height. |
+| UIStackRosterOffsetY | 220 | 0–10000 | Baseline vertical offset in UI coordinates. When combat preview is visible, the roster rises above its measured bounds and the viewport shrinks to fit. |
 | UIStackFlagCollapseThreshold | 3 | 2–10000 | Occupant count before compact flags; Lua also enforces minimum 2. |
 | UIStackResultDelayMilliseconds | 250 | 0–10000 | Delay before reporting group-move results; Lua converts milliseconds to seconds. |
 
@@ -231,3 +231,54 @@ Normal play is unaffected. Native mandatory-choice notifications retain the same
 Summary adds `CITY_DEFENSE`, `OPERATION_BUDGET`, `OPERATION_READINESS`, `OPERATION_ASSEMBLY`, `ASSEMBLY_STALL`, `GARRISON_ASSIGN`, `REINFORCEMENT`, `SIEGE_REINFORCE` and `DECISION_SUMMARY`. The last observes the first completed unit-AI pass, not final end-turn state; its counts overlap. Verbose adds retention/recruitment reasons, stationary-unit history, blocked transfers and periodic `UNIT_DECISION` snapshots. The existing row and file bounds still apply; Summary is recommended for continuous autoplay, Verbose for detailed problem windows.
 
 The offline summarizer's `military.players` output keeps city/operation identities separate per player, shows actual moved/unchanged/absent garrison outcomes, reinforcement moving/arrived/failure counts, unique observed arrival units and assembly ages/recovery actions. An absent unit is not automatically a casualty. Missing/truncated/rotated records are never treated as proof that no action occurred.
+
+
+## Offensive continuity and damaged fortifications (2026-09-29)
+
+All controls remain in `StackingConfig.xml`. The new pass keeps the tactical 13-unit / 6,000-state limits unchanged.
+
+| Setting | Default | Range | Meaning |
+|---|---:|---|---|
+| CityProtectionScalesWithHP | 1 | 0–1 | Scale capped fortification protection by city HP before the hit; 0 restores legacy behavior. |
+| UIStackCombatPreviewGap | 8 | 0–100 | Gap above the measured combat panel, including its outcome banner, in UI coordinates. |
+| AIOffensiveSupportEnabled | 1 | 0–1 | Enable this offensive continuity pass; requires AIEnabled and AIMilitaryAllocationEnabled. |
+| AIWarPreparationEnabled | 1 | 0–1 | Gate voluntary city-attack declarations on readiness and retain the prepared army through declaration. |
+| AIWarOpeningMaximumTurns | 3 | 1–10 | Approximate potential-war route horizon using army path length and unit base movement. |
+| AIWarOpeningMinimumUnits | 4 | 2–20 | Minimum healthy units within opening range. |
+| AIWarOpeningReadyPercent | 75 | 50–100 | Minimum fraction of the army within opening range. |
+| AIWarOpeningMinimumRanged | 1 | 0–10 | Minimum ranged members in the staged core. |
+| AIWarOpeningStrengthPercent | 150 | 100–300 | Staged strength relative to visible target city and nearby defenders. |
+| AIOffensiveSupportMaximumObjectives | 8 | 1–24 | Maximum remembered city/domain objectives per player. |
+| AIOffensiveSupportMemoryTurns | 12 | 2–40 | Expire a handed-off objective after this many turns without a tactical siege observation. |
+| AIOffensiveSupportMinimumUnits | 6 | 2–24 | Baseline desired force, bounded by the maximum. |
+| AIOffensiveSupportMaximumUnits | 18 | 4–40 | Hard cap on assigned, local, travelling and in-training combat-unit credit per objective/domain. |
+| AIOffensiveSupportReserveUnits | 2 | 0–8 | Extra desired reserves above the largest observed core. |
+| AIOffensiveSupportStrengthPercent | 150 | 100–400 | Desired strength relative to visible defenders before the reserve allowance. |
+| AIOffensiveSupportReservePercent | 25 | 0–100 | Base strength reserve allowance. |
+| AIOffensiveSupportTravelReservePercentPerTurn | 2 | 0–10 | Extra reserve percent for each approximate turn from staging to target. |
+| AIOffensiveSupportMaximumReservePercent | 60 | 0–200 | Cap on the base plus travel reserve allowance. |
+| AIOffensiveSupportMinimumCapturers | 2 | 1–6 | Desired melee capture-capable units; actual siege feasibility separately checks paths. |
+| AIOffensiveSupportMinimumRanged | 2 | 0–8 | Desired ranged support units. |
+| AIOffensiveSupportLocalRadius | 4 | 2–6 | Radius for field-force credit and the front_arrival diagnostic; not proof of combat contribution. |
+| AIOffensiveSupportStallTurns | 5 | 2–20 | Expire a unit reservation when it has made no movement/ETA progress beyond this interval. |
+| AIOffensiveSupportRolePriority | 80 | 0–300 | Extra demand priority for a missing capture or ranged role. |
+| AIOffensiveProductionMaximumUnits | 2 | 0–6 | Maximum pending production requests plus units in training for a moving formation; 0 disables new requests. |
+| AIOffensiveProductionMaximumTurns | 12 | 1–30 | Maximum production plus approximate travel lead time for a moving formation request. |
+| AICapturePlanMaximumTurns | 6 | 1–15 | Actual unit-path horizon to a native-domain tile adjacent to a city, with safe embark paths allowed for assessment. |
+| AICapturePlanPathQueriesPerTurn | 32 | 1–128 | Per-player cap on capture path queries; exhausted budget means unknown, not impossible. |
+| AICapturePlanMinimumHPPercent | 60 | 1–100 | Health floor for counting a capture-capable unit. |
+| AISiegeNoCaptureReviewTurns | 8 | 2–30 | Missing-capture grace period before reviewing futile fire. |
+| AISiegeNoCaptureLowHPPercent | 25 | 0–100 | Only suppress city fire below this city-health threshold when no viable capturer or useful collateral exists. |
+| AIOperationRouteRetryTurns | 6 | 0–30 | Target/domain retry cooldown after LostPath or moving-phase timeout; 0 disables it. |
+| AIOperationRouteRepairCandidates | 4 | 0–16 | Maximum distinct actual army-unit origins to try after a centroid route fails. |
+| AIOperationMovingStallTurns | 12 | 4–40 | No-improvement deadline for a march away from its deployment area. |
+| AIOperationContactStallTurns | 20 | 6–60 | Longer no-improvement deadline after an actual opportunity attack. |
+| AIOperationContactHoldPercent | 50 | 0–100 | Hold the core if this fraction remains exposed after opportunity combat; otherwise unused safe members can advance. |
+
+Fortification timing is **before each hit**. Sum building protection, cap it, then multiply by current city HP / maximum HP and round down. Simulated prior city damage is included in offensive and defensive multi-hit forecasts. The primary shot has not yet reduced protection for its own collateral. A 90% cap gives 90/45/0 protection at full/half/zero city HP. The unit HP floor, existing siege penalty, normal garrison absorption and city damage are independent.
+
+Native `WAR_READINESS`, `WAR_DECLARATION`, `OPERATION_ROUTE`, `OPERATION_PROGRESS`, `OPERATION_CONTACT`, `CAPTURE_PLAN`, `CAPTURE_CANDIDATE`, `SIEGE_REASSESS`, `OFFENSIVE_OBJECTIVE` and `OFFENSIVE_SUPPORT` are Summary records. Candidate route rejections and per-candidate `OFFENSIVE_DEMAND` are Verbose. The existing logger limits and player filter apply. `joined_formation` is distinct from a front/staging arrival; neither alone proves useful combat.
+
+Readiness uses intended-enemy army routes (respects third-party borders), not a precise future movement simulation. Capture assessment uses legal unit paths and simulated retaliation against a softened city. Strategic dispatch remains native-domain/no-embark; safe crossings may be recognized without this pass constructing an escorted landing. Existing VP naval/combined invasions and tactical landing code remain responsible for that movement.
+
+Objective, failed-route, progress and free-unit reservation histories are transient and reset on load. Active operations reconstruct objectives; tactical siege observations reconstruct handed-off objectives. A reload can therefore change retry timing or free-reserve choices; no exact replay equivalence is claimed. Existing operation production reservations remain serialized by VP. Completed production uses VP's existing army assignment path. This pass does not create a separate production queue beyond formation slots, a full attrition predictor, or a wounded-unit rotation scheduler.

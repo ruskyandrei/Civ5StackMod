@@ -10,6 +10,7 @@
 #include "CvStackingRules.h"
 #include "CvStackingDiagnostics.h"
 #include "CvStackingAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvGlobals.h"
 #include "CvPlayerAI.h"
 #include "CvTeam.h"
@@ -326,10 +327,39 @@ CvAIOperation* CreateAIOperation(AIOperationTypes eAIOperationType, int iID, Pla
 /// Find out the next item to build for this operation
 OperationSlot CvAIOperation::PeekAtNextUnitToBuild()
 {
+	RefreshReinforcementRequests();
 	if(!m_viListOfUnitsWeStillNeedToBuild.empty())
 		return m_viListOfUnitsWeStillNeedToBuild.front();
 
 	return OperationSlot();
+}
+
+bool CvAIOperation::IsSlotCommitted(size_t slot) const
+{
+    for(size_t i=0;i<m_viListOfUnitsCitiesHaveCommittedToBuild.size();++i)
+        if(m_viListOfUnitsCitiesHaveCommittedToBuild[i].m_iSlotID==(int)slot) return true;
+    return false;
+}
+
+void CvAIOperation::RefreshReinforcementRequests()
+{
+    if(!CvStackingOffensiveAI::Enabled(m_eOwner) || !CvStackingOffensiveAI::IsCityAttack(this) ||
+        m_eCurrentState!=AI_OPERATION_STATE_MOVING_TO_TARGET) return;
+    CvArmyAI* army=GetArmy(0);
+    if(!army) return;
+    m_viListOfUnitsWeStillNeedToBuild.clear();
+    int count=(int)m_viListOfUnitsCitiesHaveCommittedToBuild.size();
+    const int limit=CvStacking::GetInt("AIOffensiveProductionMaximumUnits",2);
+    // Use VP's existing exclusive production reservations and supply/economy checks.
+    // Formation size stays bounded; optional combat slots can be requested before losses.
+    for(size_t i=0;i<army->GetNumFormationEntries() && count<limit;++i)
+    {
+        if(!army->GetSlotStatus(i)->IsFree() || IsSlotCommitted(i)) continue;
+        const UnitAITypes role=army->GetSlotInfo(i).m_primaryUnitType;
+        if(role!=UNITAI_ATTACK && role!=UNITAI_DEFENSE && role!=UNITAI_COUNTER && role!=UNITAI_FAST_ATTACK &&
+            role!=UNITAI_RANGED && role!=UNITAI_CITY_BOMBARD && role!=UNITAI_ATTACK_SEA && role!=UNITAI_RESERVE_SEA && role!=UNITAI_ESCORT_SEA) continue;
+        m_viListOfUnitsWeStillNeedToBuild.push_back(OperationSlot(m_iID,army->GetID(),(int)i)); ++count;
+    }
 }
 
 /// Called by a city when it decides to build a unit
@@ -436,7 +466,8 @@ bool CvAIOperation::RecruitUnit(CvUnit* pUnit)
 	vector<size_t> freeSlots = pThisArmy->GetOpenSlots(false);
 	vector<pair<size_t,CvFormationSlotEntry>> freeSlotInfo;
 	for (size_t i = 0; i < freeSlots.size(); i++)
-		freeSlotInfo.push_back( make_pair(freeSlots[i],pThisArmy->GetSlotInfo(freeSlots[i])) );
+		if (!IsSlotCommitted(freeSlots[i]))
+			freeSlotInfo.push_back( make_pair(freeSlots[i],pThisArmy->GetSlotInfo(freeSlots[i])) );
 
 	int iIndex = OperationalAIHelpers::IsUnitSuitableForRecruitment(pUnit, turnsFromMuster, pTargetPlot, IsNavalOperation(), bOcean, freeSlotInfo);
 	if (iIndex>=0)
@@ -710,6 +741,7 @@ void CvAIOperation::SetToAbort(AIOperationAbortReason eReason)
 {
 	if (m_eCurrentState != AI_OPERATION_STATE_ABORTED)
 	{
+		CvStackingOffensiveAI::OperationAborted(this,eReason);
 		m_eCurrentState = AI_OPERATION_STATE_ABORTED;
 		m_eAbortReason = eReason;
 	}
@@ -748,6 +780,8 @@ bool CvAIOperation::Move()
 		return false;
 	}
 
+	CvStackingOffensiveAI::ObserveOperation(this);
+	RefreshReinforcementRequests();
 	//recruit more units if needed
 	if (pThisArmy->GetArmyAIState() == ARMYAISTATE_WAITING_FOR_UNITS_TO_REINFORCE)
 		GrabUnitsFromTheReserves(GetMusterPlot(), GetTargetPlot(), pThisArmy);
@@ -869,7 +903,7 @@ void CvAIOperation::UnitWasRemoved(int iArmyID, int iSlotID)
 		{
 			// If down below half strength, abort
 			CvArmyAI* pThisArmy = GET_PLAYER(m_eOwner).getArmyAI(iArmyID);
-			CvMultiUnitFormationInfo* pkFormation = pThisArmy->GetFormation();
+			CvMultiUnitFormationInfo* pkFormation = pThisArmy ? pThisArmy->GetFormation() : NULL;
 			if(pkFormation)
 			{
 				//need to look at the original formation ... army slots are set to not required when cleared
@@ -936,6 +970,7 @@ CvPlot* CvAIOperation::ComputeTargetPlotForThisTurn(CvArmyAI* pArmy) const
 
 		//get where we want to be next. always put the carrot a little bit further out
 		pRtnValue = GetPlotXInStepPath(pCurrent, pNextWaypoint, pArmy->GetMovementRate() + 1, true);
+		if (!pRtnValue) pRtnValue=CvStackingOffensiveAI::RepairRoute(this,pArmy,pCurrent,pNextWaypoint);
 		if (!pRtnValue)
 		{
 			// Can't plot a path, probably due to change of control of hexes.  Will probably abort the operation
@@ -1313,8 +1348,15 @@ bool CvAIOperation::SetUpArmy(CvArmyAI* pArmyAI, CvPlot * pMusterPlot, CvPlot * 
 	SetTargetPlot(pTargetPlot);
 	SetMusterPlot(pMusterPlot);
 
-	//this is for the army
-	pArmyAI->SetGoalPlot(pDeployPlot?pDeployPlot:pTargetPlot);
+    if(CvStackingOffensiveAI::Enabled(m_eOwner) && CvStackingOffensiveAI::IsCityAttack(this) &&
+        (CvStackingOffensiveAI::RouteBlocked(m_eOwner,CvStackingOffensiveAI::CityTarget(this),IsNavalOperation()) ||
+         GetStepDistanceBetweenPlots(pMusterPlot,pDeployPlot?pDeployPlot:pTargetPlot)<0))
+    {
+        CvStackingDiagnostics::Record(1,m_eOwner,"OPERATION_ROUTE","operation=%d from=%d waypoint=%d action=reject_before_recruitment",GetID(),pMusterPlot->GetPlotIndex(),(pDeployPlot?pDeployPlot:pTargetPlot)->GetPlotIndex());
+        SetToAbort(AI_ABORT_LOST_PATH); return false;
+    }
+    //this is for the army
+    pArmyAI->SetGoalPlot(pDeployPlot?pDeployPlot:pTargetPlot);
 
 	if (pArmyAI->GetOpenSlots(true).empty())
 	{
@@ -1638,7 +1680,8 @@ bool CvAIOperationMilitary::CheckTransitionToNextStage()
 				bool bInPlace = (plotDistance(*pCenterOfMass, *pTarget) <= GetDeployRange()) && (pThisArmy->GetFurthestUnitDistance(pTarget) < 2*GetDeployRange());
 
 				//check for nearby enemy (for sneak attacks)
-				if (!bInPlace && GET_PLAYER(m_eOwner).IsAtPeaceWith(m_eEnemy))
+				const bool preparedAssault=CvStackingOffensiveAI::Enabled(m_eOwner) && CvStackingOffensiveAI::IsCityAttack(this) && CvStacking::GetInt("AIWarPreparationEnabled",1)!=0;
+				if (!bInPlace && !preparedAssault && GET_PLAYER(m_eOwner).IsAtPeaceWith(m_eEnemy))
 				{
 					int nVisible = 0;
 					for (CvUnit* pUnit = pThisArmy->GetFirstUnit(); pUnit; pUnit = pThisArmy->GetNextUnit(pUnit))
@@ -1655,9 +1698,19 @@ bool CvAIOperationMilitary::CheckTransitionToNextStage()
 					}
 				}
 
-				if(bInPlace)
-				{
-					// Notify Diplo AI we're in place for attack
+                if(preparedAssault && GET_PLAYER(m_eOwner).IsAtPeaceWith(m_eEnemy))
+                {
+                    const bool ready=CvStackingOffensiveAI::OpeningReady(this,pThisArmy);
+                    if(ready) GET_PLAYER(m_eOwner).GetDiplomacyAI()->SetArmyInPlaceForAttack(m_eEnemy,true);
+                    CvStackingOffensiveAI::ObserveOperation(this);
+                    // Keep every member assigned while diplomacy handles voluntary/cooperative declarations.
+                    // Bribes, defensive pacts and scripted wars still use their existing immediate paths.
+                    return false;
+                }
+                if(bInPlace)
+                {
+                    CvStackingOffensiveAI::Handoff(this);
+                    // Notify Diplo AI we're in place for attack
 					if(GET_PLAYER(m_eOwner).IsAtPeaceWith(m_eEnemy))
 						GET_PLAYER(m_eOwner).GetDiplomacyAI()->SetArmyInPlaceForAttack(m_eEnemy, true);
 
@@ -3231,8 +3284,10 @@ int OperationalAIHelpers::IsUnitSuitableForRecruitment(CvUnit* pLoopUnit, const 
 		CvStackingDiagnostics::Record(2,pLoopUnit->getOwner(),"OP_RECRUIT_FILTER","unit=%d reason=failed_assignment_cooldown",pLoopUnit->GetID());
 		return -1;
 	}
-	//otherwise engaged?
-	if (!pLoopUnit->canUseForAIOperation())
+    if(CvStackingOffensiveAI::HasCommitment(pLoopUnit) && !CvStackingOffensiveAI::HasCommitment(pLoopUnit,pTarget))
+        return -1;
+    //otherwise engaged?
+    if (!pLoopUnit->canUseForAIOperation())
 	{
 		CvStackingDiagnostics::Record(2,pLoopUnit->getOwner(),"OP_RECRUIT_FILTER","unit=%d army=%d reason=committed_or_local_defense",pLoopUnit->GetID(),pLoopUnit->getArmyID());
 		return -1;
@@ -3251,7 +3306,7 @@ int OperationalAIHelpers::IsUnitSuitableForRecruitment(CvUnit* pLoopUnit, const 
 		*/
 		return -1;
 	}
-	if (pTarget && plotDistance(*pLoopUnit->plot(),*pTarget)<TACTICAL_COMBAT_MAX_TARGET_DISTANCE)
+	if (pTarget && !CvStackingOffensiveAI::HasCommitment(pLoopUnit,pTarget) && plotDistance(*pLoopUnit->plot(),*pTarget)<TACTICAL_COMBAT_MAX_TARGET_DISTANCE)
 	{
 		/*
 		if (GC.getLogging() && GC.getAILogging())

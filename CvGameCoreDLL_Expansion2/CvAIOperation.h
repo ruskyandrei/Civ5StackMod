@@ -197,6 +197,8 @@ public:
 	virtual int  PercentFromMusterPointToTarget() const;
 
 	virtual OperationSlot PeekAtNextUnitToBuild();
+	void RefreshReinforcementRequests();
+	bool IsSlotCommitted(size_t slot) const;
 	virtual bool CommitToBuildNextUnit(OperationSlot thisOperationSlot);
 	virtual bool UncommitToBuildUnit(OperationSlot thisOperationSlot);
 	virtual bool FinishedBuildingUnit(OperationSlot thisOperationSlot);
@@ -220,12 +222,12 @@ public:
 
 	virtual const char* GetInfoString();
 
-protected:
-	static CvString GetLogFileName(CvString& playerName);
-
+// Read-only army route queries shared by readiness, recovery and production planning.
 	CvPlot* GetPlotXInStepPath(CvPlot* pCurrentPosition, CvPlot* pTarget, int iStep, bool bForward) const;
 	int GetStepDistanceBetweenPlots(CvPlot* pCurrentPosition, CvPlot* pTarget) const;
 
+protected:
+	static CvString GetLogFileName(CvString& playerName);
 	virtual CvArmyAI* AddArmy(MultiunitFormationTypes eFormation);
 	virtual bool SetUpArmy(CvArmyAI* pArmyAI, CvPlot* pMusterPlot, CvPlot* pTargetPlot, CvPlot* pDeployPlot = NULL);
 	virtual bool FindBestFitReserveUnit(OperationSlot thisOperationSlot, vector<OptionWithScore<int>>& choices);

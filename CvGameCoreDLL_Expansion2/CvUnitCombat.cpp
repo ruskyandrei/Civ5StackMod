@@ -252,7 +252,7 @@ struct StackCollateralOrder
 std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDamage(
 	const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
 	int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
-	const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison, int iGarrisonDamage)
+	const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison, int iGarrisonDamage, int iExtraCityDamage)
 {
 	std::vector<std::pair<const CvUnit*, int> > result;
 	if (!CvStacking::IsEnabled() || !pAttacker || !pTargetPlot || iPrimaryHitDamage <= 0)
@@ -264,7 +264,7 @@ std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDama
 	int iBaseDamage = static_cast<int>((static_cast<int64>(iPrimaryHitDamage) * iPercent) / 100);
 	if (iBaseDamage <= 0)
 		return result;
-	int iProtection = pTargetPlot->isCity() ? CvStacking::GetCityProtection(pTargetPlot->getPlotCity()) : 0;
+	int iProtection = pTargetPlot->isCity() ? CvStacking::GetCityProtection(pTargetPlot->getPlotCity(),iExtraCityDamage) : 0;
 	int iMitigated = static_cast<int>((static_cast<int64>(iBaseDamage) * max(0, 100 - iProtection)) / 100);
 	if (iProtection < 100)
 		iMitigated = max(iMitigated, max(0, CvStacking::GetInt("CollateralMinimumDamage", 1)));

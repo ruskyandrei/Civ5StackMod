@@ -23,7 +23,7 @@ namespace CvStacking
 	bool IsFlankTarget(const CvUnit* pUnit);
 	int GetCollateralTargetLimit(const CvUnit* pUnit);
 	bool IsCollateralTargetDomain(DomainTypes eDomain);
-	int GetCityProtection(const CvCity* pCity);
+	int GetCityProtection(const CvCity* pCity, int iExtraCityDamage = 0);
 }
 
 #endif

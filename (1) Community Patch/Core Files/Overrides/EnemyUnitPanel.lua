@@ -1418,6 +1418,12 @@ end
 --------------------------------------------------------------------------------
 -- Set size
 --------------------------------------------------------------------------------
+local function PublishStackPreviewBounds(hidden)
+    local x, y = Controls.DetailsGrid:GetOffsetVal()
+    local bannerOverhang = math.max(0, -Controls.RangedAttackIndicator:GetOffsetY())
+    LuaEvents.StackCombatPreviewBounds(hidden, x, y + Controls.DetailsGrid:GetSizeY() + bannerOverhang)
+end
+
 function RecalculateSize()
 	Controls.MyCombatResultsStack:CalculateSize();
 	Controls.TheirCombatResultsStack:CalculateSize();
@@ -1427,6 +1433,7 @@ function RecalculateSize()
 	Controls.DetailsGrid:SetSizeX(sizeX);
 	Controls.DetailsSeperator:SetSizeY(Controls.DetailsGrid:GetSizeY());
 	Controls.DetailsGrid:ReprocessAnchoring();
+	PublishStackPreviewBounds(ContextPtr:IsHidden());
 end
 
 --------------------------------------------------------------------------------
@@ -1697,6 +1704,7 @@ Events.SerialEventMouseOverHex.Add(OnMouseOverHex);
 
 --------------------------------------------------------------------------------
 function ShowHideHandler(bIsHide, bIsInit)
+	PublishStackPreviewBounds(bIsHide);
 	if not bIsInit then
 		LuaEvents.EnemyPanelHide(bIsHide);
 	end

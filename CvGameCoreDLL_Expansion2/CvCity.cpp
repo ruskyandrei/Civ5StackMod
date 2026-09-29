@@ -10,6 +10,7 @@
 #include "CvStackingRules.h"
 #include "CvGlobals.h"
 #include "CvCity.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvArea.h"
 #include "CvMap.h"
 #include "CvPlot.h"
@@ -34279,10 +34280,19 @@ UnitTypes CvCity::GetUnitForOperation()
 				eBestUnit = m_pCityStrategyAI->GetUnitProductionAI()->RecommendUnit(eUnitAI, true);
 			}
 
-			if (eBestUnit != NO_UNIT)
-			{
-				return eBestUnit;
-			}
+            if (eBestUnit != NO_UNIT)
+            {
+                if(CvStackingOffensiveAI::Enabled(getOwner()) && CvStackingOffensiveAI::IsCityAttack(pThisOperation) &&
+                    pThisOperation->GetOperationState()==AI_OPERATION_STATE_MOVING_TO_TARGET)
+                {
+                    const int distance=pThisOperation->GetStepDistanceBetweenPlots(plot(),pThisOperation->GetTargetPlot());
+                    CvUnitEntry* info=GC.getUnitInfo(eBestUnit);
+                    const int travel=distance<0?INT_MAX:(distance+max(1,info->GetMoves())-1)/max(1,info->GetMoves());
+                    const int build=getProductionTurnsLeft(eBestUnit,0);
+                    if(distance<0 || build>CvStacking::GetInt("AIOffensiveProductionMaximumTurns",12)-travel) return NO_UNIT;
+                }
+                return eBestUnit;
+            }
 		}
 	}
 	return NO_UNIT;

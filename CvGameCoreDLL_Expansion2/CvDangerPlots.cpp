@@ -1078,7 +1078,7 @@ static int SimulateStackCityThreats(const CvDangerPlotContents& contents, const 
   const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city, attacker, from, retaliation, garrisonHit,
    false, attackerDamage, extraCityDamage + result, garrison ? damage.GetValue(garrison->GetID()) : 0, true, true, garrison);
   const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, city->plot(), NULL,
-   hit, candidates, damage, garrison, garrisonHit);
+   hit, candidates, damage, garrison, garrisonHit, extraCityDamage + result);
   result += StackExpectedStrikeDamage(hit, strikeChance);
   if (garrison)
    damage.ChangeValue(garrison->GetID(), StackExpectedStrikeDamage(garrisonHit, strikeChance));

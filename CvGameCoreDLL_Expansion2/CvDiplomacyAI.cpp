@@ -11,6 +11,7 @@
 #include "CvGameCoreUtils.h"
 #include "CvDiplomacyAIEnums.h"
 #include "CvDiplomacyAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvDiplomacyRequests.h"
 #include "CvCitySpecializationAI.h"
 #include "CvDealAI.h"
@@ -27647,7 +27648,8 @@ void CvDiplomacyAI::DoMakeWarOnPlayer(PlayerTypes eTargetPlayer)
 			// The IsArmyInPlaceForAttack/SetArmyInPlaceForAttack loop is ugly and should probably be done better.
 			if (GET_PLAYER(eTargetPlayer).isMinorCiv() || GetGlobalCoopWarAgainstState(eTargetPlayer) != COOP_WAR_STATE_PREPARING)
 			{
-				// FIXME: Okay, so we're ready to declare war...but, can we exploit Defensive Pacts to do so with fewer diplomatic penalties?
+                if(!CvStackingOffensiveAI::ReadyToDeclare(GetPlayer()->GetID(),eTargetPlayer)) return;
+                // FIXME: Okay, so we're ready to declare war...but, can we exploit Defensive Pacts to do so with fewer diplomatic penalties?
 				DeclareWar(eTargetPlayer);
 			}
 		}

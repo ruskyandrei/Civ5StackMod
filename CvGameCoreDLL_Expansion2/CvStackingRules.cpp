@@ -2,6 +2,7 @@
 #include "CvStackingRules.h"
 #include "CvStackingDiagnostics.h"
 #include "CvStackingAI.h"
+#include "CvStackingAIPolicy.h"
 #include "CvUnit.h"
 #include "CvPlot.h"
 #include "CvCity.h"
@@ -34,6 +35,41 @@ namespace
 		{"CollateralEnabled", 1, 0, 1},
 		{"AIEnabled", 1, 0, 1},
 		{"AIMilitaryAllocationEnabled", 1, 0, 1},
+		{"CityProtectionScalesWithHP", 1, 0, 1},
+		{"UIStackCombatPreviewGap", 8, 0, 100},
+		{"AIOffensiveSupportEnabled", 1, 0, 1},
+		{"AIWarPreparationEnabled", 1, 0, 1},
+		{"AIWarOpeningMaximumTurns", 3, 1, 10},
+		{"AIWarOpeningMinimumUnits", 4, 2, 20},
+		{"AIWarOpeningReadyPercent", 75, 50, 100},
+		{"AIWarOpeningMinimumRanged", 1, 0, 10},
+		{"AIWarOpeningStrengthPercent", 150, 100, 300},
+		{"AIOffensiveSupportMaximumObjectives", 8, 1, 24},
+		{"AIOffensiveSupportMemoryTurns", 12, 2, 40},
+		{"AIOffensiveSupportMinimumUnits", 6, 2, 24},
+		{"AIOffensiveSupportMaximumUnits", 18, 4, 40},
+		{"AIOffensiveSupportReserveUnits", 2, 0, 8},
+		{"AIOffensiveSupportStrengthPercent", 150, 100, 400},
+		{"AIOffensiveSupportReservePercent", 25, 0, 100},
+		{"AIOffensiveSupportTravelReservePercentPerTurn", 2, 0, 10},
+		{"AIOffensiveSupportMaximumReservePercent", 60, 0, 200},
+		{"AIOffensiveSupportMinimumCapturers", 2, 1, 6},
+		{"AIOffensiveSupportMinimumRanged", 2, 0, 8},
+		{"AIOffensiveSupportLocalRadius", 4, 2, 6},
+		{"AIOffensiveSupportStallTurns", 5, 2, 20},
+		{"AIOffensiveSupportRolePriority", 80, 0, 300},
+		{"AIOffensiveProductionMaximumUnits", 2, 0, 6},
+		{"AIOffensiveProductionMaximumTurns", 12, 1, 30},
+		{"AICapturePlanMaximumTurns", 6, 1, 15},
+		{"AICapturePlanPathQueriesPerTurn", 32, 1, 128},
+		{"AICapturePlanMinimumHPPercent", 60, 1, 100},
+		{"AISiegeNoCaptureReviewTurns", 8, 2, 30},
+		{"AISiegeNoCaptureLowHPPercent", 25, 0, 100},
+		{"AIOperationRouteRetryTurns", 6, 0, 30},
+		{"AIOperationRouteRepairCandidates", 4, 0, 16},
+		{"AIOperationMovingStallTurns", 12, 4, 40},
+		{"AIOperationContactStallTurns", 20, 6, 60},
+		{"AIOperationContactHoldPercent", 50, 0, 100},
 		{"AICityApproachRadius", 6, 1, 8},
 		{"AICityApproachWeight", 35, 0, 100},
 		{"AICitySafeDefenders", 1, 0, 10},
@@ -362,7 +398,7 @@ namespace CvStacking
 		std::map<int, int>::const_iterator it = Cache().targetDomains.find(domain);
 		return it != Cache().targetDomains.end() && it->second != 0;
 	}
-	int GetCityProtection(const CvCity* city)
+	int GetCityProtection(const CvCity* city, int extraCityDamage)
 	{
 		if (!IsEnabled() || !city)
 			return 0;
@@ -378,8 +414,9 @@ namespace CvStacking
 				continue;
 			protection += it->second * std::min(count, maximum);
 			if (protection >= maximum)
-				return maximum;
+				break;
 		}
-		return protection;
+		return CvStackingAIPolicy::CityProtection(protection, maximum, city->GetMaxHitPoints() - city->getDamage() - max(0,extraCityDamage),
+			city->GetMaxHitPoints(), GetInt("CityProtectionScalesWithHP", 1) != 0);
 	}
 }

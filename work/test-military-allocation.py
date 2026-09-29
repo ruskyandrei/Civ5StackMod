@@ -254,7 +254,14 @@ void loggingAndResetTests(){int logged=diagnosticScenario(true),quiet=diagnostic
 }
 int main(){policyTests();cityTests();progressTests();readinessTests();transferTests();integrationTests();budgetTests();loggingAndResetTests();printf("military allocation: %d checks, %d failures\n",checks,failures);return failures?1:0;}
 '''.replace('DEFAULTS',default_settings)
-cpp=out/'allocation-source-test.cpp';cpp.write_text(stubs+header+policy+actual+placement+muster+gather+tests,encoding='utf-8')
+offense_stub=r'''
+namespace CvStackingOffensiveAI {
+ struct Demand{int staging,target,operation,strength,priority;};
+ void Reset(){} bool Enabled(int){return false;}bool JoinArrived(CvUnit*){return false;}bool HoldReserve(CvUnit*){return false;}void CancelCommitment(const CvUnit*){}bool IsCityAttack(const CvAIOperation*){return false;}
+ void AddDemands(CvUnit*,vector<Demand>&){}void RecordTransfer(CvUnit*,int,int,int){}
+}
+'''
+cpp=out/'allocation-source-test.cpp';cpp.write_text(stubs+offense_stub+header+policy+actual+placement+muster+gather+tests,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows';env=os.environ.copy()
 env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','')
 env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')

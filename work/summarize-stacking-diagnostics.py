@@ -43,7 +43,9 @@ def load_segment(path):
 
 MILITARY_CATEGORIES = frozenset(('CITY_DEFENSE', 'CITY_RETAIN', 'GARRISON_ASSIGN', 'ASSEMBLY_STALL',
     'ASSEMBLY_PROGRESS', 'OPERATION_READINESS', 'OPERATION_ASSEMBLY', 'OPERATION_GATE', 'OPERATION_BUDGET',
-    'OP_RECRUIT_FILTER', 'REINFORCEMENT', 'SIEGE_REINFORCE', 'DECISION_SUMMARY', 'UNIT_DECISION'))
+    'OP_RECRUIT_FILTER', 'REINFORCEMENT', 'SIEGE_REINFORCE', 'DECISION_SUMMARY', 'UNIT_DECISION',
+    'OFFENSIVE_OBJECTIVE', 'OFFENSIVE_DEMAND', 'OFFENSIVE_SUPPORT', 'OPERATION_ROUTE', 'OPERATION_PROGRESS',
+    'OPERATION_CONTACT', 'WAR_READINESS', 'WAR_DECLARATION', 'CAPTURE_CANDIDATE', 'CAPTURE_PLAN', 'SIEGE_REASSESS'))
 
 class MilitarySummary:
     def __init__(self):
@@ -55,7 +57,10 @@ class MilitarySummary:
             'latest_operations': {}, 'recruitment_reasons': Counter(), 'operation_gate_reasons': Counter(),
             'reinforcement_outcomes': Counter(), 'reinforcement_units': set(), 'arriving_units': set(),
             'garrison_outcomes': Counter(), 'assembly_actions': Counter(), 'maximum_assembly_idle': 0,
-            'maximum_assembly_age': 0, 'readiness_outcomes': Counter(), 'unit_decision_samples': 0})
+            'maximum_assembly_age': 0, 'readiness_outcomes': Counter(), 'unit_decision_samples': 0,
+            'offensive_support_actions': Counter(), 'offensive_support_units': set(), 'formation_join_units': set(),
+            'route_actions': Counter(), 'capture_plan_outcomes': Counter(), 'siege_reassess_actions': Counter(),
+            'war_readiness_outcomes': Counter(), 'maximum_march_idle': 0})
         p['counts'][category] += 1
         if category == 'DECISION_SUMMARY': p['decision_samples'].append(detail)
         elif category == 'CITY_DEFENSE' and isinstance(v.get('city'), int):
@@ -83,11 +88,23 @@ class MilitarySummary:
             else: outcome = 'unspecified'
             p['garrison_outcomes'][outcome] += 1
         elif category == 'UNIT_DECISION': p['unit_decision_samples'] += 1
+        elif category == 'OFFENSIVE_SUPPORT':
+            action = str(v.get('action', 'unspecified'))
+            p['offensive_support_actions'][action] += 1
+            if isinstance(v.get('unit'), int):
+                p['offensive_support_units'].add(v['unit'])
+                if action == 'joined_formation': p['formation_join_units'].add(v['unit'])
+        elif category == 'OPERATION_ROUTE': p['route_actions'][str(v.get('action', 'repaired' if v.get('repaired') == 1 else 'candidate_failed'))] += 1
+        elif category == 'CAPTURE_PLAN':
+            p['capture_plan_outcomes']['unknown_budget' if v.get('known') == 0 else 'viable' if v.get('unit', -1) >= 0 else 'missing'] += 1
+        elif category == 'SIEGE_REASSESS': p['siege_reassess_actions'][str(v.get('action', 'unspecified'))] += 1
+        elif category == 'WAR_READINESS': p['war_readiness_outcomes']['ready' if v.get('ready') == 1 else 'not_ready'] += 1
+        elif category == 'OPERATION_PROGRESS' and isinstance(v.get('idle'), int): p['maximum_march_idle'] = max(p['maximum_march_idle'], v['idle'])
     def result(self):
         players = {}
         for player, p in sorted(self.players.items()):
             players[player] = {key: sorted_counts(value) if isinstance(value, Counter) else sorted(value) if isinstance(value, set) else value for key, value in p.items()}
-        return {'players': players, 'interpretation': 'Retained records only; counters are observations, not unique orders or unit-turns. Arrived means within two hexes of the staging goal, not combat contribution. Decision samples follow the first unit-AI pass and are not final end-turn state. City proximity is visibility-limited, not a multi-turn path forecast. Missing records and truncated/rotated segments cannot establish absence of an action.'}
+        return {'players': players, 'interpretation': 'Retained records only; counters are observations, not unique orders or unit-turns. REINFORCEMENT arrived means within two hexes of staging. OFFENSIVE_SUPPORT front_arrival is proximity to the city; joined_formation confirms army membership. Neither proves combat contribution. Decision samples follow the first unit-AI pass and are not final end-turn state. City proximity is visibility-limited, not a multi-turn path forecast. Missing records and truncated/rotated segments cannot establish absence of an action.'}
 
 def summarize(paths):
     grouped = defaultdict(list)

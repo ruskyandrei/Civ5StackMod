@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvStackingRules.h"
 #include "CvDangerPlots.h"
 #include "CvUnitCombat.h"
@@ -892,6 +893,8 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 			m_CurrentMoveCities.clear();
 			CvCity* pCity = pPlot->getPlotCity();
 
+			if(!CvStackingOffensiveAI::ContinueSiege(m_pPlayer->GetID(),pCity)) continue;
+
 			//first try the land zone
 			CvTacticalDominanceZone* pZone = GetTacticalAnalysisMap()->GetZoneByCity(pCity, false);
 
@@ -958,7 +961,7 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 						continue;
 
 					// Are we a melee unit
-					if (!pUnit->IsCanAttackRanged())
+					if (CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()) ? (CvStackingOffensiveAI::CanCapture(pUnit,pPlot) && pUnit->canMoveInto(*pPlot,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)) : !pUnit->IsCanAttackRanged())
 						iMeleeCount++;
 				}
 
@@ -2594,8 +2597,11 @@ void CvTacticalAI::PlotArmyMovesCombat(CvArmyAI* pThisArmy)
 		return;
 	}
 
-	//this may force detours, but whatever
-	if (CheckForEnemiesNearArmy(pThisArmy))
+    const bool contact=CheckForEnemiesNearArmy(pThisArmy);
+    if(CvStackingOffensiveAI::MovingStalled(pOperation,pThisArmy,contact))
+    { pOperation->SetToAbort(AI_ABORT_TIMED_OUT); return; }
+    // Engaged units have already received tactical orders. Let an unexposed core keep advancing.
+    if (contact && CvStackingOffensiveAI::HoldForContact(pOperation,pThisArmy,pThisTurnTarget))
 	{
 		//try to keep our units together, do not move on while there are enemies around, it's too dangerous
 		pThisTurnTarget = pThisArmy->GetCenterOfMass(true);
@@ -5140,7 +5146,7 @@ int CvTacticalAI::ComputeTotalExpectedDamage(const CvTacticalTarget& kTarget)
      const int cityDamage = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(pCity, pAttacker, pAttacker->plot(),
       selfDamage, garrisonDamage, true, 0, rtnValue, previous, false, true, garrison);
      const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(pAttacker, pTargetPlot, NULL,
-      cityDamage, projectedCityOccupants, projectedGarrisonDamage, garrison, garrisonDamage);
+      cityDamage, projectedCityOccupants, projectedGarrisonDamage, garrison, garrisonDamage, rtnValue);
      const int actualGarrisonDamage = garrison ? min(garrisonDamage, max(0, garrison->GetCurrHitPoints() - previous)) : 0;
      int collateralDamage = 0;
      for (size_t j = 0; j < collateral.size(); ++j)
@@ -8260,7 +8266,7 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
   const int primaryDamage = pEnemyCity ? iCityDamageDealt : (pEnemyUnit ? unitDamageDealt.GetValue(pEnemyUnit->GetID()) : 0);
   const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(pUnit, pTestPlot,
    pEnemyCity ? NULL : pEnemyUnit, primaryDamage, tactPlot->getEnemyUnits(), assumedPosition.GetUnitDamageDealt(),
-   pEnemyCity ? pEnemyUnit : NULL, pEnemyCity && pEnemyUnit ? unitDamageDealt.GetValue(pEnemyUnit->GetID()) : 0);
+   pEnemyCity ? pEnemyUnit : NULL, pEnemyCity && pEnemyUnit ? unitDamageDealt.GetValue(pEnemyUnit->GetID()) : 0, iPrevCityDamage);
   for (size_t i = 0; i < collateral.size(); ++i)
   {
    const CvUnit* victim = collateral[i].first;

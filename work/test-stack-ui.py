@@ -316,3 +316,40 @@ ContextPtr.update(0.3);ContextPtr.update(0.1)
 sourcePlot.units[3].DoStackMove=nativeMove
 """)
     print("PASS: real input bridge empty/fog/invisible/nonempty/other-mode dismissal, dirty persistence, reopen, row selection and stack cancel/execute:",relative)
+
+# Exercise the actual bound-publishing function and full panel layout against scaled screen sizes.
+start=panel_lua.index("local function layoutPanel")
+end=panel_lua.index("-- Cargo follows",start)
+lua.execute(r"""
+layoutChecks=0
+function verify(ok,why) layoutChecks=layoutChecks+1;assert(ok,why) end
+function setting(name,default)return default end
+width=360;rowHeight=40;maxHeight=430;displayedRowCount=10;collapsed=false;status=""
+combatPreviewVisible=true;combatPreviewTop=420
+UIManager.GetScreenSizeVal=function()return 1280,720 end
+""")
+lua.execute(panel_lua[start:end]+";TestLayout=layoutPanel")
+lua.execute(r"""
+TestLayout()
+verify(Controls.StackPanel.values.SetOffsetVal[2]==428,"roster above measured preview with gap")
+local h=Controls.StackPanel.values.SetSizeVal[2]
+verify(h+428<=660,"roster height constrained to screen")
+verify(Controls.StackScroll.values.SetSizeVal[2]<430,"long roster scrolls in remaining space")
+collapsed=true;TestLayout();verify(Controls.StackScroll.values.SetHide[1],"collapsed rows hidden")
+combatPreviewVisible=false;TestLayout();verify(Controls.StackPanel.values.SetOffsetVal[2]==220,"normal offset restored")
+combatPreviewVisible=true;combatPreviewTop=690;TestLayout();verify(Controls.StackPanel.values.SetHide[1],"no room hides instead of overlapping")
+combatPreviewTop=320;UIManager.GetScreenSizeVal=function()return 1920,1080 end;collapsed=false;TestLayout()
+verify(Controls.StackPanel.values.SetOffsetVal[2]==328,"resized/scaled preview recalculates anchor")
+Controls.DetailsGrid.GetOffsetVal=function()return 109,160 end
+Controls.DetailsGrid.GetSizeY=function()return 240 end
+Controls.RangedAttackIndicator.GetOffsetY=function()return -18 end
+LuaEvents.StackCombatPreviewBounds.Add(function(hidden,x,top) published={hidden,x,top} end)
+""")
+start=combat_lua.index("local function PublishStackPreviewBounds")
+end=combat_lua.index("function RecalculateSize",start)
+lua.execute(combat_lua[start:end]+";TestPublish=PublishStackPreviewBounds")
+lua.execute(r"""
+TestPublish(false);verify(published[1]==false and published[2]==109 and published[3]==418,"measured bounds include combat banner overhang")
+TestPublish(true);verify(published[1],"hidden preview releases reserved space")
+print("PASS: preview measured bounds/layout: "..layoutChecks.." checks")
+""")

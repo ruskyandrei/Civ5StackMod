@@ -1,5 +1,6 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvStackingAIPolicy.h"
 #include "CvStackingRules.h"
 #include "CvStackingDiagnostics.h"
@@ -103,8 +104,8 @@ namespace
     };
     struct Demand
     {
-        int plot, priority, strength, operation; DomainTypes domain;
-        Demand(int p,int pr,int s,int o,DomainTypes d):plot(p),priority(pr),strength(s),operation(o),domain(d){}
+        int plot, priority, strength, operation, objective; DomainTypes domain;
+        Demand(int p,int pr,int s,int o,DomainTypes d,int target=-1):plot(p),priority(pr),strength(s),operation(o),objective(target),domain(d){}
         bool operator<(const Demand& other) const
         { return priority!=other.priority?priority>other.priority:plot!=other.plot?plot<other.plot:operation<other.operation; }
     };
@@ -121,6 +122,7 @@ namespace CvStackingAI
     void Reset()
     {
         cities.clear(); progress.clear(); cooldowns.clear(); transfers.clear(); assemblies.clear(); cacheTurn=-1;
+        CvStackingOffensiveAI::Reset();
     }
     int UnitStrength(const CvUnit* unit)
     {
@@ -344,10 +346,12 @@ namespace CvStackingAI
             unit->getDomainType()==DOMAIN_AIR || !unit->IsCombatUnit() || unit->isCargo() || unit->isEmbarked() ||
             unit->shouldHeal(false) || unit->IsCoveringFriendlyCivilian() || RetainCityUnit(unit)) return false;
         CvPlayer& player=GET_PLAYER(unit->getOwner());
-        if(!player.IsAtWarAnyMajor() && !player.IsAtWarAnyMinor()) return false;
+        if(!CvStackingOffensiveAI::Enabled(player.GetID()) && !player.IsAtWarAnyMajor() && !player.IsAtWarAnyMinor()) return false;
         if(!unit->canUseForAIOperation()) return false; // includes contested citadels and nearby enemy contact
+        if(CvStackingOffensiveAI::JoinArrived(unit)) return true;
         Refresh();
         if(transfersThisTurn[player.GetID()]>=Setting("AIReinforcementUnitsPerTurn",8) || unit->GetDanger()>0) return false;
+        if(pathQueries[player.GetID()]>=Setting("AIReinforcementPathQueriesPerTurn",32)) return CvStackingOffensiveAI::HoldReserve(unit);
         std::vector<Demand> demands;
         int loop=0;
         for(CvCity* city=player.firstCity(&loop);city;city=player.nextCity(&loop))
@@ -366,9 +370,16 @@ namespace CvStackingAI
             if(plotDistance(*unit->plot(),*city->plot())<=2 && threat>localStrength-UnitStrength(unit)) return false;
             if(threat>localStrength) demands.push_back(Demand(city->plot()->GetPlotIndex(),Setting("AIReinforcementDefensePriority",300),threat-localStrength,-1,unit->getDomainType()));
         }
+        if(demands.empty() && CvStackingOffensiveAI::JoinArrived(unit)) return true;
+        std::vector<CvStackingOffensiveAI::Demand> offensive;
+        CvStackingOffensiveAI::AddDemands(unit,offensive);
+        for(size_t i=0;i<offensive.size();++i)
+            demands.push_back(Demand(offensive[i].staging,offensive[i].priority,offensive[i].strength,offensive[i].operation,unit->getDomainType(),offensive[i].target));
+        // Non-city offensives retain their original allocation path.
         for(CvArmyAI* army=player.firstArmyAI(&loop);army;army=player.nextArmyAI(&loop))
         {
             CvAIOperation* op=player.getAIOperation(army->GetOperationID());
+            if(CvStackingOffensiveAI::Enabled(player.GetID()) && CvStackingOffensiveAI::IsCityAttack(op)) continue;
             if(!op || !op->IsOffensive() || op->GetEnemy()==NO_PLAYER || !player.IsAtWarWith(op->GetEnemy()) ||
                 op->GetOperationState()==AI_OPERATION_STATE_ABORTED || op->GetOperationState()==AI_OPERATION_STATE_SUCCESSFUL_FINISH ||
                 army->GetDomainType()!=unit->getDomainType()) continue;
@@ -377,7 +388,7 @@ namespace CvStackingAI
                 max(1,(int)army->GetNumFormationEntries()-(int)army->GetNumSlotsFilled())*UnitStrength(unit),op->GetID(),unit->getDomainType()));
         }
         std::stable_sort(demands.begin(),demands.end());
-        int bestScore=INT_MIN; CvPlot* best=NULL; int bestOperation=-1,bestETA=INT_MAX;
+        int bestScore=INT_MIN; CvPlot* best=NULL; int bestOperation=-1,bestETA=INT_MAX,bestObjective=-1;
         const Key key(player.GetID(),unit->GetID());
         const std::map<Key,Transfer>::const_iterator commitment=transfers.find(key);
         const int horizon=Setting("AIReinforcementMaximumTurns",12);
@@ -398,12 +409,13 @@ namespace CvStackingAI
             for(std::map<Key,Transfer>::const_iterator t=transfers.begin();t!=transfers.end();++t)
                 if(t->first.first==player.GetID() && t->first!=key && t->second.target==d.plot)
                 { const CvUnit* other=player.getUnit(t->first.second); if(other && !other->isDelayedDeath() && other->getArmyID()==-1 && other->getDomainType()==d.domain && plotDistance(*other->plot(),*target)>2) inbound+=UnitStrength(other); }
+            if(d.objective>=0) inbound=0; // objective demand already credits assigned/training/inbound units once
             if(inbound>=d.strength) continue;
             const int score=CvStackingAIPolicy::ScoreDemand(d.priority,max(0,d.strength-inbound),eta,Setting("AIReinforcementTravelWeight",15),
                 commitment!=transfers.end() && commitment->second.target==d.plot,Setting("AIReassignmentContinuityBonus",40));
-            if(score>bestScore) { bestScore=score; best=target; bestOperation=d.operation; bestETA=eta; }
+            if(score>bestScore) { bestScore=score; best=target; bestOperation=d.operation; bestETA=eta; bestObjective=d.objective; }
         }
-        if(!best) return false;
+        if(!best) return CvStackingOffensiveAI::HoldReserve(unit);
         const int flags=CvUnit::MOVEFLAG_APPROX_TARGET_RING2|CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN|CvUnit::MOVEFLAG_NO_EMBARK|CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER;
         if(!unit->GeneratePath(best,flags,horizon))
         {
@@ -439,6 +451,8 @@ namespace CvStackingAI
         }
         Transfer& transfer=transfers[key]; transfer.turn=cacheTurn; transfer.target=best->GetPlotIndex();
         ++transfersThisTurn[player.GetID()];
+        if(bestObjective>=0) CvStackingOffensiveAI::RecordTransfer(unit,bestObjective,bestOperation,bestETA);
+        else CvStackingOffensiveAI::CancelCommitment(unit);
         CvStackingDiagnostics::Record(1,player.GetID(),"REINFORCEMENT","unit=%d from=%d after=%d goal=%d operation=%d eta=%d score=%d status=%s",unit->GetID(),from,after,best->GetPlotIndex(),bestOperation,bestETA,bestScore,plotDistance(*unit->plot(),*best)<=2?"arrived":"moving");
         unit->SetTurnProcessed(true);
         return true;

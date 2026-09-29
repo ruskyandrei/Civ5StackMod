@@ -34,6 +34,7 @@ Controls=setmetatable({},{__index=function(t,k)local c=control();rawset(t,k,c);r
 GameInfo={Stacking_Settings=function()local rows={{Name='UIStackEnabled',Value=0},{Name='DiagnosticsLevel',Value=0}};local i=0;return function()i=i+1;return rows[i]end end}
 Game={GetActivePlayer=function()return activeOwner end,GetAIAutoPlay=function()return autoTurns end,GetActiveTeam=function()return 0 end,GetStackingDiagnosticsLevel=function()return level end,SetStackingDiagnosticsLevel=function(n)assert(n==0 or n==1 or n==2);sets=sets+1;level=n;return n end,GetStackingDiagnosticsStatus=function()return logError or (level==0 and 'Disabled' or 'Logging: C:/Users/Test/Documents/My Games/Civ V/Logs/StackingDiagnostics-session-1.csv')end}
 Players={[0]={IsTurnActive=function()return true end,IsObserver=function()return observer end}}
+UIManager={GetScreenSizeVal=function()return 1920,1080 end}
 UI={GetHeadSelectedUnit=function()return nil end}
 Mouse={eLClick=1};MouseEvents={RButtonUp=2,LButtonUp=3};KeyEvents={KeyDown=4};Keys={VK_ESCAPE=27};InterfaceModeTypes={INTERFACEMODE_SELECTION=0}
 ContextPtr={SetInputHandler=function(self,f)self.input=f end,SetUpdate=function(self,f)self.update=f end,SetShutdown=function(self,f)self.shutdown=f end}

@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvStackingDiagnostics.h"
 #include "ICvDLLUserInterface.h"
 #include "CvGameCoreUtils.h"
@@ -1024,7 +1025,13 @@ bool CvMilitaryAI::RequestCityAttack(PlayerTypes eIntendedTarget, int iNumUnitsW
 			continue;
 		}
 
-		// Count useful reserves in this operation's domain, after city-defense exclusions.
+        if(CvStackingOffensiveAI::RouteBlocked(m_pPlayer->GetID(),pTargetPlot,opType!=AI_OPERATION_CITY_ATTACK_LAND) ||
+            CvStackingOffensiveAI::PrioritizeExisting(m_pPlayer->GetID(),pTargetPlot,opType!=AI_OPERATION_CITY_ATTACK_LAND))
+        {
+            CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"OPERATION_GATE","target=%d reason=reinforce_existing_or_route_cooldown",pTargetPlot->GetPlotIndex());
+            continue;
+        }
+        // Count useful reserves in this operation's domain, after city-defense exclusions.
 		if (CvStackingAI::Enabled(m_pPlayer->GetID()) && !CvStackingAI::CanStartAnotherOperation(m_pPlayer->GetID(),opType==AI_OPERATION_CITY_ATTACK_LAND?DOMAIN_LAND:DOMAIN_SEA))
 			continue;
 

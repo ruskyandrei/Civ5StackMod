@@ -1,6 +1,22 @@
 # Stacking development TODO
 
-## Current checkpoint
+
+## Implementation checkpoint — 2026-09-29 (offline pass)
+
+The older unchecked bullets below describe the full design, including campaign validation and advanced coordination. This checkpoint implements the following bounded first pass; see [configuration](stacking-configuration.md#offensive-continuity-and-damaged-fortifications-2026-09-29) and [validation record](offensive-ai-implementation.md).
+
+- [x] Keep a prepared city-assault army assigned through voluntary declaration; replace discovery-based readiness with a healthy staged core, roles, visible strength and approximate legal opening route. Revalidate the readiness flag at declaration. Other immediate-war paths remain intact.
+- [x] Remember city objectives and core/support commitments across tactical handoff. Prefer reinforcing those targets, with role, strength, reserve and lead-time allowances, bounded incoming/training credit and expiry. Safe arrived reserves stay near the army; suitable arrivals can fill actual unpromised formation slots.
+- [x] Let moving formations request bounded optional/replacement combat production through VP's existing exclusive reservation and supply/economy machinery. Bound production plus approximate travel time and prevent overwriting an already occupied slot. Further production outside formation slots remains open.
+- [x] Check the actual muster/deploy route before recruitment; recover disconnected centroid routes from bounded actual unit origins; delay repeated failed target/domain retries. Review stalled moving armies and let an unexposed core advance after peripheral opportunity combat.
+- [x] Assess actual capture paths, unit health and projected capture retaliation, including naval melee and visible adjacent co-belligerents. Request missing roles and stop prolonged low-HP city fire with no feasible capture plan when no useful collateral remains. Unknown path-budget results do not assert infeasibility.
+- [x] Scale capped fortification collateral protection with pre-hit city HP, including virtual prior damage in multi-hit attack/danger forecasts; retain XML toggles and existing damage rules.
+- [x] Move the roster above measured combat-preview bounds, including the outcome banner. Constrain its scroll area/width, restore baseline placement after preview closes, and hide rather than overlap if the preview leaves no room.
+- [x] Add XML controls, native diagnostic explanations and offline regression coverage. Keep 13-unit / 6,000-state tactical limits unchanged.
+- [ ] In-game smoke checks, fresh autoplay with Summary diagnostics, selected Verbose siege windows, save/reload and comparative campaign calibration. No game was launched during this implementation pass.
+- [ ] Extend coordinated amphibious capture transport/escort, production after army handoff or beyond formation slots, measured attrition/arrival forecasting, wounded rotation and cooperative-war timing. The first pass improves their inputs but does not implement all of these systems.
+
+## Earlier checkpoint
 
 Release20260927-105159 (`Release-5.4.6-8-gef54698 Clean`) compiled 176 translation units with native VC9 in 67.968 s and is deployment-verified (`105445-e3f58adf`). DLL SHA256: `D25416742EE592C3673DFED18F1C6816D8A4685C91707362C2B5DDA3A26BC3E7`. The final bounded Turn240 replay progressed into turn246 with no new crash, no LONG_PLAN warnings and no memory threshold. The guard stopped it at180 seconds during player41; turn246 and the campaign were not completed.
 
@@ -69,8 +85,8 @@ The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an e
 ## City HP scales fortification collateral protection
 
 - [ ] Scale fortification-derived collateral protection linearly with the city's current HP fraction: effective protection = capped combined building protection × clamp(current city HP / maximum city HP, 0, 1). A full-health city receives 100% of its configured protection; a city at half HP receives 50%; a zero-HP city receives none. Apply the existing combined protection cap before HP scaling so stacking extra fortifications cannot compensate for a damaged city. Example: 90% capped protection becomes 45% at half HP and 0% at zero HP.
-- [ ] Keep the existing collateral HP floor and ordinary city/garrison damage rules separate. Expose an XML enable/disable setting for the new scaling behavior and retain XML-configurable building protection and the combined cap. This is a requested future mechanic, not implemented behavior.
-- [ ] Use the same effective protection in actual combat, AI damage forecasts and any protection display. Define and document whether collateral uses city HP before or after the primary hit; that timing is not specified by the request and remains an implementation decision. Test full/half/zero HP, cap ordering, no fortifications, healing and capture, integer rounding, and siege/naval/bomber collateral against cities.
+- [ ] Keep the existing collateral HP floor and ordinary city/garrison damage rules separate. Expose an XML enable/disable setting for the new scaling behavior and retain XML-configurable building protection and the combined cap. Implemented in the 2026-09-29 checkpoint; in-game validation remains pending.
+- [ ] Use the same effective protection in actual combat, AI damage forecasts and any protection display. Define and document whether collateral uses city HP before or after the primary hit; the implemented timing is before each hit, including virtual prior city damage. Test full/half/zero HP, cap ordering, no fortifications, healing and capture, integer rounding, and siege/naval/bomber collateral against cities.
 
 
 ## Turn-236 campaign findings: route failures and offensive continuity
@@ -79,3 +95,9 @@ The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an e
 - [ ] Add failed-segment/legality diagnostics and moving-phase progress/contact review. Spain's Moscow operation lasted 35 turns with repeated no-progress/contact and ended below its required force threshold. Current assembly recovery does not address that entire moving-phase failure mode.
 - [ ] Validate persistent reinforcement and capture support against the archived turn-0/236 campaign: 43 of 46 operations observed at least five turns after departure logged no later member additions; Edirne fell to 32 HP then recovered to 430 without capture. Support arriving near an army must not be treated as proof of maintaining its effective force.
 - [ ] Use controlled campaigns and detailed city/combat traces to separate AI execution failures from defensive balance. Only three major-to-major conquests occurred in this run, but Summary logging does not quantify fortification/collateral mitigation. Keep the HP-scaled protection item as a balance experiment rather than a proven remedy.
+
+
+## Stack UI placement above combat preview
+
+- [ ] Move the stack UI to sit immediately above the combat preview panel so it does not obscure the combat outcome, damage estimates or modifiers. The user's screenshot shows the current roster overlapping the left side of the preview. Account for expanded/collapsed roster height, scrolling, screen bounds and UI scaling; verify both panels remain readable when the preview appears or changes size. Preserve normal roster use when no combat preview is visible. Implemented in the 2026-09-29 checkpoint; visual in-game validation remains pending.
+- Reference screenshot: `C:/Users/rusit/Documents/Codex/Civ5StackMod-analysis/stack-ui-combat-preview-reference/user-stack-ui-overlap.png` (source and SHA256 recorded alongside it).

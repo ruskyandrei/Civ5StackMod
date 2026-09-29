@@ -108,4 +108,16 @@ class ParserTests(unittest.TestCase):
  def test_old_logs_have_no_invented_military_observations(self):
   self.write('Stacking-old.log',header()+row('SUMMARY','units=12'))
   m=self.parse()['runs'][0]['military'];self.assertEqual(m['players'],{});self.assertIn('not final end-turn',m['interpretation'])
+ def test_offensive_support_outcomes(self):
+  text=header()+row('OFFENSIVE_SUPPORT','unit=4 target=20 action=travelling')+row('OFFENSIVE_SUPPORT','unit=4 target=20 action=front_arrival')
+  text+=row('OFFENSIVE_SUPPORT','unit=4 operation=8 action=joined_formation')+row('OFFENSIVE_SUPPORT','unit=5 target=20 action=release_stale')
+  text+=row('CAPTURE_PLAN','target=20 unit=-1 known=0')+row('CAPTURE_PLAN','target=20 unit=4 known=1')+row('CAPTURE_PLAN','target=20 unit=-1 known=1')
+  text+=row('OPERATION_ROUTE','operation=8 action=cooldown')+row('OPERATION_ROUTE','operation=9 repaired=1')
+  text+=row('OPERATION_PROGRESS','operation=8 idle=12')+row('WAR_READINESS','operation=8 ready=0')+row('SIEGE_REASSESS','target=20 action=skip_futile_city_fire')
+  self.write('Stacking-offensive.log',text);p=self.parse()['runs'][0]['military']['players']['1']
+  self.assertEqual(p['formation_join_units'],[4]);self.assertEqual(p['offensive_support_units'],[4,5])
+  self.assertEqual(p['offensive_support_actions'],{'travelling':1,'front_arrival':1,'joined_formation':1,'release_stale':1})
+  self.assertEqual(p['capture_plan_outcomes'],{'unknown_budget':1,'viable':1,'missing':1})
+  self.assertEqual(p['route_actions'],{'cooldown':1,'repaired':1});self.assertEqual(p['maximum_march_idle'],12)
+  self.assertEqual(p['war_readiness_outcomes'],{'not_ready':1})
 if __name__=='__main__':unittest.main(verbosity=2)

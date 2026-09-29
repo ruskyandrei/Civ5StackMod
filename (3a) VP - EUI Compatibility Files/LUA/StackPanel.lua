@@ -21,6 +21,8 @@ local maxHeight = math.max(rowHeight, setting("UIStackRosterMaximumHeight", 430)
 local moveMinimum = math.max(2, setting("UIStackMoveMinimumUnits", 2))
 local refreshNeeded = true
 local status = ""
+local combatPreviewVisible, combatPreviewTop = false, 0
+local lastScreenX, lastScreenY
 local reasons = {
     Ready = "Ready to move", Unavailable = "No longer available", LeftSource = "Left the source tile",
     Busy = "Busy or in combat", Cargo = "Cargo uses its transport", Aircraft = "Aircraft use rebase orders",
@@ -92,7 +94,16 @@ local function layoutPanel()
     local scrollY = 44 + capacityHeight + 8
     local footerSpace = summaryHeight > 0 and summaryHeight + 22 or 16
     local screenX, screenY = UIManager:GetScreenSizeVal()
-    local available = math.max(rowHeight, screenY - setting("UIStackRosterOffsetY", 220) - scrollY - footerSpace - 60)
+    local offsetY = setting("UIStackRosterOffsetY", 220)
+    if combatPreviewVisible then offsetY = math.max(offsetY, combatPreviewTop + math.max(0, math.min(100, setting("UIStackCombatPreviewGap", 8)))) end
+    -- An unusually tall preview can consume all remaining screen space. Hide the
+    -- roster until it closes rather than overlap either panel's labels.
+    if combatPreviewVisible and offsetY + scrollY + footerSpace + 60 > screenY then
+        Controls.StackPanel:SetHide(true)
+        return
+    end
+    offsetY = math.min(offsetY, math.max(0, screenY - scrollY - footerSpace - 60))
+    local available = math.max(0, screenY - offsetY - scrollY - footerSpace - 60)
     local height = collapsed and 0 or math.min(displayedRowCount * (rowHeight + 2), maxHeight, available)
     Controls.StackScroll:SetOffsetVal(12, scrollY)
     Controls.StackScroll:SetSizeVal(width - 24, height)
@@ -101,7 +112,7 @@ local function layoutPanel()
     Controls.StackSummary:SetHide(status == "")
     Controls.StackSummary:SetOffsetVal(16, scrollY + height + 8)
     Controls.StackPanel:SetSizeVal(width, scrollY + height + footerSpace)
-    Controls.StackPanel:SetOffsetVal(setting("UIStackRosterOffsetX", 110), setting("UIStackRosterOffsetY", 220))
+    Controls.StackPanel:SetOffsetVal(math.min(setting("UIStackRosterOffsetX", 110), math.max(0, screenX - width)), offsetY)
     Controls.StackToggle:SetSizeX(width - 140)
 end
 
@@ -175,6 +186,8 @@ local function updateHover()
         preview.Moving > 0 and Vector4(0.2, 0.9, 0.5, 1) or Vector4(1, 0.25, 0.2, 1))
 end
 local function buildRows()
+    local screenWidth = UIManager:GetScreenSizeVal()
+    width = math.min(math.max(260, setting("UIStackRosterWidth", 360)), math.max(260, screenWidth - 20))
     if inCityScreen or rosterDismissed then Controls.StackPanel:SetHide(true); return end
     local selected = UI.GetHeadSelectedUnit()
     if not selected and inspectPlot then
@@ -417,6 +430,11 @@ LuaEvents.StackRosterOpen.Add(function(ownerID, unitID)
         refreshNeeded = true
     end
 end)
+LuaEvents.StackCombatPreviewBounds.Add(function(hidden, x, top)
+    combatPreviewVisible = not hidden
+    combatPreviewTop = math.max(0, tonumber(top) or 0)
+    refreshNeeded = true
+end)
 Events.SerialEventMouseOverHex.Add(updateHover)
 Events.SerialEventUnitInfoDirty.Add(function() refreshNeeded = true end)
 Events.UnitVisibilityChanged.Add(function() refreshNeeded = true end)
@@ -444,6 +462,10 @@ ContextPtr:SetUpdate(function(delta)
     -- Mode can change during autoplay without a selection/turn event. Poll only
     -- these cheap mode flags; native diagnostic sampling remains in the DLL.
     updateDiagnosticsAccess()
+    local sx, sy = UIManager:GetScreenSizeVal()
+    if sx ~= lastScreenX or sy ~= lastScreenY then
+        lastScreenX, lastScreenY, refreshNeeded = sx, sy, true
+    end
     if refreshNeeded then refreshNeeded = false; buildRows() end
     if pending then
         pending.elapsed = pending.elapsed + delta

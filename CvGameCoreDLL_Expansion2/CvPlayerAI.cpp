@@ -9,6 +9,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingDiagnostics.h"
 #include "CvPlayerAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvRandom.h"
 #include "CvGlobals.h"
 #include "CvGameCoreUtils.h"
@@ -1328,7 +1329,7 @@ OperationSlot CvPlayerAI::PeekAtNextUnitToBuildForOperationSlot(CvCity* pCity, b
 			if (!pThisArmy || !pThisArmy->GetSlotStatus(thisSlot.m_iSlotID)->IsFree())
 				continue;
 
-			if (OperationalAIHelpers::IsSlotRequired(GetID(), thisSlot))
+			if (OperationalAIHelpers::IsSlotRequired(GetID(), thisSlot) || (CvStackingOffensiveAI::Enabled(GetID()) && CvStackingOffensiveAI::IsCityAttack(pThisOperation) && pThisOperation->GetOperationState()==AI_OPERATION_STATE_MOVING_TO_TARGET))
 			{
 				bestSlot = thisSlot;
 				break;
@@ -1361,7 +1362,9 @@ void CvPlayerAI::CityFinishedBuildingUnitForOperationSlot(OperationSlot thisSlot
 	CvArmyAI* pThisArmy = getArmyAI(thisSlot.m_iArmyID);
 	if(pThisOperation && pThisArmy && pThisUnit)
 	{
-		pThisArmy->AddUnit(pThisUnit->GetID(), thisSlot.m_iSlotID, pThisArmy->GetSlotInfo(thisSlot.m_iSlotID).m_requiredSlot);
+        // A captured/upgraded/reserve-filled slot must never lose its current member.
+        if(thisSlot.m_iSlotID>=0 && (size_t)thisSlot.m_iSlotID<pThisArmy->GetNumFormationEntries() && pThisArmy->GetSlotStatus(thisSlot.m_iSlotID)->IsFree())
+            pThisArmy->AddUnit(pThisUnit->GetID(), thisSlot.m_iSlotID, pThisArmy->GetSlotInfo(thisSlot.m_iSlotID).m_requiredSlot);
 		pThisOperation->FinishedBuildingUnit(thisSlot);
 	}
 }
