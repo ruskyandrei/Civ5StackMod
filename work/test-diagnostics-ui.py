@@ -90,6 +90,49 @@ activeOwner=0;autoTurns=5
 Game.GetStackingDiagnosticsStatus=nil;Events.GameplaySetActivePlayer();expect(Controls.StackDiagnosticsOpen.hidden,true,'old DLL without API hides button')
 ContextPtr.shutdown();expect(#ev.handlers,1,'diagnostics never registers EUI menu handler')
 """)
+
+lua.execute(r"""
+Game.GetStackingDiagnosticsStatus=function()return 'Buffered diagnostics' end
+activeOwner=0;autoTurns=0;observer=false;level=0;Events.GameplaySetActivePlayer();ContextPtr.update(0.1)
+local before=sets
+LuaEvents.StackDiagnosticsToggle();expect(Controls.StackDiagnostics.hidden,false,'manual shortcut opens normal-play controls')
+expect(Controls.StackDiagnosticsOpen.hidden,true,'manual shortcut never exposes normal-play button')
+expect(sets,before,'opening via shortcut has no logging side effects')
+ContextPtr.update(0.1);expect(Controls.StackDiagnostics.hidden,false,'normal-play mode polling retains manually opened panel')
+Controls.StackDiagnosticsSummary.callbacks[1]();expect(level,1,'manual controls enable Summary in normal play')
+LuaEvents.StackDiagnosticsToggle();expect(Controls.StackDiagnostics.hidden,true,'shortcut toggles panel closed');expect(level,1,'closing retains chosen logging')
+LuaEvents.StackDiagnosticsToggle();ContextPtr.input(KeyEvents.KeyDown,Keys.VK_ESCAPE);expect(Controls.StackDiagnostics.hidden,true,'escape closes manual panel')
+Controls.StackDiagnosticsVerbose.callbacks[1]();expect(level,1,'closed manual panel cannot enable logging via stale callbacks')
+LuaEvents.StackDiagnosticsToggle();Events.SerialEventEnterCityScreen();expect(Controls.StackDiagnostics.hidden,true,'city screen clears manual diagnostic access')
+LuaEvents.StackDiagnosticsToggle();expect(Controls.StackDiagnostics.hidden,true,'city screen cannot open diagnostic panel');Events.SerialEventExitCityScreen()
+LuaEvents.StackDiagnosticsToggle();Events.GameplaySetActivePlayer();expect(Controls.StackDiagnostics.hidden,true,'active-player switch clears manual access')
+UI.GetInterfaceMode=function()return interfaceMode end;interfaceMode=InterfaceModeTypes.INTERFACEMODE_SELECTION
+UIManager.GetControl=function()return controlDown end;UIManager.GetShift=function()return shiftDown end
+Keys.VK_D=68;InterfaceModeMessageHandler={};DefaultMessageHandler={};UI.IsTouchScreenEnabled=function()return false end
+controlDown=false;shiftDown=false
+""")
+for relative in ['UI_bc1/Improvements/WorldView.lua','(2) Vox Populi/Core Files/Overrides/WorldView.lua']:
+ bridge=(r/relative).read_text(encoding='utf-8-sig');a=bridge.index('local stackMoveMode = false');b=bridge.index('ContextPtr:SetInputHandler( InputHandler );',a)+len('ContextPtr:SetInputHandler( InputHandler );')
+ lua.execute('SavedPanelContext=ContextPtr;ContextPtr={SetInputHandler=function(self,f)self.input=f end}')
+ lua.execute(bridge[a:b]);lua.execute('DiagnosticBridge=ContextPtr.input;ContextPtr=SavedPanelContext')
+ lua.execute(r"""
+expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'plain D is not a diagnostics shortcut')
+controlDown=true;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'Ctrl+D alone is not captured')
+shiftDown=true;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),true,'actual Ctrl+Shift+D bridge consumes shortcut')
+expect(Controls.StackDiagnostics.hidden,false,'actual bridge opens manual panel');expect(Controls.StackDiagnosticsOpen.hidden,true,'actual bridge keeps normal button hidden')
+expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),true,'actual bridge toggles closed');expect(Controls.StackDiagnostics.hidden,true,'bridge closes panel')
+interfaceMode=99;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'non-selection mode does not intercept shortcut');interfaceMode=0
+controlDown=false;shiftDown=false
+""")
+# Disabled XML preference must also avoid consuming the key in the real WorldView bridge.
+lua.execute(r"""
+GameInfo.Stacking_Settings=function()local done=false;return function()if not done then done=true;return {Name='UIStackDiagnosticsHotkeyEnabled',Value=0} end end end
+controlDown=true;shiftDown=true
+""")
+lua.execute('SavedPanelContext=ContextPtr;ContextPtr={SetInputHandler=function(self,f)self.input=f end}')
+lua.execute(bridge[a:b]);lua.execute('DiagnosticBridge=ContextPtr.input;ContextPtr=SavedPanelContext')
+lua.execute("expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'XML disables shortcut capture')")
+
 xml=r/'(3a) VP - EUI Compatibility Files/LUA/StackPanel.xml';tree=ET.parse(xml)
 ids={e.attrib['ID'] for e in tree.iter() if 'ID' in e.attrib}
 needed={'StackDiagnosticsOpen','StackDiagnostics','StackDiagnosticsState','StackDiagnosticsLog','StackDiagnosticsRestart','StackDiagnosticsOff','StackDiagnosticsSummary','StackDiagnosticsVerbose','StackDiagnosticsClose'}
@@ -98,7 +141,7 @@ button=tree.getroot().find("GridButton[@ID='StackDiagnosticsOpen']");assert butt
 diplo=ET.parse(r/'(3a) VP - EUI Compatibility Files/LUA/DiploCorner.xml');assert diplo.find(".//PullDown[@ID='MultiPull']").attrib.get('Hidden')=='1'
 assert 'AdditionalInformationDropdownGatherEntries' not in source
 cpp=(r/'CvGameCoreDLL_Expansion2/Lua/CvLuaGame.cpp').read_text(encoding='utf-8-sig');header=(r/'CvGameCoreDLL_Expansion2/Lua/CvLuaGame.h').read_text(encoding='utf-8-sig')
-for name in ('GetStackingDiagnosticsLevel','GetStackingDiagnosticsStatus','SetStackingDiagnosticsLevel'):
+for name in ('GetStackingDiagnosticsLevel','GetStackingDiagnosticsStatus','SetStackingDiagnosticsLevel','FlushStackingDiagnostics'):
  assert cpp.count('Method('+name+');')==1
  assert cpp.count('int CvLuaGame::l'+name+'(lua_State* L)')==1
  assert header.count('static int l'+name+'(lua_State* L);')==1

@@ -45,7 +45,7 @@ MILITARY_CATEGORIES = frozenset(('CITY_DEFENSE', 'CITY_RETAIN', 'GARRISON_ASSIGN
     'ASSEMBLY_PROGRESS', 'OPERATION_READINESS', 'OPERATION_ASSEMBLY', 'OPERATION_GATE', 'OPERATION_BUDGET',
     'OP_RECRUIT_FILTER', 'REINFORCEMENT', 'SIEGE_REINFORCE', 'DECISION_SUMMARY', 'UNIT_DECISION',
     'OFFENSIVE_OBJECTIVE', 'OFFENSIVE_DEMAND', 'OFFENSIVE_SUPPORT', 'OPERATION_ROUTE', 'OPERATION_PROGRESS',
-    'OPERATION_CONTACT', 'WAR_READINESS', 'WAR_DECLARATION', 'CAPTURE_CANDIDATE', 'CAPTURE_PLAN', 'SIEGE_REASSESS'))
+    'OPERATION_CONTACT', 'WAR_READINESS', 'WAR_DECLARATION', 'CAPTURE_CANDIDATE', 'CAPTURE_PLAN', 'SIEGE_REASSESS', 'OPERATION_STATUS', 'COMBAT_SUMMARY', 'CITY_CAPTURE', 'DIAGNOSTIC_COST'))
 
 class MilitarySummary:
     def __init__(self):
@@ -60,11 +60,13 @@ class MilitarySummary:
             'maximum_assembly_age': 0, 'readiness_outcomes': Counter(), 'unit_decision_samples': 0,
             'offensive_support_actions': Counter(), 'offensive_support_units': set(), 'formation_join_units': set(),
             'route_actions': Counter(), 'capture_plan_outcomes': Counter(), 'siege_reassess_actions': Counter(),
-            'war_readiness_outcomes': Counter(), 'maximum_march_idle': 0})
+            'war_readiness_outcomes': Counter(), 'maximum_march_idle': 0,
+            'compact_combat_outcomes': Counter(), 'city_capture_events': [], 'latest_diagnostic_cost': None})
         p['counts'][category] += 1
         if category == 'DECISION_SUMMARY': p['decision_samples'].append(detail)
         elif category == 'CITY_DEFENSE' and isinstance(v.get('city'), int):
             p['latest_city_defense'][str(v['city'])] = detail
+        elif category == 'OPERATION_STATUS' and isinstance(v.get('operation'), int): p['latest_operations'][str(v['operation'])] = detail
         elif category == 'OPERATION_ASSEMBLY':
             if isinstance(v.get('operation'), int): p['latest_operations'][str(v['operation'])] = detail
             for field, key in (('idle', 'maximum_assembly_idle'), ('stageAge', 'maximum_assembly_age')):
@@ -88,6 +90,12 @@ class MilitarySummary:
             else: outcome = 'unspecified'
             p['garrison_outcomes'][outcome] += 1
         elif category == 'UNIT_DECISION': p['unit_decision_samples'] += 1
+        elif category == 'COMBAT_SUMMARY':
+            p['compact_combat_outcomes']['events'] += 1
+            p['compact_combat_outcomes']['city_events' if v.get('cityHPBefore', -1) >= 0 else 'unit_events'] += 1
+            if isinstance(v.get('missingUnits'), int): p['compact_combat_outcomes']['missing_identities'] += v['missingUnits']
+        elif category == 'CITY_CAPTURE': p['city_capture_events'].append(detail)
+        elif category == 'DIAGNOSTIC_COST': p['latest_diagnostic_cost'] = detail
         elif category == 'OFFENSIVE_SUPPORT':
             action = str(v.get('action', 'unspecified'))
             p['offensive_support_actions'][action] += 1
@@ -104,7 +112,7 @@ class MilitarySummary:
         players = {}
         for player, p in sorted(self.players.items()):
             players[player] = {key: sorted_counts(value) if isinstance(value, Counter) else sorted(value) if isinstance(value, set) else value for key, value in p.items()}
-        return {'players': players, 'interpretation': 'Retained records only; counters are observations, not unique orders or unit-turns. REINFORCEMENT arrived means within two hexes of staging. OFFENSIVE_SUPPORT front_arrival is proximity to the city; joined_formation confirms army membership. Neither proves combat contribution. Decision samples follow the first unit-AI pass and are not final end-turn state. City proximity is visibility-limited, not a multi-turn path forecast. Missing records and truncated/rotated segments cannot establish absence of an action.'}
+        return {'players': players, 'interpretation': 'Retained records only; counters are observations, not unique orders or unit-turns. REINFORCEMENT arrived means within two hexes of staging. OFFENSIVE_SUPPORT front_arrival is proximity to the city; joined_formation confirms army membership. Neither proves combat contribution. Compact combat bystanders include ordinary garrison absorption; missing identities are not deaths. Capture rows are observed combat ownership changes, not all possible ownership transfers. Cost timings cover the first unit-AI pass and use coarse ticks; they are not complete turn-time or pure AI compute measurements. Decision samples follow the first unit-AI pass and are not final end-turn state. City proximity is visibility-limited, not a multi-turn path forecast. Missing records and truncated/rotated segments cannot establish absence of an action.'}
 
 def summarize(paths):
     grouped = defaultdict(list)

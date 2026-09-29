@@ -197,12 +197,12 @@ The Lua UI reads raw database values rather than the DLL's clamped settings cach
 
 ## Built-in autoplay diagnostics
 
-In observer mode or during autoplay, click Diagnostics near the top center of the map for Off, Summary or Verbose. The button hides during normal play; XML DiagnosticsLevel or the Game Lua bindings can still enable logging there. Returning to normal play does not change the logging level. Runtime overrides apply to the loaded session; after loading/restarting, XML defaults apply. Logging does not issue orders, consume RNG, or change gameplay search budgets. Existing VP AI logging remains a separate facility.
+In observer mode or during autoplay, click Diagnostics near the top center of the map for Off, Summary or Verbose. The button hides during normal play. Press **Ctrl+Shift+D** on the map to open the same controls in normal play, select Summary/Verbose/Off, then press the shortcut again or Escape to close them. `UIStackDiagnosticsHotkeyEnabled=0` disables this shortcut. XML DiagnosticsLevel or the Game Lua bindings can also enable logging there. Returning to normal play does not change the logging level. Runtime overrides apply to the loaded session; after loading/restarting, XML defaults apply. Logging does not issue orders, consume RNG, or change gameplay search budgets. Existing VP AI logging remains a separate facility.
 
 | XML setting | Default | Valid values | Meaning |
 |---|---:|---:|---|
 | DiagnosticsLevel | 0 | 0–2 | Off / Summary / Verbose; runtime menu overrides this until reload. |
-| DiagnosticsSummaryInterval | 1 | 1–10000 | Sample each player's units before unit AI on these game turns, once per player/turn. |
+| DiagnosticsSummaryInterval | 1 | 1–10000 | Sample each player's units before and after the first unit-AI pass on these game turns, once per phase/player/turn. Operation snapshots use the same interval. |
 | DiagnosticsDetailInterval | 10 | 0–10000 | Verbose unit/city snapshots; 0 disables scheduled detail. |
 | DiagnosticsMemoryInterval | 10 | 0–10000 | Process virtual-memory sample once on matching turns; 0 disables. |
 | DiagnosticsPlayer | -1 | -1–63 | Player ID filter; -1 includes all. Session/configuration/memory records are global. |
@@ -212,9 +212,9 @@ In observer mode or during autoplay, click Diagnostics near the top center of th
 | DiagnosticsHistogramMaxStack | 32 | 1–256 | Final histogram bucket includes this size and all larger sizes. This does not limit legal stacks. |
 | DiagnosticsLongPlanThreshold | 256 | 0–10000 | Warn before an unusually long tactical history grows further; repeats at multiples. 0 disables. No action is blocked. |
 
-The native logger writes immediately flushed, live-readable `Stacking-<UTC>-p<PID>-r<session>-<slot>.log` files in the game's Logs directory. Each segment identifies its run, monotonically increasing segment number and build. A configuration fingerprint is resolved in the first CONFIG record and carried by later segment headers. CONFIG_RAW rows record the stacking tables in database order; effective values still follow the validation/clamping described above. Off/on continues the same session and rolling budget. Reloads/new sessions have distinct prefixes; old sessions are retained for manual archiving/removal.
+The native logger writes bounded-buffered, live-readable `Stacking-<UTC>-p<PID>-r<session>-<slot>.log` files in the game's Logs directory. Each segment identifies its run, monotonically increasing segment number and build. A configuration fingerprint is resolved in the first CONFIG record and carried by later segment headers. CONFIG_RAW rows record the stacking tables in database order; effective values still follow the validation/clamping described above. Off/on continues the same session and rolling budget. Reloads/new sessions have distinct prefixes; old sessions are retained for manual archiving/removal.
 
-Summary includes unit/stack statistics, memory measurements, city-attack gates, recruitment counts, chosen-plan size/search time and long-history anomalies. Verbose adds unit/city identities, recruitment rejections, chosen assignments and score components, operation messages, and before/after combat participants with explicit inflicted-versus-received damage labels. Combat uses saved owner/ID lookups after resolution so captured/deleted units are handled safely. Unit composition is not a forecast of safety, an attempted-city-attack message is not proof an attack occurred, and missing units can have non-combat removal causes. No extra danger calculation is performed solely to populate logs.
+Summary includes unit/stack statistics, memory measurements, city-attack gates, recruitment counts, chosen-plan size/search time and long-history anomalies. Summary now also includes compact combat outcomes/city-health changes, observed combat captures, operation staffing/production status, and first-unit-AI-pass logging cost. Verbose adds unit/city identities, recruitment rejections, chosen assignments and score components, operation messages, and before/after combat participants with explicit inflicted-versus-received damage labels. Combat uses saved owner/ID lookups after resolution so captured/deleted units are handled safely. Unit composition is not a forecast of safety, an attempted-city-attack message is not proof an attack occurred, and missing units can have non-combat removal causes. No extra danger calculation is performed solely to populate logs.
 
 Record timing and sampling duration include diagnostic overhead; bounded output can omit events, and TRUNCATED must be treated as incomplete evidence. Rotated records are not recoverable from the current session. The logger does not retain a whole-game history in memory and has no injected Lua observer. These limits control diagnostics only.
 
@@ -225,6 +225,38 @@ Record timing and sampling duration include diagnostic overhead; bounded output 
 In observer mode or autoplay, displayed notifications become eligible for ordinary dismissal when the current game turn minus their saved creation turn reaches the configured lifetime. A message from turn 280 is eligible at turn 283. Reloading a save or switching the observed view does not renew a message's age. Individual older entries are removed from bundles while newer entries remain. The notification history is retained by VP's ordinary notification system.
 
 Normal play is unaffected. Native mandatory-choice notifications retain the same restrictions as manual right-click dismissal. The check is event-driven and throttled by active player/game turn; it sends no gameplay orders. Restart into the modded game after changing the XML/UI files. The implementation targets this prototype's tested VP EUI compatibility panel; non-EUI and network observer behavior have not been validated.
+
+### Diagnostic efficiency, filters and hidden access
+
+| Setting | Default | Range | Behavior |
+|---|---:|---|---|
+| DiagnosticsImmediateFlush | 0 | 0–1 | 1 restores unbuffered per-record output for crash investigations; 0 enables batching. |
+| DiagnosticsBufferKB | 64 | 4–256 | Active CRT file buffer size. Fixed storage has a 256 KiB maximum; no unbounded queue or background thread. |
+| DiagnosticsFlushEveryRows | 256 | 1–8192 | Flush after this many pending writes; CRT buffer capacity can flush earlier. |
+| DiagnosticsFlushIntervalMilliseconds | 1000 | 0–60000 | Check elapsed time on each write and flush if due. 0 disables this time trigger, not boundary/row-trigger flushing. |
+| DiagnosticsCategoryMask | 63 | 0–63 | Sum evidence-family bits listed below. Metadata and safety anomalies remain available. |
+| DiagnosticsVerboseStartTurn | -1 | -1–536870911 | First inclusive game turn for level-2 events; -1 leaves the lower bound open. |
+| DiagnosticsVerboseEndTurn | -1 | -1–536870911 | Last inclusive game turn for level-2 events; -1 leaves the upper bound open. Summary continues outside the window. |
+| DiagnosticsCombatSummary | 1 | 0–1 | One compact outcome per combat at Summary/Verbose. 0 skips compact outcomes; Verbose brackets can still be enabled. |
+| DiagnosticsPerformanceInterval | 1 | 0–10000 | Record logger costs and elapsed time for the first unit-AI pass on these turns. 0 disables cost records. |
+| UIStackDiagnosticsHotkeyEnabled | 1 | 0–1 | Enable Ctrl+Shift+D map shortcut; the normal-play button remains hidden. |
+
+`DiagnosticsCategoryMask` uses: **1** unit/stack/city snapshots; **2** military allocation, objectives, capture plans and operation status; **4** tactical recruitment and chosen plans; **8** compact/detailed combat and observed captures; **16** performance/cost; **32** virtual-memory samples. Add the bits you want: **63** keeps all families, **26** selects military + combat + cost, and **2** isolates military decisions. Disabled snapshot/combat families skip their extra collection; disabled tactical assignment detail skips enumeration. When produced, critical LONG_PLAN/ANOMALY records retain their existing level/player rules regardless of this mask; disabling a collection pass also disables anomalies detected only by that pass. Configuration, level, and truncation metadata are not category-filtered.
+
+Output is flushed at player sampling/AI-pass boundaries, combat boundaries, rotation, level changes and explicit `Game.FlushStackingDiagnostics()`. Detailed pre-combat brackets and long-plan/anomaly warnings are flushed immediately. Threshold checks happen during logging, without an idle timer. A process crash can lose the last pending batch outside those boundaries; use `DiagnosticsImmediateFlush=1` when reproducing a crash. Flushing the CRT buffer makes data readable by live tools; it does not request an OS-level disk durability barrier.
+
+For a long autoplay, start with **Summary**, all categories, and buffered output. If snapshots are expensive, set `DiagnosticsSummaryInterval=5`; both structural snapshots and operation snapshots honor it. Event decisions/combat still record each relevant event. For a specific issue, use Verbose with `DiagnosticsPlayer` and a bounded turn window. The selected player filter now includes combat where that player is a defender or bystander; `attackerOwner` preserves the actual aggressor.
+
+`OPERATION_STATUS` records current state, target/muster, formation occupancy, queued and in-training counts, and age. It never refreshes production requests or runs pathfinding. `COMBAT_SUMMARY` records rolled primary/retaliation damage, bystander totals, observed HP loss for still-present identities, missing identity count, city HP/ownership and pre-hit fortification protection. Bystanders include ordinary garrison absorption; their total is not isolated collateral damage. Missing identities are not asserted deaths. `CITY_CAPTURE` records an observed combat ownership change on a city plot; it does not cover gifts, trades or every possible transfer.
+
+`DIAGNOSTIC_COST` measures elapsed time and logger record/byte/drop/explicit-flush counters between before/after hooks for the **first unit-AI pass**. It excludes the structural snapshots, its own row and later passes; it is not complete turn time or pure AI CPU time. Millisecond ticks are coarse, `writeMs` can include CRT buffer flushes, and other threads can contribute to the shared logger counters. These observations help select a live profiling window without adding AI calculations.
+
+For console/tool use in any game mode:
+
+```lua
+Game.SetStackingDiagnosticsLevel(1) -- Summary; 2 Verbose, 0 Off
+Game.FlushStackingDiagnostics()    -- Publish pending records without changing level
+```
 
 ### Military allocation diagnostic records
 

@@ -13474,7 +13474,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,
 		(unsigned int)completedPositions.size(), (unsigned int)result.size(), durationMs);
-	if (CvStackingDiagnostics::Enabled(2, ePlayer))
+	if (CvStackingDiagnostics::EnabledCategory(2, ePlayer, "PLAN_ASSIGN"))
 		for (size_t i = 0; i < result.size(); ++i)
 		{
 			const STacticalAssignment& a = result[i];

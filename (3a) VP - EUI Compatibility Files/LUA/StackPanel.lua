@@ -281,6 +281,7 @@ end
 -- Diagnostics is independent of the selected stack and starts no Lua observer.
 -- A standalone control avoids hidden EUI dropdowns and listener-order dependencies.
 local diagnosticsVisible = false
+local diagnosticsManualAccess = false
 local diagnosticNames = { [0] = "Off", [1] = "Summary", [2] = "Verbose" }
 local function diagnosticsAvailable()
     return Game.GetStackingDiagnosticsLevel and Game.SetStackingDiagnosticsLevel and Game.GetStackingDiagnosticsStatus
@@ -297,7 +298,7 @@ local function updateDiagnosticsAccess()
         diagnosticsAccess = allowed
         Controls.StackDiagnosticsOpen:SetHide(not allowed)
     end
-    if not allowed and diagnosticsVisible then
+    if not allowed and not (diagnosticsManualAccess and not inCityScreen and diagnosticsAvailable()) and diagnosticsVisible then
         diagnosticsVisible = false
         Controls.StackDiagnostics:SetHide(true)
     end
@@ -325,12 +326,14 @@ local function refreshDiagnostics()
     Controls.StackDiagnostics:SetSizeVal(342, buttonsY + 40 + (Controls.StackDiagnosticsRestart:GetSizeY() or 32) + 16)
 end
 local function closeDiagnostics()
+    diagnosticsManualAccess = false
     diagnosticsVisible = false
     Controls.StackDiagnostics:SetHide(true)
 end
-local function openDiagnostics()
+local function openDiagnostics(manual)
+    if manual and not inCityScreen and diagnosticsAvailable() then diagnosticsManualAccess = true end
     updateDiagnosticsAccess()
-    if not diagnosticsAccess then return end
+    if not diagnosticsAccess and not diagnosticsManualAccess then return end
     if active then stopMode(); status = "" end
     diagnosticsVisible = true
     refreshDiagnostics()
@@ -338,7 +341,7 @@ local function openDiagnostics()
 end
 local function setDiagnostics(level)
     updateDiagnosticsAccess()
-    if not diagnosticsAccess then return end
+    if not diagnosticsAccess and not diagnosticsManualAccess then return end
     Game.SetStackingDiagnosticsLevel(level)
     refreshDiagnostics()
 end
@@ -346,7 +349,11 @@ Controls.StackDiagnosticsOff:RegisterCallback(Mouse.eLClick, function() setDiagn
 Controls.StackDiagnosticsSummary:RegisterCallback(Mouse.eLClick, function() setDiagnostics(1) end)
 Controls.StackDiagnosticsVerbose:RegisterCallback(Mouse.eLClick, function() setDiagnostics(2) end)
 Controls.StackDiagnosticsClose:RegisterCallback(Mouse.eLClick, closeDiagnostics)
-Controls.StackDiagnosticsOpen:RegisterCallback(Mouse.eLClick, openDiagnostics)
+Controls.StackDiagnosticsOpen:RegisterCallback(Mouse.eLClick, function() openDiagnostics(false) end)
+LuaEvents.StackDiagnosticsToggle.Add(function()
+    if setting("UIStackDiagnosticsHotkeyEnabled", 1) == 0 or inCityScreen or not diagnosticsAvailable() then return end
+    if diagnosticsVisible then closeDiagnostics() else openDiagnostics(true) end
+end)
 updateDiagnosticsAccess()
 ContextPtr:SetInputHandler(function(uiMsg, wParam)
     if diagnosticsVisible and uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_ESCAPE then

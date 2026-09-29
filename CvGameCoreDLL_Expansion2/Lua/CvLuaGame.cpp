@@ -170,6 +170,7 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 	Method(GetStackingDiagnosticsLevel);
 	Method(GetStackingDiagnosticsStatus);
 	Method(SetStackingDiagnosticsLevel);
+	Method(FlushStackingDiagnostics);
 	Method(ChangeActivePlayer);
 
 	Method(IsScoreDirty);
@@ -1248,6 +1249,11 @@ int CvLuaGame::lGetStackingDiagnosticsStatus(lua_State* L)
 	return 1;
 }
 
+int CvLuaGame::lFlushStackingDiagnostics(lua_State* L)
+{
+    CvStackingDiagnostics::Flush();
+    return 0;
+}
 int CvLuaGame::lSetStackingDiagnosticsLevel(lua_State* L)
 {
 	const lua_Number level = luaL_checknumber(L, 1);

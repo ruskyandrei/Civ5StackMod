@@ -817,8 +817,20 @@ end
 -- Input handling
 ----------------------------------------------------------------
 local stackMoveMode = false
+local stackDiagnosticsHotkeyEnabled = true
+if GameInfo.Stacking_Settings then
+    for row in GameInfo.Stacking_Settings() do
+        if row.Name == "UIStackDiagnosticsHotkeyEnabled" then stackDiagnosticsHotkeyEnabled = tonumber(row.Value) ~= 0 end
+    end
+end
 LuaEvents.StackMoveModeChanged.Add(function(active) stackMoveMode = active; rButtonDown = false end)
 function InputHandler( uiMsg, wParam, lParam )
+    if stackDiagnosticsHotkeyEnabled and Game.GetStackingDiagnosticsLevel and
+        uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_D and UIManager:GetControl() and UIManager:GetShift() and
+        UI.GetInterfaceMode() == InterfaceModeTypes.INTERFACEMODE_SELECTION then
+        LuaEvents.StackDiagnosticsToggle()
+        return true
+    end
     if stackMoveMode then
         if uiMsg == MouseEvents.RButtonUp or uiMsg == MouseEvents.LButtonUp or
             (uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_ESCAPE) then

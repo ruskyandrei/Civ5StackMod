@@ -83,6 +83,16 @@
     <Row Name="AIOffensiveReserveMinimumUnits" Value="4" />
     <!-- Diagnostic-only controls. Runtime menu overrides Level until reload. -->
     <Row Name="DiagnosticsLevel" Value="0" />
+    <Row Name="DiagnosticsImmediateFlush" Value="0" />
+    <Row Name="DiagnosticsBufferKB" Value="64" />
+    <Row Name="DiagnosticsFlushEveryRows" Value="256" />
+    <Row Name="DiagnosticsFlushIntervalMilliseconds" Value="1000" />
+    <Row Name="DiagnosticsCategoryMask" Value="63" />
+    <Row Name="DiagnosticsVerboseStartTurn" Value="-1" />
+    <Row Name="DiagnosticsVerboseEndTurn" Value="-1" />
+    <Row Name="DiagnosticsCombatSummary" Value="1" />
+    <Row Name="DiagnosticsPerformanceInterval" Value="1" />
+    <Row Name="UIStackDiagnosticsHotkeyEnabled" Value="1" />
     <Row Name="DiagnosticsSummaryInterval" Value="1" />
     <Row Name="DiagnosticsDetailInterval" Value="10" />
     <Row Name="DiagnosticsMemoryInterval" Value="10" />

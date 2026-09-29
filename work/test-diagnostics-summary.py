@@ -120,4 +120,12 @@ class ParserTests(unittest.TestCase):
   self.assertEqual(p['capture_plan_outcomes'],{'unknown_budget':1,'viable':1,'missing':1})
   self.assertEqual(p['route_actions'],{'cooldown':1,'repaired':1});self.assertEqual(p['maximum_march_idle'],12)
   self.assertEqual(p['war_readiness_outcomes'],{'not_ready':1})
+ def test_compact_outcomes_and_logging_cost(self):
+  text=header()+row('COMBAT_SUMMARY','combat=1 cityHPBefore=300 missingUnits=1')+row('COMBAT_SUMMARY','combat=2 cityHPBefore=-1 missingUnits=0')
+  text+=row('CITY_CAPTURE','combat=3 plot=20 oldOwner=2 newOwner=1')+row('OPERATION_STATUS','operation=8 filled=6 slots=10 neededBuild=2 training=1')
+  text+=row('DIAGNOSTIC_COST','phase=first_unit_AI_pass elapsedMs=25 recorded=20 dropped=3 flushes=1')
+  self.write('Stacking-compact.log',text);p=self.parse()['runs'][0]['military']['players']['1']
+  self.assertEqual(p['compact_combat_outcomes'],{'events':2,'city_events':1,'unit_events':1,'missing_identities':1})
+  self.assertEqual(len(p['city_capture_events']),1);self.assertEqual(p['city_capture_events'][0]['fields']['oldOwner'],2)
+  self.assertEqual(p['latest_operations']['8']['fields']['training'],1);self.assertEqual(p['latest_diagnostic_cost']['fields']['dropped'],3)
 if __name__=='__main__':unittest.main(verbosity=2)

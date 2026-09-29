@@ -101,3 +101,12 @@ The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an e
 
 - [x] Move the stack UI to sit immediately above the combat preview panel so it does not obscure the combat outcome, damage estimates or modifiers. The user's screenshot shows the current roster overlapping the left side of the preview. Account for expanded/collapsed roster height, scrolling, screen bounds and UI scaling; verify both panels remain readable when the preview appears or changes size. Preserve normal roster use when no combat preview is visible. Implemented in the 2026-09-29 checkpoint; visual in-game validation remains pending.
 - Reference screenshot: `C:/Users/rusit/Documents/Codex/Civ5StackMod-analysis/stack-ui-combat-preview-reference/user-stack-ui-overlap.png` (source and SHA256 recorded alongside it).
+
+## Diagnostic efficiency and normal-play access — 2026-09-29
+
+- [x] Review current evidence and remove per-record unbuffered output as the normal policy. Add bounded batching/flush controls and retain an immediate crash-trace option.
+- [x] Avoid repeated capacity/role evaluation per stack member; honor the summary interval before and after the first AI pass. Add category masks and bounded Verbose windows.
+- [x] Add compact Summary combat/capture outcomes, operation production/staffing snapshots, incoming-attack filters and first-pass logger cost records.
+- [x] Add Ctrl+Shift+D map access in normal play while the diagnostics button stays hidden. Validate actual Lua input bridges offline.
+- [ ] Measure whole-autoplay improvement, live shortcut/input behavior and logging-enabled gameplay equivalence in the next prepared game. See [review](diagnostics-review.md).
+- [ ] Consider target-selection score explanations, objective-linked losses/arrival gaps and AI-subsystem timing if the compact results identify a need.

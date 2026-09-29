@@ -10,6 +10,7 @@ head=r"""
 #include <string>
 #include <map>
 #include <vector>
+#define NOMINMAX
 #include <windows.h>
 #include <direct.h>
 #include <share.h>
@@ -17,7 +18,7 @@ using namespace std;
 typedef int PlayerTypes;
 const int MAX_PLAYERS=64,NO_PLAYER=-1;
 #define CURRENT_GAMECORE_VERSION "native-policy-test"
-static map<string,int> cfg;static int settingsReads=0,dbReads=0,opens=0,writes=0;static bool openFailure=false,writeFailure=false;
+static map<string,int> cfg;static int settingsReads=0,dbReads=0,opens=0,writes=0;static bool openFailure=false,writeFailure=false,flushFailure=false;
 namespace CvStacking{int GetInt(const char*n,int f){++settingsReads;map<string,int>::const_iterator i=cfg.find(n);return i==cfg.end()?f:i->second;}}
 namespace Database{struct Results{int pos;Results():pos(0){}bool Step(){return pos++==0;}const char*GetText(const char*n){return n[0]=='K'?"test:key":"7";}};struct Connection{bool Execute(Results&,const char*){++dbReads;return true;}};}
 static Database::Connection db;
@@ -33,20 +34,26 @@ const int AI_TACTICAL_MOVE_NONE=0,AI_HOMELAND_MOVE_NONE=0,AI_HOMELAND_MOVE_UNASS
 struct CvUnit{int id;bool dead;CvUnit(int n=0):id(n),dead(false){}bool isDelayedDeath()const{return dead;}bool IsCombatUnit()const{return true;}
  Plot*plot(){return &testPlot;}int getArmyID()const{return -1;}bool IsHurt()const{return false;}int getTacticalMove()const{return 0;}int getHomelandMove()const{return 1;}
  int GetID()const{return id;}int GetCurrHitPoints()const{return 100;}int getMoves()const{return 0;}bool TurnProcessed()const{return true;}bool IsGarrisoned()const{return false;}};
-struct CvPlayer{vector<CvUnit*> units;int GetID()const{return 0;}CvUnit*firstUnit(int*i){*i=0;return units.empty()?NULL:units[0];}CvUnit*nextUnit(int*i){++*i;return *i<(int)units.size()?units[*i]:NULL;}};
+typedef Plot CvPlot;
+struct CvArmyAI{int GetID(){return 1;}int GetNumSlotsFilled(){return 4;}int GetNumFormationEntries(){return 8;}};
+struct CvAIOperation{int GetID(){return 1;}int GetOperationType(){return 2;}int GetOperationState(){return 3;}int GetEnemy(){return 1;}CvPlot*GetTargetPlot(){return &testPlot;}CvPlot*GetMusterPlot(){return &testPlot;}CvArmyAI*GetArmy(int){return NULL;}int GetNumUnitsNeededToBeBuilt(){return 2;}int GetNumUnitsCommittedToBeBuilt(){return 1;}int GetTurnStarted(){return 0;}};
+struct CvPlayer{vector<CvAIOperation*>operations;size_t getNumAIOperations(){return operations.size();}CvAIOperation*getAIOperationByIndex(size_t i){return operations[i];}vector<CvUnit*> units;int GetID()const{return 0;}CvUnit*firstUnit(int*i){*i=0;return units.empty()?NULL:units[0];}CvUnit*nextUnit(int*i){++*i;return *i<(int)units.size()?units[*i]:NULL;}};
 static FILE* testOpen(const wchar_t*path,const wchar_t*mode,int sharing){++opens;if(openFailure)return NULL;return _wfsopen(path,mode,sharing);}
 static int testPrint(FILE*p,const char*f,...){++writes;if(writeFailure)return -1;va_list a;va_start(a,f);int r=vfprintf(p,f,a);va_end(a);return r;}
+static int testFlush(FILE*p){return flushFailure?EOF:fflush(p);}
+#define fflush testFlush
 #define _wfsopen testOpen
 #define fprintf testPrint
 """
 tail=r"""
+#undef fflush
 #undef _wfsopen
 #undef fprintf
 static int checks=0,failures=0;
 void expect(bool ok,const char*n){++checks;if(!ok){++failures;printf("FAIL %s\n",n);}}
-string slurpCurrent(){string s;for(int i=0;i<setting("DiagnosticsMaxFiles",8);++i){wchar_t p[MAX_PATH];_snwprintf_s(p,MAX_PATH,_TRUNCATE,L"%s%S-%02d.log",directory,prefix,i);HANDLE f=CreateFileW(p,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);if(f!=INVALID_HANDLE_VALUE){char b[4096];DWORD n;while(ReadFile(f,b,sizeof b,&n,NULL)&&n)s.append(b,n);CloseHandle(f);}else if(GetLastError()!=2){static bool printed=false;if(!printed){printf("READBACK_ERROR=%lu path=%S\n",GetLastError(),p);printed=true;}}}return s;}
+string slurpCurrent(bool flush=true){if(flush)CvStackingDiagnostics::Flush();string s;for(int i=0;i<setting("DiagnosticsMaxFiles",8);++i){wchar_t p[MAX_PATH];_snwprintf_s(p,MAX_PATH,_TRUNCATE,L"%s%S-%02d.log",directory,prefix,i);HANDLE f=CreateFileW(p,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);if(f!=INVALID_HANDLE_VALUE){char b[4096];DWORD n;while(ReadFile(f,b,sizeof b,&n,NULL)&&n)s.append(b,n);CloseHandle(f);}else if(GetLastError()!=2){static bool printed=false;if(!printed){printf("READBACK_ERROR=%lu path=%S\n",GetLastError(),p);printed=true;}}}return s;}
 int countText(const string&s,const char*t){int n=0;size_t p=0;while((p=s.find(t,p))!=string::npos){++n;p+=strlen(t);}return n;}
-void fresh(){CvStackingDiagnostics::Reset();cfg.clear();cfg["DiagnosticsMemoryInterval"]=0;cfg["DiagnosticsMaxFileKB"]=64;cfg["DiagnosticsMaxFiles"]=2;cfg["DiagnosticsMaxRowsPerTurn"]=32;settingsReads=dbReads=opens=writes=0;openFailure=writeFailure=false;logLocator=L"logs\\StackingDiagnostics-path.log";GC.game.turn=1;}
+void fresh(){CvStackingDiagnostics::Reset();cfg.clear();cfg["DiagnosticsMemoryInterval"]=0;cfg["DiagnosticsMaxFileKB"]=64;cfg["DiagnosticsMaxFiles"]=2;cfg["DiagnosticsMaxRowsPerTurn"]=32;settingsReads=dbReads=opens=writes=0;openFailure=writeFailure=flushFailure=false;logLocator=L"logs\\StackingDiagnostics-path.log";GC.game.turn=1;}
 DWORD WINAPI concurrentStatus(LPVOID){for(int i=0;i<100;++i){CvStackingDiagnostics::SetLevel(i%3);const char*p=CvStackingDiagnostics::GetStatus();if(!p||!p[0])return 1;}return 0;}
 int main(){
  CvUnit unit(7),dead(8);dead.dead=true;CvPlayer player;player.units.push_back(&unit);player.units.push_back(&dead);
@@ -64,6 +71,39 @@ int main(){
  fresh();openFailure=true;CvStackingDiagnostics::SetLevel(1);expect(failed&&output==NULL,"open failure latched");int oldOpens=opens;for(int i=0;i<8;++i)CvStackingDiagnostics::Record(1,0,"FAIL","x");expect(opens==oldOpens,"open failure does not retry spam");expect(string(CvStackingDiagnostics::GetStatus()).find("unavailable")!=string::npos,"open failure visible");openFailure=false;CvStackingDiagnostics::SetLevel(1);expect(!failed&&output!=NULL,"explicit setter retries after failure");writeFailure=true;CvStackingDiagnostics::Record(1,0,"FAIL","write");expect(failed&&output==NULL,"write failure latched and closed");writeFailure=false;
  fresh();logLocator=L"C:\\"+wstring(400,L'x')+L"\\locator.log";CvStackingDiagnostics::SetLevel(1);expect(failed&&opens==0,"oversized engine path fails before open");fresh();GetFullPathNameW(L"logs\\",MAX_PATH,directory,NULL);wcsncat_s(directory,MAX_PATH,wstring(190,L'x').c_str(),_TRUNCATE);strcpy_s(prefix,sizeof(prefix),"long-test-prefix-long-test-prefix-long-test-prefix");CvStackingDiagnostics::SetLevel(1);expect(failed&&opens==0,"filename formatting truncation fails before open");
  fresh();CvStackingDiagnostics::SetLevel(2);HANDLE t=CreateThread(NULL,0,concurrentStatus,NULL,0,NULL);for(int i=0;i<100;++i)CvStackingDiagnostics::Record(1,0,"THREAD","row=%d",i);DWORD result=1;expect(t!=NULL&&WaitForSingleObject(t,10000)==WAIT_OBJECT_0,"concurrent recursive logging lock completes");if(t){GetExitCodeThread(t,&result);CloseHandle(t);}expect(result==0,"TLS status remains valid during concurrent toggles");CvStackingDiagnostics::Reset();expect(CvStackingDiagnostics::GetLevel()==0&&prefix[0]==0&&!output,"reset restores XML default and starts new identity next use");
+
+ fresh();cfg["DiagnosticsFlushIntervalMilliseconds"]=0;cfg["DiagnosticsFlushEveryRows"]=4;CvStackingDiagnostics::SetLevel(1);
+ CvStackingDiagnostics::Record(1,0,"BUFFER","row=1");CvStackingDiagnostics::Record(1,0,"BUFFER","row=2");
+ expect(countText(slurpCurrent(false),"|BUFFER|")==0&&pendingWrites==2,"bounded buffering avoids per-row disk writes");
+ CvStackingDiagnostics::Record(1,0,"BUFFER","row=3");CvStackingDiagnostics::Record(1,0,"BUFFER","row=4");
+ expect(countText(slurpCurrent(false),"|BUFFER|")==4&&pendingWrites==0,"row threshold flushes live-readable batch");
+ CvStackingDiagnostics::Record(1,0,"BUFFER","manual");CvStackingDiagnostics::Flush();expect(slurpCurrent(false).find("manual")!=string::npos,"explicit flush works without level change");
+ CvStackingDiagnostics::Record(1,0,"LONG_PLAN","critical");expect(slurpCurrent(false).find("critical")!=string::npos,"critical histories flush immediately");
+ fresh();cfg["DiagnosticsImmediateFlush"]=1;CvStackingDiagnostics::SetLevel(1);CvStackingDiagnostics::Record(1,0,"BUFFER","immediate");expect(slurpCurrent(false).find("immediate")!=string::npos,"XML restores immediate crash-trace mode");
+ fresh();cfg["DiagnosticsFlushEveryRows"]=100;cfg["DiagnosticsFlushIntervalMilliseconds"]=1;CvStackingDiagnostics::SetLevel(1);lastFlush=GetTickCount()-10;CvStackingDiagnostics::Record(1,0,"BUFFER","timed");expect(slurpCurrent(false).find("timed")!=string::npos,"elapsed threshold checked during record without a background thread");
+ fresh();CvStackingDiagnostics::SetLevel(1);CvStackingDiagnostics::Record(1,0,"BUFFER","flush_failure");flushFailure=true;CvStackingDiagnostics::Flush();expect(failed&&!output,"flush failure disables further logging safely");flushFailure=false;
+ fresh();cfg["DiagnosticsCategoryMask"]=2;CvStackingDiagnostics::SetLevel(2);CvStackingDiagnostics::Record(1,0,"PLAN","filtered");CvStackingDiagnostics::Record(1,0,"REINFORCEMENT","kept");CvStackingDiagnostics::Record(1,0,"LONG_PLAN","critical_mask");
+ s=slurpCurrent();expect(s.find("filtered")==string::npos&&s.find("kept")!=string::npos&&s.find("critical_mask")!=string::npos,"category mask skips tactical rows but retains military and safety anomalies");
+ expect(!CvStackingDiagnostics::EnabledCategory(2,0,"PLAN_ASSIGN"),"caller can skip disabled detail collection");
+ fresh();cfg["DiagnosticsVerboseStartTurn"]=5;cfg["DiagnosticsVerboseEndTurn"]=6;CvStackingDiagnostics::SetLevel(2);expect(!CvStackingDiagnostics::Enabled(2,0)&&CvStackingDiagnostics::Enabled(1,0),"before verbose window summary remains enabled");GC.game.turn=5;expect(CvStackingDiagnostics::Enabled(2,0),"verbose starts on configured turn");GC.game.turn=6;expect(CvStackingDiagnostics::Enabled(2,0),"verbose includes last configured turn");GC.game.turn=7;expect(!CvStackingDiagnostics::Enabled(2,0),"verbose stops after configured window");
+ fresh();cfg["DiagnosticsSummaryInterval"]=5;CvStackingDiagnostics::SetLevel(1);CvStackingDiagnostics::AfterPlayerUnitAI(player);expect(countText(slurpCurrent(),"|DECISION_SUMMARY|")==0,"post-AI snapshot honors summary interval");GC.game.turn=5;CvStackingDiagnostics::AfterPlayerUnitAI(player);expect(countText(slurpCurrent(),"|DECISION_SUMMARY|")==1,"post-AI snapshot emits on sample turn");
+ fresh();cfg["DiagnosticsCategoryMask"]=2;CvStackingDiagnostics::SetLevel(1);CvAIOperation op;player.operations.push_back(&op);CvStackingDiagnostics::AfterPlayerUnitAI(player);s=slurpCurrent();expect(s.find("|OPERATION_STATUS|")!=string::npos&&s.find("neededBuild=2 training=1")!=string::npos,"military-only filter retains operation/production lifecycle without unit snapshots");player.operations.clear();
+ fresh();CvStackingDiagnostics::Flush();expect(!output&&!opens,"manual flush never starts disabled logging");
+ // Isolated actual-CRT output benchmark, not a game or whole-turn benchmark.
+ double timings[2][3];LARGE_INTEGER freq;QueryPerformanceFrequency(&freq);
+ for(int repeat=0;repeat<3;++repeat)for(int immediate=0;immediate<2;++immediate)
+ {
+  fresh();cfg["DiagnosticsMaxFileKB"]=65536;cfg["DiagnosticsMaxRowsPerTurn"]=65536;cfg["DiagnosticsImmediateFlush"]=immediate;cfg["DiagnosticsFlushIntervalMilliseconds"]=0;CvStackingDiagnostics::SetLevel(2);
+  string payload(250,'x');LARGE_INTEGER start,end;QueryPerformanceCounter(&start);
+  for(int i=0;i<1000;++i)CvStackingDiagnostics::Record(2,0,"BENCH","index=%d value=%s",i,payload.c_str());
+  CvStackingDiagnostics::Flush();QueryPerformanceCounter(&end);timings[immediate][repeat]=(double)(end.QuadPart-start.QuadPart)/freq.QuadPart;
+  expect(costs.recorded==1000&&costs.dropped==0,"benchmark retains all records");
+  string bytes=slurpCurrent(false);expect(countText(bytes,"|BENCH|")==1000,"buffer mode preserves every benchmark row");
+ }
+ for(int mode=0;mode<2;++mode){double*a=timings[mode];if(a[0]>a[1]){double t=a[0];a[0]=a[1];a[1]=t;}if(a[1]>a[2]){double t=a[1];a[1]=a[2];a[2]=t;}if(a[0]>a[1]){double t=a[0];a[0]=a[1];a[1]=t;}}
+ printf("IOBENCH bufferedMedianSeconds=%.6f immediateMedianSeconds=%.6f immediateOverBuffered=%.3f rows=1000 repeats=3\n",timings[0][1],timings[1][1],timings[1][1]/timings[0][1]);
+ CvStackingDiagnostics::Reset();
+
  printf("diagnostics core policy regression: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }
 """
