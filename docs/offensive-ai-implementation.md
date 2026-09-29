@@ -34,3 +34,7 @@ Machine-readable evidence and each test's output: `work/test-runs/offensive-todo
 - All 15 offline suites pass, including 89 offensive policy checks, 40 collateral/production integration checks, 135 existing allocation checks, 55 diagnostics UI checks, nine new geometry checks and 17 parser cases. Existing combat/production/cache/observer suites also passed; their detailed counts and limitations remain in the captured logs.
 
 Final evidence: `work/test-runs/offensive-todo-offline/release.json`, `checks.json` and individual logs. Source and documentation commits use the user's Git identity; nothing was pushed or published.
+
+## Runtime smoke follow-up — 29–30 September 2026
+
+See [runtime smoke validation](runtime-smoke-20260929.md) for live results, the corrected D-key constant, exact save/reload comparison, and the campaign replay cutoff. The current DLL remains `Release-5.4.6-18-gef5f17dc6 Clean`; UI source is `014d9cc76`. Broader offensive scenario acceptance and whole-game logging performance remain pending.
