@@ -1128,7 +1128,7 @@ end
 LuaEvents.StackMoveModeChanged.Add(function(active) stackMoveMode = active; rButtonDown = false end)
 function InputHandler( uiMsg, wParam, lParam )
     if stackDiagnosticsHotkeyEnabled and Game.GetStackingDiagnosticsLevel and
-        uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_D and UIManager:GetControl() and UIManager:GetShift() and
+        uiMsg == KeyEvents.KeyDown and wParam == Keys.D and UIManager:GetControl() and UIManager:GetShift() and
         UI.GetInterfaceMode() == InterfaceModeTypes.INTERFACEMODE_SELECTION then
         LuaEvents.StackDiagnosticsToggle()
         return true

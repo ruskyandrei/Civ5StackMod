@@ -108,7 +108,7 @@ LuaEvents.StackDiagnosticsToggle();expect(Controls.StackDiagnostics.hidden,true,
 LuaEvents.StackDiagnosticsToggle();Events.GameplaySetActivePlayer();expect(Controls.StackDiagnostics.hidden,true,'active-player switch clears manual access')
 UI.GetInterfaceMode=function()return interfaceMode end;interfaceMode=InterfaceModeTypes.INTERFACEMODE_SELECTION
 UIManager.GetControl=function()return controlDown end;UIManager.GetShift=function()return shiftDown end
-Keys.VK_D=68;InterfaceModeMessageHandler={};DefaultMessageHandler={};UI.IsTouchScreenEnabled=function()return false end
+Keys.D=68;InterfaceModeMessageHandler={};DefaultMessageHandler={};UI.IsTouchScreenEnabled=function()return false end
 controlDown=false;shiftDown=false
 """)
 for relative in ['UI_bc1/Improvements/WorldView.lua','(2) Vox Populi/Core Files/Overrides/WorldView.lua']:
@@ -116,12 +116,12 @@ for relative in ['UI_bc1/Improvements/WorldView.lua','(2) Vox Populi/Core Files/
  lua.execute('SavedPanelContext=ContextPtr;ContextPtr={SetInputHandler=function(self,f)self.input=f end}')
  lua.execute(bridge[a:b]);lua.execute('DiagnosticBridge=ContextPtr.input;ContextPtr=SavedPanelContext')
  lua.execute(r"""
-expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'plain D is not a diagnostics shortcut')
-controlDown=true;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'Ctrl+D alone is not captured')
-shiftDown=true;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),true,'actual Ctrl+Shift+D bridge consumes shortcut')
+expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.D,0),false,'plain D is not a diagnostics shortcut')
+controlDown=true;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.D,0),false,'Ctrl+D alone is not captured')
+shiftDown=true;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.D,0),true,'actual Ctrl+Shift+D bridge consumes shortcut')
 expect(Controls.StackDiagnostics.hidden,false,'actual bridge opens manual panel');expect(Controls.StackDiagnosticsOpen.hidden,true,'actual bridge keeps normal button hidden')
-expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),true,'actual bridge toggles closed');expect(Controls.StackDiagnostics.hidden,true,'bridge closes panel')
-interfaceMode=99;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'non-selection mode does not intercept shortcut');interfaceMode=0
+expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.D,0),true,'actual bridge toggles closed');expect(Controls.StackDiagnostics.hidden,true,'bridge closes panel')
+interfaceMode=99;expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.D,0),false,'non-selection mode does not intercept shortcut');interfaceMode=0
 controlDown=false;shiftDown=false
 """)
 # Disabled XML preference must also avoid consuming the key in the real WorldView bridge.
@@ -131,7 +131,7 @@ controlDown=true;shiftDown=true
 """)
 lua.execute('SavedPanelContext=ContextPtr;ContextPtr={SetInputHandler=function(self,f)self.input=f end}')
 lua.execute(bridge[a:b]);lua.execute('DiagnosticBridge=ContextPtr.input;ContextPtr=SavedPanelContext')
-lua.execute("expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.VK_D,0),false,'XML disables shortcut capture')")
+lua.execute("expect(DiagnosticBridge(KeyEvents.KeyDown,Keys.D,0),false,'XML disables shortcut capture')")
 
 xml=r/'(3a) VP - EUI Compatibility Files/LUA/StackPanel.xml';tree=ET.parse(xml)
 ids={e.attrib['ID'] for e in tree.iter() if 'ID' in e.attrib}
