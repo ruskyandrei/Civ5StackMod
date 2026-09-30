@@ -83,3 +83,54 @@ The user's harbor-fire assumption matches the deployed code/configuration. `NewC
 This case strengthens the need to share the siege-readiness decision with positioning and tactical postures. A rejected assault should lead to safe collection/reinforcement, a sufficiently damaging coordinated attack, or a bounded reassessment. Local skirmishing can remain useful when its expected benefit justifies its attrition, but it should not consume the force needed for a viable assault while city damage is erased by healing. Check blockade opportunities and garrison/field-unit damage as concrete benefits rather than banning every attack after a capture-gate rejection. Audit the hard-coded 13-turn siege horizon and expose it to XML if changed; it is distinct from the 13-unit tactical-search cap.
 
 Add low-cost stable attacker/defender IDs, owners and city-versus-unit attacker kind to Summary combat, without per-event map scans. Together with siege-phase reasons, this will let future traces distinguish city fire, defender attacks, American attacks on field units, and ineffective city bombardment. Put unit type/position detail in bounded snapshots or filtered Verbose windows. London's evidence supports an execution/coordination issue; it does not by itself demonstrate an excessive defensive bonus introduced by stacking.
+
+
+## Campaign follow-up reported at turn 204
+
+Recorded 2026-09-30. The game continued during this read-only investigation; the frozen snapshot in `C:/Users/rusit/Documents/Codex/Civ5StackMod-analysis/siege-review-20260930/followup-turn204` contains native turns 0–208 plus the relevant Polynesian/Celtic/English VP logs. `followup-evidence.json` records input hashes and selected event references. Conclusions below about campaign progress use captures through turn 204. No game interaction or gameplay changes were performed.
+
+The native logs confirm Memphis changed from Egypt to the Celts on turn 195. On 193 recorded ranged attacks reduced its HP from 145 to 73; on 194 further attacks reduced 97 to 4. On 195 its capture gate listed 17 candidates, eight eligible melee, required damage 37 and expected damage 153. A ranged hit reduced the city from 37 to 3, then a melee attack with 31 retaliation captured it. This demonstrates a successful bombardment-plus-capture sequence with a substantially larger available force than the early attack; it does not identify every participating unit type or establish that all seventeen contributed. Deferred combat resolution also limits exact synchronous turn-ledger interpretation.
+
+English combat captures through 204 include Philadelphia on 190, Los Angeles on 193, Seattle on 195 and San Francisco on 203. Their old/new city IDs and ownership changes are recorded. At Philadelphia the last ranged hits reduced 77 HP to 1, followed by a melee capture with 29 retaliation. The user's observation identifies the navy as the successful force; Summary combat does not itself record the capturing unit's domain. These outcomes are useful positive comparison cases for coordination, capture capability and damage exceeding healing, rather than proof that every offensive is healthy.
+
+### Djenne's siege has faded while the war continues
+
+Polynesia's last recorded attack on Djenne was ranged fire on turn 137. No Polynesian melee attack on the city is recorded anywhere in this snapshot. Early capture-gate assessments sometimes had one or two eligible melee (24 of 40 `attempt` assessments across the complete snapshot); that label still did not become an actual melee order/result. The previously reviewed 130–143 window remains a distinct seven-assessment case with zero eligible melee.
+
+The land zone has continuously used `P_WITHDRAW` from 146 through the snapshot's last tactical record at 208. Thus the turn-204 observation follows 59 consecutive turns of withdrawal posture. City attacks from another owner are recorded later, including player 63 ranged fire on 179 with Djenne at 422 HP before and 414 after; that is not Polynesian bombardment. Do not assume the city has stayed at its former 1 HP throughout the war.
+
+No replacement city-attack operation targeting (13,49) is present after the original operation's handoff on 62/63. Polynesia has since recruited attacks against other coordinates. Its current military target scoring still mentions Djenne, but that does not prove an army was committed or a restart feasible.
+
+The support history includes these attempts with no recorded `front_arrival` or `joined_formation` for the target:
+
+| Dispatch turn | Unit | ETA | Release turn |
+| --- | ---: | ---: | ---: |
+| 143 | 2213 | 2 | 149 |
+| 146 | 2535 | 2 | 152 |
+| 170 | 3792 | 1 | 176 |
+| 179 | 3760 | 1 | 180 |
+
+These releases are not proof the units never moved or died: the existing `release_stale` label conflates an unusable/missing unit, vanished objective and stale recorded progress. Identity, route and actual movement need explicit diagnostics. Progress is currently updated by `RecordTransfer`, so later tactical movement can occur without a new transfer/progress record.
+
+### Confirmed objective-expiry edge case
+
+The target's land objective expired on 154 and again on 180. A capture plan/observation on 167 reconstructed/refreshed it; support was dispatched to that same objective on 179, but the objective expired immediately on 180 and unit 3760 was released in the same refresh.
+
+`CvStackingOffensiveAI::Refresh` expires an inactive objective when `turn - refreshed` exceeds `AIOffensiveSupportMemoryTurns` (default 12). `RecordTransfer` updates the unit commitment without refreshing or revalidating the corresponding objective lifetime. Consequently a valid dispatch at the end of the memory window can lose its objective before its promised arrival. The observed 167/179/180 sequence matches that code path. Simply increasing the memory setting delays the same boundary and is not a complete fix.
+
+Planned fix: revalidate target ownership/war, route and objective value before accepting support; keep the objective alive while credible committed support is progressing, or reject/cancel that dispatch deliberately with an explicit reason. Maintain bounded expiry for genuinely obsolete or stalled targets, and distinguish expired observation memory from a strategic choice to abandon the siege. Check actual unit movement as well as transfer records when aging commitments. Record each release's cause and objective age, last progress, dispatch age and ETA compactly.
+
+`PlotReinforcementMoves` also returns immediately for withdrawal posture. Capture-gate observations are intermittent and ceased for this target after 181 in the snapshot, allowing the handed-off objective to disappear while the war remains active. A bounded strategic review must operate independently of local capture selection: either assemble a credible new force, retain a deliberate lower-cost objective, or stop feeding support into an abandoned attack. Diplomatic peace remains governed by the existing diplomacy system; these logs alone do not establish that continuing the war is itself a diplomacy bug.
+
+Acceptance additions: support dispatched one turn before objective expiry; moving support crossing a tactical handoff; credible ETA progress with no new transfer call; genuinely dead/reassigned/stalled support; withdrawn-but-still-at-war target; deliberately abandoned target; renewed low-HP capture opportunity; successful Memphis/naval capture controls. All new expiry grace, review intervals and work budgets remain XML-configurable. Compare whether promises result in actual arrivals and capture orders, not just recruitment or candidate logs.
+
+
+## User map reference at turn 210
+
+The user supplied the Djenne screenshot at turn 210. The original image is preserved as `C:/Users/rusit/Documents/Codex/Civ5StackMod-analysis/siege-review-20260930/followup-turn204/djenne-layout-reference.png`, with its source path, SHA256 and byte count in `djenne-layout-reference.json`.
+
+The screenshot shows Djenne directly north of Polynesia's core, with Tahiti to its west and Honolulu/Samoa to the south. There is substantial adjoining land and roads near the approach. Portugal's Goa is to the east. This layout does not show an obvious mandatory naval crossing or isolated overseas objective, and it is consistent with the short approach ETAs recorded for some support units. The image does not certify each unit's final attack path or availability; the regression should verify roles, health, other commitments, terrain/stack congestion and legal paths using actual game services.
+
+Use this as a specific accessible-core-city regression: while the war continues, a withdrawn/expired local siege must still receive a bounded strategic assessment. If feasible, assemble nearby healthy siege, screens and a reserved capturer, preserve progressing arrivals through objective expiry, and execute the assault as a coordinated wave. Otherwise record a deliberate reassessment/reassignment with a reason. Do not require conquering this target irrespective of other fronts, but do not let proximity, existing roads and newly dispatched support disappear from consideration because the tactical zone is withdrawing or observation memory expires.
+
+The map supports prioritizing allocation/commitment and assault execution over a generic sea-crossing explanation. It complements the confirmed 179/180 expiry edge and the absence of recorded Polynesian melee city attacks; it does not by itself establish which individual troops could have captured Djenne at its earlier 1-HP windows.
