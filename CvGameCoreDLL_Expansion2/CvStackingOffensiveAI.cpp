@@ -70,6 +70,7 @@ namespace
     std::map<Key,ProductionClaim> production;
     std::map<Key,int> assemblyHolds;
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
+    bool shuttingDown=false;
     int Setting(const char* name,int value) { return CvStacking::GetInt(name,value); }
     bool Live(CvAIOperation* op)
     { return op && op->GetOperationState()!=AI_OPERATION_STATE_ABORTED && op->GetOperationState()!=AI_OPERATION_STATE_SUCCESSFUL_FINISH; }
@@ -87,6 +88,7 @@ namespace
     }
     void Refresh()
     {
+        if(shuttingDown) return;
         const int turn=GC.getGame().getGameTurn();
         if(currentTurn==turn) return;
         currentTurn=turn;
@@ -517,7 +519,7 @@ namespace CvStackingOffensiveAI
         ++extraBatches[owner]; return true;
     }
     bool Enabled(PlayerTypes owner)
-    { return CvStackingAI::Enabled(owner) && Setting("AIOffensiveSupportEnabled",1)!=0; }
+    { return !shuttingDown && CvStackingAI::Enabled(owner) && Setting("AIOffensiveSupportEnabled",1)!=0; }
     bool IsSiegeUnit(const CvUnit* unit)
     {
         return Usable(unit) && unit->getDomainType()==DOMAIN_LAND && unit->IsCanAttackRanged() &&
@@ -953,7 +955,14 @@ namespace CvStackingOffensiveAI
         }
     }
     void Reset()
-    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); assemblyHolds.clear(); currentTurn=-1; }
+    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); assemblyHolds.clear(); currentTurn=-1; shuttingDown=false; }
+    void Shutdown()
+    {
+        // Operation destructors abort armies after earlier player objects have
+        // already been destroyed. They must not refresh production/war state.
+        Reset();
+        shuttingDown=true;
+    }
     bool CanCapture(const CvUnit* u,const CvPlot* city)
     {
         return Usable(u) && city && city->isCity() && u->IsCanAttackWithMove() && !u->isNoCapture() &&

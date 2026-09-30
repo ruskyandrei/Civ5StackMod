@@ -399,7 +399,16 @@ void firingApproachTests(){
  siege.pathOK=false;siege.end=&blocked;check(!AttackApproach(&siege,&target,3,eta),"unreachable alternative does not create a ready siege unit");siege.pathOK=true;
  siege.eta=4;siege.end=&blocked;check(!AttackApproach(&siege,&target,3,eta),"late alternate firing route does not enter current wave");
 }
-int main(){policyTests();routeTests();openingTests();supportTests();capsTests();captureTests();navalTests();marchTests();expiryProgressTests();captureCommitmentTests();assaultTests();productionTests();stagedReserveTests();preparationProductionTests();stagePlacementTests();captureOrderTests();emptyApproximatePathTests();reassignmentTests();captureArrivalRegressionTests();cityAttackGateTests();firingApproachTests();printf("offensive support: %d checks, %d failures\n",checks,failed);return failed?1:0;}
+void shutdownTests(){
+ init();production[Key(0,7)]=ProductionClaim();
+ check(CvStackingOffensiveAI::Enabled(0),"offensive bookkeeping active in live game");
+ CvStackingOffensiveAI::Shutdown();
+ check(!CvStackingOffensiveAI::Enabled(0),"teardown disables callbacks before player destruction");
+ check(production.empty()&&objectives.empty()&&commitments.empty(),"teardown releases reconstructed histories");
+ GC.game.turn=101;Refresh();check(currentTurn==-1,"teardown refresh does not query destroyed players");
+ CvStackingOffensiveAI::Reset();check(CvStackingOffensiveAI::Enabled(0),"new game reset re-enables live bookkeeping");
+}
+int main(){shutdownTests();policyTests();routeTests();openingTests();supportTests();capsTests();captureTests();navalTests();marchTests();expiryProgressTests();captureCommitmentTests();assaultTests();productionTests();stagedReserveTests();preparationProductionTests();stagePlacementTests();captureOrderTests();emptyApproximatePathTests();reassignmentTests();captureArrivalRegressionTests();cityAttackGateTests();firingApproachTests();printf("offensive support: %d checks, %d failures\n",checks,failed);return failed?1:0;}
 '''
 cpp=out/'offensive-source-test.cpp';cpp.write_text(stubs+header+policy+clean(source)+capture_harness+capture_actual+tests,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows';env=os.environ.copy()

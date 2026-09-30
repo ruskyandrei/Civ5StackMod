@@ -11,6 +11,7 @@
 
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingRules.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvGlobals.h"
 #include "CvRandom.h"
 #include "ICvDLLUserInterface.h"
@@ -2975,6 +2976,7 @@ void CvGlobals::init()
 //
 void CvGlobals::uninit()
 {
+	CvStackingOffensiveAI::Shutdown();
 	CvPlayerAI::freeStatics();
 	CvTeam::freeStatics();
 

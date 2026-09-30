@@ -34,6 +34,7 @@ namespace CvStackingOffensiveAI
     CvPlot* CityTarget(const CvAIOperation* operation);
     void Handoff(CvAIOperation* operation);
     void Reset();
+    void Shutdown();
     void ObserveOperation(CvAIOperation* operation);
     void ObserveSiege(PlayerTypes owner, CvCity* city);
     void AddDemands(CvUnit* unit, std::vector<Demand>& result);
