@@ -94,7 +94,7 @@ namespace
             !strcmp(category,"CITY") || !strncmp(category,"SAMPLE_",7) || !strncmp(category,"DECISION_",9) || !strcmp(category,"UNIT_DECISION")) return 1;
         if(!strncmp(category,"COMBAT_",7) || !strcmp(category,"CITY_CAPTURE")) return 8;
         if(!strcmp(category,"MEMORY")) return 32;
-        if(!strcmp(category,"DIAGNOSTIC_COST")) return 16;
+        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF")) return 16;
         if(!strncmp(category,"PLAN",4) || !strncmp(category,"RECRUIT",7) || !strcmp(category,"LONG_PLAN") || !strcmp(category,"ATTACK_GATE")) return 4;
         return 2;
     }
