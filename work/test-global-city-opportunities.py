@@ -40,7 +40,8 @@ static int plotDistance(const CvPlot&a,const CvPlot&b){return abs(a.id-b.id);}
 static CvPlot*iterateRingPlots(CvPlot*p,int n){return n>0&&(size_t)n<=p->neighbors.size()?p->neighbors[n-1]:NULL;}
 struct CvCity{CvPlot*location;int hp,maxHP;CvCity(CvPlot*p=NULL):location(p),hp(1),maxHP(300){}CvPlot*plot()const{return location;}int GetMaxHitPoints()const{return maxHP;}int getDamage()const{return maxHP-hp;}};
 static bool enabled=true,retained=false,commitment=false,sameCommitment=false,allowSiege=true,removeShooter=false,removeCaptor=false,abortCapture=false;
-static int shots=0,captures=0,withdrawals=0,armyHolds=0,observations=0,staleReads=0,processedCalls=0,pathCalls=0,focusDeletes=0,retaliation=99,captureDamage=2,currentTurn=1;
+static int shots=0,captures=0,withdrawals=0,armyHolds=0,observations=0,extraTacticalWork=0,staleReads=0,processedCalls=0,pathCalls=0,focusDeletes=0,retaliation=99,captureDamage=2,currentTurn=1;
+static map<int,int>strategicObjectives;
 static int cityLimit=8,unitLimit=32,dangerPercent=0,captureQueries[4]={0};
 typedef pair<int,int>Key;static map<Key,int>assemblyHolds;
 static void Refresh(){}static int Setting(const char*,int n){return n;}
@@ -81,7 +82,7 @@ namespace CvStackingDiagnostics{void Record(int,int,const char*,const char*,...)
 namespace TacticalAIHelpers{int GetSimulatedDamageFromAttackOnCity(CvCity*,CvUnit*,CvPlot*,int&r,int&g){r=retaliation;g=0;return captureDamage;}void PerformRangedOpportunityAttack(CvUnit*){}pair<CvPlot*,int>FindSafestPlotInReach(CvUnit*u,bool){return make_pair(u->plot(),0);}}
 namespace CvStackingOffensiveAI{
  bool Enabled(int){return enabled;}bool HasCommitment(const CvUnit*,const CvPlot*p=NULL){return commitment&&(!p||sameCommitment);}bool ContinueSiege(int,CvCity*){return allowSiege;}
- void ObserveSiege(int,CvCity*){++observations;}CvUnit*GetReservedCapturer(int,CvCity*){return NULL;} // objective cap/no reservation on purpose
+ void ObserveSiege(int,CvCity*c){++observations;strategicObjectives[c->plot()->GetPlotIndex()]=1;}CvUnit*GetReservedCapturer(int,CvCity*){return NULL;} // Touch-equivalent persistent city objective; no reservation on purpose
  bool IsSiegeUnit(const CvUnit*u){return u&&u->ranged;}bool IsAssemblyHeld(const CvUnit*);void ReleaseAssemblyHold(CvUnit*);CvPlot*GetCaptureApproachNow(CvUnit*,CvCity*);bool CanCapture(const CvUnit*,const CvPlot*);
  bool TryStationaryCityFire(CvUnit*,const CvPlot*);
 }
@@ -91,7 +92,7 @@ struct CvTacticalAI{
  CvTacticalAI():m_pPlayer(&players[0]){}void Update();void PlotImmediateCityOpportunities();bool TryReservedCityCapture(CvPlot*);bool TryCityCaptureWithUnit(CvUnit*,CvPlot*);int ExecuteMoveToPlot(CvUnit*,CvPlot*,bool,int);
  void UpdateVisibility(){}void DropOldFocusAreas(){}void FindTacticalTargets(){}void ClearCurrentMoveUnits(int){}void DeleteFocusArea(CvPlot*){++focusDeletes;}void LogTacticalMessage(const CvString&){}
  void RecruitUnits(){currentFree.clear();for(size_t i=0;i<players[0].owned.size();++i)if(players[0].owned[i]->army<0)currentFree.push_back(players[0].owned[i]->id);}
- void ProcessDominanceZones(){for(size_t i=0;i<players[0].owned.size();++i){CvUnit*u=players[0].getUnit(players[0].owned[i]->id);if(!u||u->processed||!u->canUseNow())continue;if(u->army>=0){++armyHolds;u->processed=true;}else{++withdrawals;u->moves=0;}}}
+ void ProcessDominanceZones(){extraTacticalWork+=(int)strategicObjectives.size();for(size_t i=0;i<players[0].owned.size();++i){CvUnit*u=players[0].getUnit(players[0].owned[i]->id);if(!u||u->processed||!u->canUseNow())continue;if(u->army>=0){++armyHolds;u->processed=true;}else{++withdrawals;u->moves=0;}}}
  void UnitProcessed(int id){++processedCalls;CvUnit*u=players[0].getUnit(id);if(u)u->processed=true;}
 };
 '''
@@ -100,13 +101,14 @@ static int checks=0,failures=0;static void expect(const char*n,bool ok){++checks
 struct Fixture{
  CvPlot at,cityPlot,secondPlot;CvCity city,second;CvUnit unit;CvTacticalAI tactical;
  Fixture():at(29),cityPlot(30),secondPlot(31),city(&cityPlot),second(&secondPlot),unit(7){
-  enabled=true;retained=commitment=sameCommitment=removeShooter=removeCaptor=abortCapture=false;allowSiege=true;shots=captures=withdrawals=armyHolds=observations=staleReads=processedCalls=pathCalls=focusDeletes=0;retaliation=99;captureDamage=2;cityLimit=8;unitLimit=32;dangerPercent=0;assemblyHolds.clear();captureQueries[0]=0;
+  enabled=true;retained=commitment=sameCommitment=removeShooter=removeCaptor=abortCapture=false;allowSiege=true;shots=captures=withdrawals=armyHolds=observations=extraTacticalWork=staleReads=processedCalls=pathCalls=focusDeletes=0;retaliation=99;captureDamage=2;cityLimit=8;unitLimit=32;dangerPercent=0;assemblyHolds.clear();strategicObjectives.clear();captureQueries[0]=0;
   players[0].owned.clear();players[0].units.clear();GC.map.plots.clear();unit.position=&at;at.units.push_back(&unit);cityPlot.city=&city;secondPlot.city=&second;cityPlot.neighbors.push_back(&at);secondPlot.neighbors.push_back(&at);
   players[0].owned.push_back(&unit);players[0].units[7]=&unit;GC.map.plots[at.id]=&at;GC.map.plots[cityPlot.id]=&cityPlot;GC.map.plots[secondPlot.id]=&secondPlot;tactical.m_AllTargets.push_back(CvTacticalTarget(cityPlot.id));
  }
 };
 int main(){
- {Fixture f;f.tactical.Update();expect("realUpdate instantcapture runs before withdraw",captures==1&&withdrawals==0&&f.cityPlot.owner==0);expect("missingobjective still permits adjacent fallback",observations>=1&&processedCalls==1);expect("adjacentfallback creates no approachpath",pathCalls==1);}
+ {Fixture f;f.tactical.Update();expect("realUpdate instantcapture runs before withdraw",captures==1&&withdrawals==0&&f.cityPlot.owner==0);expect("missingobjective still permits adjacent fallback",observations==0&&processedCalls==1);expect("instantcapture needs no new strategicobjective",strategicObjectives.empty()&&extraTacticalWork==0);expect("adjacentfallback creates no approachpath",pathCalls==1);}
+ {Fixture f;f.city.hp=30;captureDamage=2;f.tactical.Update();expect("weakcity insufficient adjacentmelee cannot capture",captures==0&&shots==0&&f.cityPlot.owner==1);expect("insufficient attack creates no strategicobjective in eitherweakbranch",observations==0&&strategicObjectives.empty());expect("insufficient attack adds no subsequent tacticalplanning work",extraTacticalWork==0);expect("insufficient attack retains ordinarywithdraw without pathwork",withdrawals==1&&pathCalls==0);}
  {Fixture f;f.unit.ranged=true;f.unit.army=42;f.city.hp=300;f.tactical.Update();expect("armyexcluded battery fires before operationalhold",shots==1&&armyHolds==0&&f.tactical.currentFree.empty());expect("stationaryfire has zero pathwork",pathCalls==0);}
  {Fixture f;f.unit.ranged=true;f.unit.army=42;f.city.hp=300;f.unit.danger=49;f.tactical.Update();expect("exposedbattery still yields to armyprocessing",shots==0&&armyHolds==1);}
  {Fixture f;f.unit.processed=true;f.tactical.Update();expect("arbitraryprocessed capturer remains unavailable",captures==0&&pathCalls==0);}
@@ -135,12 +137,15 @@ int main(){
 base=prefix+function(off,'bool Usable(')+'\nnamespace CvStackingOffensiveAI{\n'+off_methods+'\n}\n'+methods
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows';env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')
 for key in ('CL','_CL_','LINK'):env.pop(key,None)
-def run(label,body):
- fixture=base+body+tests;cpp=out/(label+'.cpp');cpp.write_text(fixture,encoding='utf-8');exe=out/(label+'.exe')
+def run(label,body,method_source=None):
+ fixture=(base if method_source is None else base.replace(methods,method_source))+body+tests;cpp=out/(label+'.cpp');cpp.write_text(fixture,encoding='utf-8');exe=out/(label+'.exe')
  c=subprocess.run([str(vc/'Vc7/bin/cl.exe'),'/nologo','/EHsc','/MT','/O2','/Z7',str(cpp),'/Fo'+str(out/(label+'.obj')),'/Fe'+str(exe)],cwd=out,env=env,capture_output=True,text=True,timeout=60);(out/(label+'-compile.log')).write_text(c.stdout+c.stderr,encoding='utf-8')
  if c.returncode:print(c.stdout+c.stderr);raise SystemExit(c.returncode)
  r=subprocess.run([str(exe)],cwd=out,capture_output=True,text=True,timeout=30);(out/(label+'-output.log')).write_text(r.stdout+r.stderr,encoding='utf-8');return r,fixture
 r,fixture=run('current',update);print(r.stdout+r.stderr,end='')
 old=subprocess.check_output(['git','show','86efe6178:CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'],cwd=root).decode('utf-8-sig');control,_=run('control',function(old,'void CvTacticalAI::Update('));print('Previous global scheduling control rejected as expected' if control.returncode==1 else 'FAIL prepass scheduling did not fail assertions')
-result=r.returncode or (0 if control.returncode==1 else 1)
-(out/'result.json').write_text(json.dumps(dict(fixture_sha256=hashlib.sha256(fixture.encode()).hexdigest(),returncode=result,output=r.stdout+r.stderr,control_commit='86efe6178',control_returncode=control.returncode,control_output=control.stdout+control.stderr,scope='Actual tacticalUpdate/newglobalpass/capturefallback/captureexecutor/movement and stationaryfire/availability helpers; deterministic armyhold/withdraw/range/danger/path/mission services. No native DLLbuild/game launch.'),indent=2),encoding='utf-8');sys.exit(result)
+objective_old=subprocess.check_output(['git','show','b9d60c04b:CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'],cwd=root).decode('utf-8-sig')
+objective_methods=methods.replace(function(tactical,'void CvTacticalAI::PlotImmediateCityOpportunities('),function(objective_old,'void CvTacticalAI::PlotImmediateCityOpportunities('))
+objective_control,_=run('objective-control',update,objective_methods);print('Previous objective-creating global pass rejected as expected' if objective_control.returncode==1 else 'FAIL objective-creating global pass did not fail assertions')
+result=r.returncode or (0 if control.returncode==1 and objective_control.returncode==1 else 1)
+(out/'result.json').write_text(json.dumps(dict(fixture_sha256=hashlib.sha256(fixture.encode()).hexdigest(),returncode=result,output=r.stdout+r.stderr,control_commit='86efe6178',control_returncode=control.returncode,control_output=control.stdout+control.stderr,objective_control_commit='b9d60c04b',objective_control_returncode=objective_control.returncode,objective_control_output=objective_control.stdout+objective_control.stderr,scope='Actual tacticalUpdate/newglobalpass/capturefallback/captureexecutor/movement and stationaryfire/availability helpers; deterministic objective creation/planning-count, armyhold/withdraw/range/danger/path/mission services. ObserveSiege models Touch by persistent unique city IDs; follow-on planning count is a service stub, not a native time measurement. No native DLLbuild/game launch.'),indent=2),encoding='utf-8');sys.exit(result)

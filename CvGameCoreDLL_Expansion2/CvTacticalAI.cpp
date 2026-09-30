@@ -974,7 +974,6 @@ void CvTacticalAI::PlotImmediateCityOpportunities()
 		cityPlots.push_back(plot->GetPlotIndex());
 		if(weak)
 		{
-			CvStackingOffensiveAI::ObserveSiege(m_pPlayer->GetID(),city);
 			if(TryReservedCityCapture(plot))
 			{
 				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"IMMEDIATE_CITY","target=%d action=capture_before_fire",plot->GetPlotIndex());
@@ -1009,7 +1008,6 @@ void CvTacticalAI::PlotImmediateCityOpportunities()
 		CvCity* city=plot->getPlotCity();
 		if((city->GetMaxHitPoints()-city->getDamage())*100<=city->GetMaxHitPoints()*weakPercent)
 		{
-			CvStackingOffensiveAI::ObserveSiege(m_pPlayer->GetID(),city);
 			if(TryReservedCityCapture(plot))
 			{
 				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"IMMEDIATE_CITY","target=%d action=capture_after_fire",plot->GetPlotIndex());
