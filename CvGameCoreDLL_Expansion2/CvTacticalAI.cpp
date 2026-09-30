@@ -7408,7 +7408,7 @@ const ReachablePlots& CvBasePosition::getReachablePlotsForUnit(const SUnitStats&
 {
 	static ReachablePlots emptyResult;
 
-	SPathFinderStartPos key(unit, freedPlots.read());
+	SPathFinderStartPos key(unit, freedPlots.read(), SPathFinderStartPos::LookupOnly());
 	TCachedMovePlots::const_iterator result = gReachablePlotsLookup.find(key);
 	if (result != gReachablePlotsLookup.end())
 		return result->second;
@@ -9367,7 +9367,63 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	return iResult;
 }
 
-static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode) 
+static int CalculateLeavingStackProtectionScore(const SUnitStats& unit, const CvTacticalPosition& assumedPosition)
+{
+ const CvUnit* pUnit = unit.pUnit;
+ const CvPlot* source = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
+ VirtualFriendlyStackQuery stack;
+ vector<const CvUnit*>& before = stack.candidates;
+ SUnitIDValueContainer& damage = stack.damage;
+ GetVirtualFriendlyStack(assumedPosition, source, pUnit, unit.iSelfDamage, before, damage);
+ vector<const CvUnit*> after = before;
+ after.erase(std::remove(after.begin(), after.end(), pUnit), after.end());
+ int score = 0;
+ for (size_t i = 0; i < after.size(); ++i)
+ {
+  const CvUnit* ranged = after[i];
+  if (!ranged->IsCanAttackRanged())
+   continue;
+  const int oldDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, before, damage, assumedPosition.GetUnitDamageDealt()));
+  const int newDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, after, damage, assumedPosition.GetUnitDamageDealt()));
+  if (newDanger > oldDanger)
+   score -= (newDanger - oldDanger) * CvStacking::GetInt("AIStackLeaveProtectorPenalty", 30) / max(1, ranged->GetMaxHitPoints());
+ }
+ return score;
+}
+
+// Ordinary destination siblings share one immutable source position. Keep this
+// memo local to that unit's enumeration, never across hypothetical attacks or
+// different searches, and reject reuse/admission after any scene callback.
+struct LeavingStackProtectionMemo
+{
+ bool ready;
+ const CvTacticalPosition* position;
+ const CvUnit* protector;
+ int sourceIndex, selfDamage, score;
+ unsigned long revision;
+ long scene;
+ LeavingStackProtectionMemo():ready(false),position(NULL),protector(NULL),sourceIndex(-1),selfDamage(0),score(0),revision(0),scene(0) {}
+ int Get(const SUnitStats& unit, const CvTacticalPosition& assumedPosition)
+ {
+  const bool cacheable = StackForecastContext();
+  const unsigned long currentRevision = cacheable ? gStackForecastRevision : 0;
+  const long currentScene = cacheable ? gStackForecastSceneEpoch : 0;
+  if (cacheable && ready && position == &assumedPosition && protector == unit.pUnit &&
+   sourceIndex == unit.iPlotIndex && selfDamage == unit.iSelfDamage && revision == currentRevision && scene == currentScene)
+   return score;
+  const int result = CalculateLeavingStackProtectionScore(unit, assumedPosition);
+  ready = cacheable && StackForecastContext() && gStackForecastRevision == currentRevision && gStackForecastSceneEpoch == currentScene;
+  if (ready)
+  {
+   position = &assumedPosition; protector = unit.pUnit;
+   sourceIndex = unit.iPlotIndex; selfDamage = unit.iSelfDamage;
+   revision = currentRevision; scene = currentScene; score = result;
+  }
+  return result;
+ }
+};
+
+static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, LeavingStackProtectionMemo* leavingProtection = NULL)
 {
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
@@ -9654,25 +9710,7 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
  {
   iDangerScore += ScoreStackPosition(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition);
   if (bMoving && !pUnit->IsCanAttackRanged())
-  {
-   const CvPlot* source = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
-   VirtualFriendlyStackQuery stack;
-   vector<const CvUnit*>& before = stack.candidates;
-   SUnitIDValueContainer& damage = stack.damage;
-   GetVirtualFriendlyStack(assumedPosition, source, pUnit, unit.iSelfDamage, before, damage);
-   vector<const CvUnit*> after = before;
-   after.erase(std::remove(after.begin(), after.end(), pUnit), after.end());
-   for (size_t i = 0; i < after.size(); ++i)
-   {
-    const CvUnit* ranged = after[i];
-    if (!ranged->IsCanAttackRanged())
-     continue;
-    const int oldDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, before, damage, assumedPosition.GetUnitDamageDealt()));
-    const int newDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, after, damage, assumedPosition.GetUnitDamageDealt()));
-    if (newDanger > oldDanger)
-     iBonusScore -= (newDanger - oldDanger) * CvStacking::GetInt("AIStackLeaveProtectorPenalty", 30) / max(1, ranged->GetMaxHitPoints());
-   }
-  }
+   iBonusScore += leavingProtection ? leavingProtection->Get(unit, assumedPosition) : CalculateLeavingStackProtectionScore(unit, assumedPosition);
  }
 	result->SetScore(iPlotScore * 10 + iDangerScore + iExtra, iBonusScore, iDamageDelta);
 
@@ -10400,10 +10438,10 @@ bool IsCombatUnit(const SUnitStats& unit)
 	}
 }
 
-static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode)
+static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, LeavingStackProtectionMemo* leavingProtection = NULL)
 {
 	if (IsCombatUnit(unit))
-		return ScorePlotForCombatUnitMove(unit, testPlot, assumedPosition, evalMode);
+		return ScorePlotForCombatUnitMove(unit, testPlot, assumedPosition, evalMode, leavingProtection);
 	else
 		return ScorePlotForNonFightingUnitMove(unit, testPlot, assumedPosition, evalMode);
 }
@@ -10434,6 +10472,7 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 
 	//check moves and melee attacks first
 	const ReachablePlots& reachablePlots = getReachablePlotsForUnit(unit);
+	LeavingStackProtectionMemo leavingProtection;
 	for (ReachablePlots::const_iterator it = reachablePlots.begin(); it != reachablePlots.end(); ++it)
 	{
 		//the plot we're checking right now
@@ -10597,7 +10636,7 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 			SUnitStats tempUnit = unit;
 			tempUnit.iMovesLeft = it->iMovesLeft;
 
-			STacticalAssignment* moveToPlot = ScorePlotForMove(tempUnit, testPlot, *this, EM_INTERMEDIATE);
+			STacticalAssignment* moveToPlot = ScorePlotForMove(tempUnit, testPlot, *this, EM_INTERMEDIATE, &leavingProtection);
 			tempUnit = GetNextUnit(tempUnit, moveToPlot);
 
 			//if the last assignment was a move, we should only do another move if another unit wants to swap us out
@@ -11717,7 +11756,7 @@ void CvTacticalPosition::updateMoveAndAttackPlotsForUnit(SUnitStats unit)
 	CvPlot* pStartPlot = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
 	const PlotIndexContainer& freedPlots_r = freedPlots.read();
 
-	TCachedMovePlots::const_iterator itP = gReachablePlotsLookup.find(SPathFinderStartPos(unit, freedPlots_r));
+	TCachedMovePlots::const_iterator itP = gReachablePlotsLookup.find(SPathFinderStartPos(unit, freedPlots_r, SPathFinderStartPos::LookupOnly()));
 	if (itP != gReachablePlotsLookup.end())
 	{
 		gMovePlotsCacheHit++;
@@ -13251,7 +13290,7 @@ void CvSupportPosition::updateMovePlotsForUnit(SUnitStats unit)
 
 	const PlotIndexContainer& freedPlots_r = freedPlots.read();
 
-	TCachedMovePlots::const_iterator itP = gReachablePlotsLookup.find(SPathFinderStartPos(unit, freedPlots_r));
+	TCachedMovePlots::const_iterator itP = gReachablePlotsLookup.find(SPathFinderStartPos(unit, freedPlots_r, SPathFinderStartPos::LookupOnly()));
 	if (itP != gReachablePlotsLookup.end())
 	{
 		gMovePlotsCacheHit++;
