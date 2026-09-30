@@ -273,6 +273,7 @@ void CvPlayerAI::AI_doTurnUnitsPost()
 //	---------------------------------------------------------------------------
 void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 {
+	CvStackingDiagnostics::UnitAIEntryScope entryPhase(GetID());
 	ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
 	if(pkScriptSystem)
 	{
@@ -282,9 +283,12 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 		bool bResult = false;
 		LuaSupport::CallHook(pkScriptSystem, "PlayerPreAIUnitUpdate", args.get(), bResult);
 	}
+	entryPhase.HookFinished();
 
 	// this was a !hasBusyUnit around the entire rest of the function, so I tried to make it a bit flatter.
-	if(hasBusyUnitOrCity())
+	const bool busy=hasBusyUnitOrCity();
+	entryPhase.Finish(busy);
+	if(busy)
 	{
 		return;
 	}

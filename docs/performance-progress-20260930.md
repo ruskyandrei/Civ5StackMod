@@ -103,6 +103,45 @@ paths retain their outputs. Native evidence identifies target2225 as Utrecht
 orders before failure. This is not a claim that all35.335s can be eliminated.
 See `work/test-runs/perf-d52-manual251-candidate/denied-city-attack-review.json`.
 
+## DLL53: denied-city attack fix measured
+
+`6f383711c` built as `Release-5.4.6-53-g6f383711c Clean`, in
+`work/msvc-output/Release/20260930-214752`. Installed DLL SHA256:
+`F6B4A2F0E6E3063B99BBB666A760271ABF57EDAB3AD5E269E55EC37AB03FAF9C`.
+The matched manual251 replay is `work/test-runs/perf-d53-manual251-citygate`.
+The measured252 window fell from77.594s to **48.234s**, PLAN49.908s to15.293s,
+with125 to116 searches. The 30-second target is not yet met.
+
+The Utrecht plans cost35.335s before and2.270s after the fix. Across turn252,
+city-attack-gate execution failures fell16 to0, total retries22 to4, and retries
+with unchanged ordered basic unit state13 to0. Remaining retries involved actual
+movement/combat/visibility changes. The fix deliberately changes actions: two
+additional field-combat records occurred; no city capture was exercised. Utrecht
+remained Dutch,82 damage of534HP after253. Final census850 units and81 cities;
+normal API quit completed, no new crash dump. This is not a conquest result.
+
+All recorded phase intervals cover33.516s of that48.234s window;14.716s remain
+outside those scopes. Roughly9.721s lies between major-player turn processing and
+the first actual unit-AI pass. These are wall-clock gaps, not yet evidence of CPU
+work, intentional delays or renderer cost. Next instrumentation measures the
+pre-AI script hook/busy guard and thread CPU time with bounded aggregate rows.
+
+### Benchmark boundary correction
+
+The earlier manual251-to253 runs used an identical bounded autoplay setup, but
+the ending boundary includes return-to-human processing: `CvGame::doTurn`
+decrements autoplay before incrementing the game turn. Their95.938/77.594/48.234s
+windows are useful matched samples, not proven steady observer-turn timings.
+The next control/candidate runs use251-to254 and measure252-to253 while autoplay
+remains active at both boundaries. Exclude the final return-adjacent interval.
+Retain the same immutable source, normalization, options and diagnostics.
+
+Exact optimization candidates now being integrated separately from the city-gate
+fix: caller-local full danger outcomes behind the existing scalar cache, and a
+genuine VC9/x86 acquire read replacing redundant Interlocked read-modify-writes.
+Both retain cache invalidation/ownership checks and search/entry budgets. Their
+isolated tests do not establish a whole-game performance gain.
+
 ## Further candidates
 
 - Caller-local reuse of complete stack damage outcomes behind the existing
@@ -122,3 +161,27 @@ See `work/test-runs/perf-d52-manual251-candidate/denied-city-attack-review.json`
 
 All new work remains local unless explicitly pushed. Preserve both the original
 DLL47 and DLL50 controls, saved inputs, normal-exit records and crash evidence.
+
+## Steady-observer control before the outcome-cache candidate
+
+`perf-d53-steady251-control` completed manual251-to254 and quit normally;
+native run `Stacking-20260930T211159-845-p16080-r1`. Interior252-to253 is
+**45.033s**, PLAN14.757s over116 searches, with17421ms in measured phase
+work outside PLAN and about12.9s outside selected-turn phase scopes. This
+confirms that returning to a human did not explain most of the earlier48s.
+
+The following253-to254 interval is132.188s, PLAN99.943s over139 searches.
+It includes the final return transition, but that cannot explain the99.943s
+of measured search. Multiple large Arabia plans around Utrecht dominate;
+actual movement/combat changes and a city capture occur during the retries.
+Preserve this harder case for correctness and performance comparisons instead
+of presenting252 as a general late-game result. Detailed retry analysis is
+in progress; do not simply suppress retries after real state changes.
+
+The next candidate leaves search, score, actor and cache-entry limits unchanged.
+It reuses complete damage outcomes locally in protector/source-leaving queries,
+retains the original scalar fallback, and uses the documented genuine VC9/x86
+acquire-read semantics for owner/epoch reads while retaining atomic writes.
+Sampled entry-hook/busy timing and absolute same-thread CPU counters distinguish
+script/lock waits from work between existing phases. Offline numerical/thread
+fixtures establish bounded equivalence, not measured native speed gains.

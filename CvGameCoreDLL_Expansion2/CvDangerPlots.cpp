@@ -406,6 +406,35 @@ int CvDangerPlots::GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const
  return m_DangerPlots[plot.GetPlotIndex()].GetStackDanger(pUnit, candidates, friendlyDamage, enemyDamage);
 }
 
+bool CvDangerPlots::GetStackDangerOutcome(const CvPlot& plot, const CvUnit* pUnit,
+ const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
+ const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage,
+ bool& cityCanFall, int& result)
+{
+ if (m_bDirty)
+  UpdateDanger();
+ const int index = plot.GetPlotIndex();
+ if (!pUnit || index < 0 || (size_t)index >= m_DangerPlots.size() || !m_DangerPlots[index].m_pPlot)
+  return false;
+ CvDangerPlotContents& contents = m_DangerPlots[index];
+ contents.GetStackDangerOutcome(pUnit->getOwner(), pUnit->getTeam(), plot.isFriendlyCity(*pUnit),
+  candidates, friendlyDamage, enemyDamage, finalDamage, cityCanFall);
+ result = contents.GetStackDangerFromOutcome(pUnit, friendlyDamage, finalDamage, cityCanFall);
+ return true;
+}
+
+bool CvDangerPlots::TryGetStackDangerFromOutcome(const CvPlot& plot, const CvUnit* pUnit,
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& finalDamage,
+ bool cityCanFall, int& result)
+{
+ // Reuse must refresh dirty danger and validate its scene before coming here.
+ const int index = plot.GetPlotIndex();
+ if (m_bDirty || !pUnit || index < 0 || (size_t)index >= m_DangerPlots.size() || !m_DangerPlots[index].m_pPlot)
+  return false;
+ result = m_DangerPlots[index].GetStackDangerFromOutcome(pUnit, friendlyDamage, finalDamage, cityCanFall);
+ return true;
+}
+
 // With no known unit or city attacks, virtual membership and wounds cannot
 // affect the result. Keep improvement, fog and unit-specific terrain damage.
 bool CvDangerPlots::TryGetFixedStackDanger(const CvPlot& plot, const CvUnit* pUnit, int& result)
@@ -1209,6 +1238,77 @@ int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const
    if (best)
     damage.ChangeValue(best->GetID(), attacker->rangeCombatDamage(best, false, m_pPlot, false, damage.GetValue(best->GetID())));
   }
+ int result = max(0, damage.GetValue(pUnit->GetID()) - initialDamage);
+ result += m_iImprovementDamage + m_iFogCount * FOG_DEFAULT_DANGER;
+ result += m_bFlatPlotDamage ? m_pPlot->getTurnDamage(pUnit->ignoreTerrainDamage(), pUnit->ignoreFeatureDamage(), pUnit->extraTerrainDamage(), pUnit->extraFeatureDamage()) : 0;
+ return result;
+}
+
+void CvDangerPlotContents::GetStackDangerOutcome(PlayerTypes defendingOwner, TeamTypes defendingTeam, bool friendlyCity,
+ const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
+ const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& damage, bool& cityCanFall)
+{
+ damage = friendlyDamage;
+ cityCanFall = false;
+ CvCity* city = friendlyCity ? m_pPlot->getPlotCity() : NULL;
+ if (city)
+ {
+  SimulateStackCityThreats(*this, city, candidates, damage, enemyDamage, 0, cityCanFall);
+  return;
+ }
+ SUnitIDValueContainer interceptionUses;
+ for (DangerUnitVector::const_iterator it = m_apUnits.begin(); it != m_apUnits.end(); ++it)
+ {
+  const CvUnit* attacker = GET_PLAYER(it->first).getUnit(it->second);
+  if (!attacker || attacker->isDelayedDeath() || attacker->IsDead() || attacker->plot() == m_pPlot)
+   continue;
+  int attackerDamage = enemyDamage.GetValue(attacker->GetID());
+  if (attackerDamage >= attacker->GetCurrHitPoints())
+   continue;
+  const int strikeChance = attacker->getDomainType() == DOMAIN_AIR
+   ? StackAirStrikeChance(attacker, m_pPlot, defendingOwner, candidates, damage, attackerDamage, interceptionUses) : 10000;
+  if (strikeChance == 0)
+   continue;
+  const int range = attacker->IsCanAttackRanged() ? attacker->GetRange() : 1;
+  const CvPlot* from = plotDistance(*m_pPlot, *attacker->plot()) > range ? NULL : attacker->plot();
+  const CvUnit* defender = CvUnitCombat::SelectStackDefender(attacker, from, m_pPlot, candidates, damage, attacker->IsCanAttackRanged(), attackerDamage);
+  if (!defender)
+   continue;
+  int retaliation = 0;
+  const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(defender, attacker, m_pPlot, from, retaliation, false,
+   attackerDamage, damage.GetValue(defender->GetID()), true, true);
+  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, m_pPlot, defender, hit,
+   candidates, damage);
+  // Resolve the entire strike using its pre-hit state, then select anew.
+  if (defender)
+   damage.ChangeValue(defender->GetID(), StackExpectedStrikeDamage(hit, strikeChance));
+  for (size_t i = 0; i < collateral.size(); ++i)
+   damage.ChangeValue(collateral[i].first->GetID(), StackExpectedStrikeDamage(collateral[i].second, strikeChance));
+  for (size_t i = 0; i < candidates.size(); ++i)
+   if (candidates[i]->GetCurrHitPoints() > damage.GetValue(candidates[i]->GetID()))
+    damage.ChangeValue(candidates[i]->GetID(), max(0, attacker->getAoEDamageOnMove()));
+ }
+ // City fire uses the identical selector as live city combat and UI.
+ if (!city)
+  for (DangerCityVector::const_iterator it = m_apCities.begin(); it != m_apCities.end(); ++it)
+  {
+   const CvCity* attacker = GET_PLAYER(it->first).getCity(it->second);
+   if (!attacker || attacker->getTeam() == defendingTeam || enemyDamage.GetValue(-it->second) >= attacker->GetMaxHitPoints() - attacker->getDamage())
+    continue;
+   const CvUnit* best = CvUnitCombat::SelectStackDefenderForCity(attacker, m_pPlot, candidates, damage);
+   if (best)
+    damage.ChangeValue(best->GetID(), attacker->rangeCombatDamage(best, false, m_pPlot, false, damage.GetValue(best->GetID())));
+  }
+}
+
+int CvDangerPlotContents::GetStackDangerFromOutcome(const CvUnit* pUnit, const SUnitIDValueContainer& friendlyDamage,
+ const SUnitIDValueContainer& damage, bool cityCanFall) const
+{
+ if (!pUnit || !m_pPlot)
+  return 0;
+ if (cityCanFall)
+  return INT_MAX;
+ const int initialDamage = friendlyDamage.GetValue(pUnit->GetID());
  int result = max(0, damage.GetValue(pUnit->GetID()) - initialDamage);
  result += m_iImprovementDamage + m_iFogCount * FOG_DEFAULT_DANGER;
  result += m_bFlatPlotDamage ? m_pPlot->getTurnDamage(pUnit->ignoreTerrainDamage(), pUnit->ignoreFeatureDamage(), pUnit->extraTerrainDamage(), pUnit->extraFeatureDamage()) : 0;

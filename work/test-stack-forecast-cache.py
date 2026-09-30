@@ -4,7 +4,8 @@ import hashlib,json,os,subprocess,sys
 root=Path(__file__).resolve().parents[1]
 out=root/'work/stack-cache-regression';out.mkdir(exist_ok=True)
 source=root/'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp';raw=source.read_bytes();text=raw.decode('utf-8-sig').replace('\r\n','\n')
-actual=text[text.index('struct StackForecastKey\n'):text.index('static int GetCachedStackDanger(')]
+cache_end=text.index('// Bind immutable inputs only') if '// Bind immutable inputs only' in text else text.index('static int GetCachedStackDanger(')
+actual=text[text.index('struct StackForecastKey\n'):cache_end]
 reference=subprocess.check_output(['git','show','6ec8aae26:CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'],cwd=root).decode('utf-8-sig')
 reference=reference[reference.index('static void AppendStackCandidates('):reference.index('static int GetCachedStackDanger(')].replace('AppendStackCandidates','OriginalCandidates').replace('AppendStackDamage','OriginalDamage')
 

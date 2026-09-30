@@ -27,11 +27,22 @@ namespace CvStackingStrengthCache
 		Table table;
 		// Node references survive rehash. FIFO stores references, not duplicate keys.
 		std::deque<const Key*> order;
-		volatile LONG owner = 0, epoch = 0;
+		__declspec(align(4)) volatile LONG owner = 0;
+		__declspec(align(4)) volatile LONG epoch = 0;
 		LONG cachedEpoch = 0;
 		unsigned int depth = 0;
 		Stats stats = {};
-		LONG Read(volatile LONG& value) { return InterlockedCompareExchange(&value, 0, 0); }
+		LONG Read(volatile LONG& value)
+		{
+#if defined(_MSC_VER) && _MSC_VER == 1500 && defined(_M_IX86) && \
+	!defined(__clang__) && !defined(__INTEL_COMPILER) && !defined(__ICL)
+			// VC9's Microsoft volatile semantics give aligned LONG reads acquire
+			// ordering. Keep Interlocked writes and every ownership/epoch check.
+			return value;
+#else
+			return InterlockedCompareExchange(&value, 0, 0);
+#endif
+		}
 		bool IsOwner() { return Read(owner) == (LONG)GetCurrentThreadId(); }
 		void Clear()
 		{

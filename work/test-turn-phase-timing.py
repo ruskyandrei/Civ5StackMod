@@ -28,8 +28,44 @@ head += r'''
 static DWORD phaseClock=0;
 static unsigned long phaseTickCalls=0;
 static DWORD phaseTick(){++phaseTickCalls;return phaseClock;}
+static DWORD phaseThread=17;
+static unsigned __int64 phaseCPU=0;
+static unsigned int phaseCPUReads=0;
+static bool phaseCPUAvailable=true;
+static DWORD phaseThreadId(){return phaseThread;}
+static HANDLE phaseCurrentThread(){return (HANDLE)1;}
+static BOOL phaseThreadTimes(HANDLE,LPFILETIME created,LPFILETIME exited,LPFILETIME kernel,LPFILETIME user){
+ ++phaseCPUReads;if(!phaseCPUAvailable)return FALSE;
+ created->dwLowDateTime=created->dwHighDateTime=exited->dwLowDateTime=exited->dwHighDateTime=0;
+ kernel->dwLowDateTime=kernel->dwHighDateTime=0;user->dwLowDateTime=(DWORD)phaseCPU;user->dwHighDateTime=(DWORD)(phaseCPU>>32);return TRUE;}
 #define GetTickCount phaseTick
+#define GetCurrentThreadId phaseThreadId
+#define GetCurrentThread phaseCurrentThread
+#define GetThreadTimes phaseThreadTimes
 '''
+
+player_source = (core / "CvPlayerAI.cpp").read_text(encoding="utf-8-sig")
+begin = player_source.index("void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)")
+end = player_source.index("\t// Measure real processing passes", begin)
+entry_prefix = player_source[begin:end].replace("CvPlayerAI::AI_unitUpdate", "FlowPlayer::AI_unitUpdate", 1)
+control_prefix = entry_prefix.replace("FlowPlayer::AI_unitUpdate", "FlowPlayer::Control", 1)
+control_prefix = control_prefix.replace("\tCvStackingDiagnostics::UnitAIEntryScope entryPhase(GetID());\n", "")
+control_prefix = control_prefix.replace("\tentryPhase.HookFinished();\n", "")
+control_prefix = control_prefix.replace("\tconst bool busy=hasBusyUnitOrCity();\n\tentryPhase.Finish(busy);\n\tif(busy)", "\tif(hasBusyUnitOrCity())")
+assert "entryPhase" not in control_prefix and entry_prefix.count("hasBusyUnitOrCity()") == 1
+flow = r'''
+static vector<string> flowTrace;
+static bool flowBusy=false,flowScript=true,flowThrow=false;
+static int flowGuardCalls=0;
+struct ICvEngineScriptSystem1{} flowSystem;
+struct FlowDLL{ICvEngineScriptSystem1*GetScriptSystem(){flowTrace.push_back("system");return flowScript?&flowSystem:NULL;}} flowDLL;
+static FlowDLL*gDLL=&flowDLL;
+struct FlowArgs{void Push(int){}};
+struct CvLuaArgsHandle{FlowArgs value;FlowArgs*operator->(){return &value;}FlowArgs*get(){return &value;}};
+namespace LuaSupport{void CallHook(ICvEngineScriptSystem1*,const char*,FlowArgs*,bool&){flowTrace.push_back("hook");phaseClock+=10;phaseCPU+=2000;if(flowThrow)throw 91;}}
+struct FlowPlayer{int GetID()const{return 0;}bool hasBusyUnitOrCity(){flowTrace.push_back("guard");++flowGuardCalls;phaseClock+=3;phaseCPU+=1000;return flowBusy;}void AI_unitUpdate(bool);void Control(bool);};
+'''
+flow += entry_prefix + '\tflowTrace.push_back("body");\n}\n' + control_prefix + '\tflowTrace.push_back("body");\n}\n'
 
 tests = r'''
 #undef fflush
@@ -48,25 +84,25 @@ string logs(){
 void fresh(){
  CvStackingDiagnostics::Reset();cfg.clear();cfg["DiagnosticsMemoryInterval"]=0;cfg["DiagnosticsMaxFileKB"]=64;cfg["DiagnosticsMaxFiles"]=2;
  cfg["DiagnosticsMaxRowsPerTurn"]=128;settingsReads=dbReads=opens=writes=0;openFailure=writeFailure=flushFailure=false;
- GC.game.turn=10;phaseClock=0;phaseTickCalls=0;
+ GC.game.turn=10;phaseClock=0;phaseTickCalls=0;phaseThread=17;phaseCPU=0;phaseCPUReads=0;phaseCPUAvailable=true;
 }
 void disabledTests(){
  fresh();{CvStackingDiagnostics::TurnPhaseScope scope(0,"off");}
- expect(phaseTickCalls==0&&opens==0&&writes==0&&dbReads==0,"disabled timer performs no clock, file, or DB scan");
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&opens==0&&writes==0&&dbReads==0,"disabled timer performs no clock, CPU, file, or DB scan");
  fresh();cfg["DiagnosticsCategoryMask"]=2;CvStackingDiagnostics::SetLevel(1);phaseTickCalls=0;const int before=writes;
  {CvStackingDiagnostics::TurnPhaseScope scope(0,"masked");}
- expect(phaseTickCalls==0&&writes==before&&countText(logs(),"|TURN_PHASE|")==0,"performance category mask disables all timer work");
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&writes==before&&countText(logs(),"|TURN_PHASE|")==0,"performance category mask disables all timer work");
  fresh();cfg["DiagnosticsPerformanceInterval"]=0;CvStackingDiagnostics::SetLevel(1);phaseTickCalls=0;
  {CvStackingDiagnostics::TurnPhaseScope scope(0,"interval_off");}
- expect(phaseTickCalls==0&&countText(logs(),"|TURN_PHASE|")==0,"zero interval disables phase timers");
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&countText(logs(),"|TURN_PHASE|")==0,"zero interval disables phase timers");
  fresh();cfg["DiagnosticsPerformanceInterval"]=5;CvStackingDiagnostics::SetLevel(1);GC.game.turn=11;phaseTickCalls=0;
  {CvStackingDiagnostics::TurnPhaseScope scope(0,"unsampled");}
- expect(phaseTickCalls==0&&countText(logs(),"|TURN_PHASE|")==0,"unsampled turns do not read clock or record timer");
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&countText(logs(),"|TURN_PHASE|")==0,"unsampled turns do not read clock or CPU or record timer");
  fresh();cfg["DiagnosticsPlayer"]=2;CvStackingDiagnostics::SetLevel(1);phaseTickCalls=0;
  {CvStackingDiagnostics::TurnPhaseScope scope(0,"wrong_player");}
- expect(phaseTickCalls==0&&countText(logs(),"|TURN_PHASE|")==0,"player filter bypasses irrelevant phases");
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&countText(logs(),"|TURN_PHASE|")==0,"player filter bypasses irrelevant phases");
  fresh();CvStackingDiagnostics::SetLevel(1);phaseTickCalls=0;{CvStackingDiagnostics::TurnPhaseScope scope(0,NULL);}
- expect(phaseTickCalls==0&&countText(logs(),"|TURN_PHASE|")==0,"null phase is safely disabled");
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&countText(logs(),"|TURN_PHASE|")==0,"null phase is safely disabled");
 }
 void intervalAndNestedTests(){
  fresh();cfg["DiagnosticsCategoryMask"]=16;cfg["DiagnosticsPerformanceInterval"]=5;CvStackingDiagnostics::SetLevel(1);
@@ -110,11 +146,81 @@ void lifecycleAndErrorTests(){
  fresh();CvStackingDiagnostics::SetLevel(1);writeFailure=true;{CvStackingDiagnostics::TurnPhaseScope scope(0,"failed_write");phaseClock=9;}
  expect(string(CvStackingDiagnostics::GetStatus()).find("Logging unavailable")!=string::npos,"write error uses existing safe logger failure path");
 }
-int main(){expect(sizeof(void*)==4,"native x86 VC9");disabledTests();intervalAndNestedTests();lifecycleAndErrorTests();CvStackingDiagnostics::Reset();printf("turn phase timing: %d checks, %d failures\n",checks,failures);return failures?1:0;}
+void cpuTests(){
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseCPU=0x100000007ULL;phaseClock=10;
+ {CvStackingDiagnostics::TurnPhaseScope scope(0,"cpu_absolute");phaseCPU+=12345;phaseClock=30;}
+ string text=logs();expect(text.find("cpuAvailable=1 cpuStart100ns=4294967303 cpuEnd100ns=4294979648 cpu100ns=12345")!=string::npos,"64-bit absolute CPU start/end and delta are retained");
+ expect(phaseCPUReads==2,"active simple phase reads CPU twice");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseCPUAvailable=false;
+ {CvStackingDiagnostics::TurnPhaseScope scope(0,"cpu_unavailable");phaseClock=20;}
+ text=logs();expect(text.find("cpuAvailable=0 cpuStart100ns=0 cpuEnd100ns=0 cpu100ns=0")!=string::npos,"unavailable CPU explicitly marked with safe zero fields");
+ expect(phaseCPUReads==1,"failed initial CPU query does not repeat at end");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseCPU=100;
+ {CvStackingDiagnostics::TurnPhaseScope scope(0,"cpu_backwards");phaseCPU=99;phaseClock=3;}
+ expect(logs().find("cpuAvailable=0")!=string::npos,"backwards CPU counter rejected");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseClock=0;phaseCPU=100;
+ {CvStackingDiagnostics::TurnPhaseScope parent(0,"cpu_parent");phaseClock=10;phaseCPU=200;{CvStackingDiagnostics::TurnPhaseScope child(0,"cpu_child");phaseClock=20;phaseCPU=300;}phaseClock=40;phaseCPU=500;}
+ text=logs();expect(text.find("phase=cpu_parent")!=string::npos&&text.find("cpuStart100ns=100 cpuEnd100ns=500 cpu100ns=400")!=string::npos,"parent CPU is inclusive");
+ expect(text.find("cpuStart100ns=200 cpuEnd100ns=300 cpu100ns=100")!=string::npos,"child CPU retains independent bounds without parent subtraction");
+ fresh();CvStackingDiagnostics::SetLevel(1);{CvStackingDiagnostics::TurnPhaseScope scope(0,"wrong_thread");phaseThread=18;}
+ expect(countText(logs(),"|TURN_PHASE|")==0&&phaseCPUReads==1,"foreign-thread finish drops phase without wrong-thread CPU query");
+}
+void entry(int player,DWORD start,DWORD hook,DWORD end,bool busy,unsigned __int64 cpuStart,unsigned __int64 cpuHook,unsigned __int64 cpuEnd){
+ phaseClock=start;phaseCPU=cpuStart;CvStackingDiagnostics::UnitAIEntryScope probe(player);phaseClock=hook;phaseCPU=cpuHook;probe.HookFinished();phaseClock=end;phaseCPU=cpuEnd;probe.Finish(busy);}
+void entryDisabledTests(){
+ for(int mode=0;mode<5;++mode){fresh();if(mode){if(mode==1)cfg["DiagnosticsCategoryMask"]=2;if(mode==2)cfg["DiagnosticsPerformanceInterval"]=0;if(mode==3)cfg["DiagnosticsPerformanceInterval"]=3;if(mode==4)cfg["DiagnosticsPlayer"]=1;CvStackingDiagnostics::SetLevel(1);}phaseTickCalls=phaseCPUReads=0;const int written=writes;
+  entry(0,10,20,30,true,1,2,3);entry(0,40,50,60,false,4,5,6);
+  expect(phaseTickCalls==0&&phaseCPUReads==0&&writes==written,"disabled/masked/interval/unsampled/player-filtered entry has no timer CPU or row work");}
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseTickCalls=phaseCPUReads=0;entry(-1,1,2,3,false,1,2,3);entry(MAX_PLAYERS,1,2,3,false,1,2,3);
+ expect(phaseTickCalls==0&&phaseCPUReads==0,"invalid player cannot index aggregate or read clocks");
+}
+void entryAggregationTests(){
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,100,120,125,true,1000,3000,4000);entry(0,200,240,242,true,6000,9000,10000);
+ expect(countText(logs(),"phase=unit_ai_entry")==0&&entryCosts[0].calls==2,"busy polls accumulate without per-poll rows");
+ entry(0,300,350,359,false,12000,22000,25000);string text=logs();
+ expect(countText(text,"phase=unit_ai_entry")==1&&text.find("startTick=300 endTick=359 elapsedMs=59")!=string::npos,"real pass records only last contiguous span");
+ expect(text.find("entryCalls=3 busyReturns=2 aggregateHookMs=110 aggregateGuardMs=16 maxHookMs=50 maxGuardMs=9")!=string::npos,"separate bounded hook/guard aggregate count/sum/max");
+ expect(text.find("cpuStart100ns=12000 cpuEnd100ns=25000 cpu100ns=13000")!=string::npos&&text.find("aggregateCPUAvailable=1 aggregateCPUMeasuredCalls=3 aggregateHookCPU100ns=15000 aggregateGuardCPU100ns=5000")!=string::npos,"last CPU endpoints and previous busy CPU totals separate");
+ expect(entryCosts[0].calls==0,"real pass consumes accumulated busy costs");
+ entry(0,400,401,403,false,30000,30100,30200);text=logs();expect(text.find("entryCalls=1 busyReturns=0 aggregateHookMs=1 aggregateGuardMs=2")!=string::npos,"following real pass starts fresh aggregate window");
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);entry(1,4,5,6,false,4,5,6);expect(entryCosts[0].calls==1&&entryCosts[1].calls==0,"different players cannot consume each other's busy costs");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseCPUAvailable=false;entry(0,1,2,3,true,1,2,3);phaseCPUAvailable=true;entry(0,4,5,6,false,4,5,6);text=logs();
+ expect(text.find("aggregateCPUAvailable=0 aggregateCPUMeasuredCalls=1")!=string::npos,"partially unavailable aggregate CPU cannot masquerade as complete");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseClock=0xfffffff0UL;{CvStackingDiagnostics::UnitAIEntryScope probe(0);phaseClock=4;probe.HookFinished();phaseClock=9;probe.Finish(false);}
+ expect(logs().find("elapsedMs=25")!=string::npos&&logs().find("aggregateHookMs=20 aggregateGuardMs=5")!=string::npos,"entry and segment durations survive DWORD wrap");
+}
+void entryLifecycleTests(){
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);CvStackingDiagnostics::SetLevel(2);entry(0,4,5,6,false,4,5,6);
+ expect(logs().find("entryCalls=1 busyReturns=0")!=string::npos,"level change drops pending busy aggregates");
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);CvStackingDiagnostics::Reset();CvStackingDiagnostics::SetLevel(1);entry(0,4,5,6,false,4,5,6);
+ expect(logs().find("entryCalls=1 busyReturns=0")!=string::npos,"reset drops pending busy aggregates on same turn");
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);++GC.game.turn;entry(0,4,5,6,false,4,5,6);
+ expect(logs().find("entryCalls=1 busyReturns=0")!=string::npos,"turn change drops old-turn aggregate on next completed entry");
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);phaseThread=18;entry(0,4,5,6,false,4,5,6);
+ expect(logs().find("entryCalls=1 busyReturns=0")!=string::npos,"different thread never credits prior-thread busy CPU");
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);{CvStackingDiagnostics::UnitAIEntryScope probe(0);probe.HookFinished();++GC.game.turn;probe.Finish(false);}
+ expect(entryCosts[0].calls==0&&countText(logs(),"phase=unit_ai_entry")==0,"cross-turn active entry drops matching old aggregate without row");
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);try{CvStackingDiagnostics::UnitAIEntryScope probe(0);throw 4;}catch(int){}
+ expect(entryCosts[0].calls==0&&countText(logs(),"phase=unit_ai_entry")==0,"unfinished exception entry drops matching pending busy window");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseClock=10;{CvStackingDiagnostics::UnitAIEntryScope outer(0);entry(0,20,30,40,true,2,3,4);phaseClock=50;outer.HookFinished();phaseClock=60;outer.Finish(false);}
+ expect(logs().find("elapsedMs=50")!=string::npos&&logs().find("aggregates sum completed entry spans")!=string::npos,"nested completed entry aggregates explicitly remain inclusive not union bounds");
+ fresh();CvStackingDiagnostics::SetLevel(1);phaseClock=1;{CvStackingDiagnostics::UnitAIEntryScope probe(0);phaseClock=2;probe.HookFinished();const unsigned int reads=phaseCPUReads;probe.HookFinished();expect(phaseCPUReads==reads,"duplicate hook finish is inert");phaseClock=3;probe.Finish(false);const unsigned int endReads=phaseCPUReads;probe.Finish(false);expect(phaseCPUReads==endReads,"duplicate entry Finish is inert");}
+ expect(countText(logs(),"phase=unit_ai_entry")==1,"finish plus destructor records one entry row");
+}
+void entryFlowTests(){
+ for(int enabled=0;enabled<2;++enabled)for(int script=0;script<2;++script)for(int busy=0;busy<2;++busy){
+  fresh();if(enabled)CvStackingDiagnostics::SetLevel(1);flowScript=script!=0;flowBusy=busy!=0;flowThrow=false;flowTrace.clear();flowGuardCalls=0;FlowPlayer p;p.Control(false);vector<string>control=flowTrace;
+  flowTrace.clear();flowGuardCalls=0;p.AI_unitUpdate(false);expect(flowTrace==control&&flowGuardCalls==1,"actual entry integration preserves hook/guard/body ordering and exactly one guard read");
+ }
+ fresh();CvStackingDiagnostics::SetLevel(1);entry(0,1,2,3,true,1,2,3);flowScript=true;flowBusy=false;flowThrow=true;flowGuardCalls=0;
+ try{FlowPlayer p;p.AI_unitUpdate(false);}catch(int){}
+ expect(flowGuardCalls==0&&entryCosts[0].calls==0&&countText(logs(),"phase=unit_ai_entry")==0,"actual throwing callback preserves early unwind and clears incomplete entry window");flowThrow=false;
+}
+int main(){expect(sizeof(void*)==4,"native x86 VC9");disabledTests();intervalAndNestedTests();lifecycleAndErrorTests();cpuTests();entryDisabledTests();entryAggregationTests();entryLifecycleTests();entryFlowTests();CvStackingDiagnostics::Reset();printf("turn phase timing: %d checks, %d failures\n",checks,failures);return failures?1:0;}
 '''
 
 cpp = out / "turn-phase-source-test.cpp"
-cpp.write_text(head + actual + tests, encoding="utf-8")
+cpp.write_text(head + actual + flow + tests, encoding="utf-8")
 vc = root / "work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0"
 sdk = root / "work/toolchain/sdk/windows"
 env = os.environ.copy()

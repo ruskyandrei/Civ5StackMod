@@ -30,10 +30,30 @@ namespace CvStackingDiagnostics
         TurnPhaseScope(const TurnPhaseScope&);
         TurnPhaseScope& operator=(const TurnPhaseScope&);
         bool active;
+        bool cpuAvailable;
         PlayerTypes actor;
         const char* name;
         int turn;
         unsigned long started, thread, generation;
+        unsigned __int64 cpuStarted;
+    };
+    // The last contiguous entry interval is a TURN_PHASE. Earlier busy polls
+    // are aggregate counters only, never extra phase rows or a spanning timer.
+    class UnitAIEntryScope
+    {
+    public:
+        explicit UnitAIEntryScope(PlayerTypes player);
+        ~UnitAIEntryScope();
+        void HookFinished();
+        void Finish(bool busy);
+    private:
+        UnitAIEntryScope(const UnitAIEntryScope&);
+        UnitAIEntryScope& operator=(const UnitAIEntryScope&);
+        bool active, hookDone, cpuAvailable;
+        PlayerTypes actor;
+        int turn;
+        unsigned long started, hookEnded, thread, generation;
+        unsigned __int64 cpuStarted, cpuHookEnded;
     };
     class CombatScope
     {

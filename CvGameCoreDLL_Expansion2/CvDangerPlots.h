@@ -56,6 +56,14 @@ struct CvDangerPlotContents
 
 	int GetDanger(const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction);
 	int GetStackDanger(const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
+	// The attack outcome is independent of the queried member inside this exact
+	// owner/team/friendly-city context; preserve ordered candidates and raw IDs.
+	// Output damage must not alias either immutable input injury container.
+	void GetStackDangerOutcome(PlayerTypes defendingOwner, TeamTypes defendingTeam, bool friendlyCity,
+	 const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
+	 const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage, bool& cityCanFall);
+	int GetStackDangerFromOutcome(const CvUnit* pUnit, const SUnitIDValueContainer& friendlyDamage,
+	 const SUnitIDValueContainer& finalDamage, bool cityCanFall) const;
 	bool TryGetFixedStackDanger(const CvUnit* pUnit, int& result) const;
 	const std::vector<int>& GetStackDangerDamageIDs() const;
 	void InvalidateStackDangerDamageIDs() { m_stackDangerDamageIDsValid = false; }
@@ -103,6 +111,15 @@ public:
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison = NULL, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer());
 	int GetDanger(const CvPlot& pPlot, bool bFixedDamageOnly);
 	int GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
+	// Also return the first member's result during the build. A caller that sees
+	// scene invalidation afterwards must not simulate that attack sequence twice.
+	bool GetStackDangerOutcome(const CvPlot& plot, const CvUnit* pUnit,
+	 const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
+	 const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage,
+	 bool& cityCanFall, int& result);
+	bool TryGetStackDangerFromOutcome(const CvPlot& plot, const CvUnit* pUnit,
+	 const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& finalDamage,
+	 bool cityCanFall, int& result);
 	bool TryGetFixedStackDanger(const CvPlot& plot, const CvUnit* pUnit, int& result);
 	// Borrow only while building a key: rebuilding danger/resetting the map can
 	// invalidate the vector. Null means the caller must retain its full key.

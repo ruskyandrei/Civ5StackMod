@@ -47,6 +47,16 @@ namespace
     FILE* output = NULL;
     unsigned int sequence = 0, runCounter = 0, combatCounter = 0;
     unsigned long phaseGeneration = 0;
+    struct EntryCosts
+    {
+        int turn;
+        unsigned long thread, generation;
+        unsigned int calls, busyReturns, cpuMeasured;
+        unsigned __int64 hookMs, guardMs, hookCPU100ns, guardCPU100ns;
+        unsigned long maxHookMs, maxGuardMs;
+        EntryCosts():turn(-1),thread(0),generation(0),calls(0),busyReturns(0),cpuMeasured(0),
+            hookMs(0),guardMs(0),hookCPU100ns(0),guardCPU100ns(0),maxHookMs(0),maxGuardMs(0){}
+    } entryCosts[MAX_PLAYERS];
     unsigned int configHash = 0;
     unsigned long bytesWritten = 0;
     wchar_t directory[MAX_PATH] = L"";
@@ -57,6 +67,20 @@ namespace
         if (!optionsLoaded) { optionsLoaded = true; for (size_t i=0;i<sizeof(options)/sizeof(options[0]);++i) options[i].value=CvStacking::GetInt(options[i].name,options[i].fallback); }
         for (size_t i=0;i<sizeof(options)/sizeof(options[0]);++i) if (!strcmp(name,options[i].name)) return options[i].value;
         return fallback;
+    }
+    bool threadCPU100ns(unsigned __int64& value)
+    {
+        FILETIME created,exited,kernel,user;
+        if(!GetThreadTimes(GetCurrentThread(),&created,&exited,&kernel,&user)) return false;
+        value=((unsigned __int64)kernel.dwHighDateTime<<32)|kernel.dwLowDateTime;
+        value+=((unsigned __int64)user.dwHighDateTime<<32)|user.dwLowDateTime;
+        return true;
+    }
+    void dropEntryCosts(PlayerTypes player,int turn,unsigned long thread,unsigned long generation)
+    {
+        if(player<0 || player>=MAX_PLAYERS) return;
+        EntryCosts& entry=entryCosts[player];
+        if(entry.turn==turn && entry.thread==thread && entry.generation==generation) entry=EntryCosts();
     }
     void closeFile()
     {
@@ -255,6 +279,7 @@ namespace CvStackingDiagnostics
         initialized = false; failed = false; suppressed = false; optionsLoaded = false;
         prefix[0] = 0; directory[0] = 0; configHash = 0;
         costs=Costs(); pendingWrites=0; lastFlush=0;
+        for(int i=0;i<MAX_PLAYERS;++i) entryCosts[i]=EntryCosts();
         strcpy_s(status, sizeof(status), "Off (XML default applies on next use)");
     }
     int GetLevel()
@@ -288,7 +313,7 @@ namespace CvStackingDiagnostics
         if (output) writeLine(GC.getGame().getGameTurn(), -1, "LEVEL", value == 0 ? "off" : value == 1 ? "summary" : "verbose");
         if (!value) { closeFile(); strcpy_s(status, sizeof(status), "Off"); }
         level = value; failed = false;
-        for (int i = 0; i < MAX_PLAYERS; ++i) { playerTurn[i]=playerAfterTurn[i]=passTurn[i]=-1; }
+        for (int i = 0; i < MAX_PLAYERS; ++i) { playerTurn[i]=playerAfterTurn[i]=passTurn[i]=-1; entryCosts[i]=EntryCosts(); }
         if (value && ensureFile()) configHeader();
     }
     void Record(int required, PlayerTypes player, const char* category, const char* format, ...)
@@ -316,7 +341,7 @@ namespace CvStackingDiagnostics
         writeLine(turn, player, category, text);
     }
     TurnPhaseScope::TurnPhaseScope(PlayerTypes player,const char* phase):
-        active(false),actor(player),name(phase),turn(-1),started(0),thread(0),generation(0)
+        active(false),cpuAvailable(false),actor(player),name(phase),turn(-1),started(0),thread(0),generation(0),cpuStarted(0)
     {
         Lock lock;
         if(!phase || !categoryEnabledUnlocked(1,player,"TURN_PHASE")) return;
@@ -327,6 +352,7 @@ namespace CvStackingDiagnostics
         generation=phaseGeneration;
         thread=GetCurrentThreadId();
         started=GetTickCount();
+        cpuAvailable=threadCPU100ns(cpuStarted);
         active=true;
     }
     TurnPhaseScope::~TurnPhaseScope()
@@ -335,11 +361,67 @@ namespace CvStackingDiagnostics
     {
         if(!active) return;
         active=false; // Explicit Finish followed by destruction records once.
-        const unsigned long ended=GetTickCount();
         Lock lock;
-        if(generation!=phaseGeneration || turn!=GC.getGame().getGameTurn() ||
+        if(generation!=phaseGeneration || turn!=GC.getGame().getGameTurn() || thread!=GetCurrentThreadId() ||
             !categoryEnabledUnlocked(1,actor,"TURN_PHASE")) return;
-        Record(1,actor,"TURN_PHASE","phase=%s startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu semantics=inclusive; nested TURN_PHASE and PLAN intervals overlap; do not sum all phases as a round",name,started,ended,ended-started,thread);
+        const unsigned long ended=GetTickCount();
+        unsigned __int64 cpuEnded=0;
+        cpuAvailable=cpuAvailable && threadCPU100ns(cpuEnded) && cpuEnded>=cpuStarted;
+        Record(1,actor,"TURN_PHASE","phase=%s startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu cpuAvailable=%d cpuStart100ns=%I64u cpuEnd100ns=%I64u cpu100ns=%I64u semantics=inclusive cpuSemantics=inclusive_same_thread; nested TURN_PHASE and PLAN intervals overlap; do not sum all phase wall or CPU durations as a round",name,started,ended,ended-started,thread,cpuAvailable?1:0,cpuAvailable?cpuStarted:0,cpuAvailable?cpuEnded:0,cpuAvailable?cpuEnded-cpuStarted:0);
+    }
+    UnitAIEntryScope::UnitAIEntryScope(PlayerTypes player):active(false),hookDone(false),cpuAvailable(false),actor(player),
+        turn(-1),started(0),hookEnded(0),thread(0),generation(0),cpuStarted(0),cpuHookEnded(0)
+    {
+        Lock lock;
+        if(player<0 || player>=MAX_PLAYERS || !categoryEnabledUnlocked(1,player,"TURN_PHASE")) return;
+        const int interval=setting("DiagnosticsPerformanceInterval",1);
+        if(interval<=0) return;
+        turn=GC.getGame().getGameTurn();
+        if(turn%interval) return;
+        generation=phaseGeneration;thread=GetCurrentThreadId();started=GetTickCount();
+        cpuAvailable=threadCPU100ns(cpuStarted);active=true;
+    }
+    UnitAIEntryScope::~UnitAIEntryScope()
+    {
+        if(!active) return;
+        // An exception/unfinished entry must not leave earlier busy polls to
+        // be reported as part of an apparently complete processing window.
+        Lock lock;dropEntryCosts(actor,turn,thread,generation);
+    }
+    void UnitAIEntryScope::HookFinished()
+    {
+        if(!active || hookDone) return;
+        Lock lock;
+        if(generation!=phaseGeneration || turn!=GC.getGame().getGameTurn() || thread!=GetCurrentThreadId() ||
+            !categoryEnabledUnlocked(1,actor,"TURN_PHASE"))
+        { dropEntryCosts(actor,turn,thread,generation);active=false;return; }
+        hookEnded=GetTickCount();cpuAvailable=cpuAvailable && threadCPU100ns(cpuHookEnded) && cpuHookEnded>=cpuStarted;
+        hookDone=true;
+    }
+    void UnitAIEntryScope::Finish(bool busy)
+    {
+        if(!active) return;
+        active=false;
+        Lock lock;
+        if(!hookDone || generation!=phaseGeneration || turn!=GC.getGame().getGameTurn() || thread!=GetCurrentThreadId() ||
+            !categoryEnabledUnlocked(1,actor,"TURN_PHASE"))
+        { dropEntryCosts(actor,turn,thread,generation);return; }
+        const unsigned long ended=GetTickCount();
+        unsigned __int64 cpuEnded=0;
+        cpuAvailable=cpuAvailable && threadCPU100ns(cpuEnded) && cpuEnded>=cpuHookEnded;
+        EntryCosts& entry=entryCosts[actor];
+        if(entry.turn!=turn || entry.thread!=thread || entry.generation!=generation) entry=EntryCosts();
+        entry.turn=turn;entry.thread=thread;entry.generation=generation;
+        const unsigned long hookMs=hookEnded-started,guardMs=ended-hookEnded;
+        ++entry.calls;entry.busyReturns+=busy?1:0;entry.hookMs+=hookMs;entry.guardMs+=guardMs;
+        entry.maxHookMs=max(entry.maxHookMs,hookMs);entry.maxGuardMs=max(entry.maxGuardMs,guardMs);
+        if(cpuAvailable)
+        { ++entry.cpuMeasured;entry.hookCPU100ns+=cpuHookEnded-cpuStarted;entry.guardCPU100ns+=cpuEnded-cpuHookEnded; }
+        if(busy) return;
+        Record(1,actor,"TURN_PHASE","phase=unit_ai_entry startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu cpuAvailable=%d cpuStart100ns=%I64u cpuEnd100ns=%I64u cpu100ns=%I64u semantics=inclusive cpuSemantics=inclusive_same_thread entryCalls=%u busyReturns=%u aggregateHookMs=%I64u aggregateGuardMs=%I64u maxHookMs=%lu maxGuardMs=%lu aggregateCPUAvailable=%d aggregateCPUMeasuredCalls=%u aggregateHookCPU100ns=%I64u aggregateGuardCPU100ns=%I64u; bounds cover last contiguous entry only; aggregates sum completed entry spans since last real pass and may overlap nested calls; do not union aggregate totals as phase bounds",
+            started,ended,ended-started,thread,cpuAvailable?1:0,cpuAvailable?cpuStarted:0,cpuAvailable?cpuEnded:0,cpuAvailable?cpuEnded-cpuStarted:0,entry.calls,entry.busyReturns,
+            entry.hookMs,entry.guardMs,entry.maxHookMs,entry.maxGuardMs,entry.cpuMeasured==entry.calls?1:0,entry.cpuMeasured,entry.hookCPU100ns,entry.guardCPU100ns);
+        entry=EntryCosts();
     }
     void OnPlayerTurn(CvPlayer& player)
     {

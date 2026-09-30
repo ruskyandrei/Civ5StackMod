@@ -45,18 +45,21 @@ template<class T,class U>bool operator==(const CountingAllocator<T>&,const Count
 template<class T,class U>bool operator!=(const CountingAllocator<T>&,const CountingAllocator<U>&){return false;}
 using namespace std;
 namespace CvStackingStrengthCache {volatile LONG fixtureEpoch=1;long SceneEpoch(){return InterlockedCompareExchange(&fixtureEpoch,0,0);}void Invalidate(){InterlockedIncrement(&fixtureEpoch);}}
+typedef int PlayerTypes;typedef int TeamTypes;
+const int NO_PLAYER=-1;
+#define MOD_EVENTS_CAN_MOVE_INTO false
 const int DOMAIN_LAND=0,DOMAIN_SEA=1,DOMAIN_AIR=2;
 struct CvCity{int protection;CvCity():protection(0){}};
 struct CvPlot{
  int index;bool city,embark;CvCity cityData;CvPlot(int i=0):index(i),city(false),embark(false){}
- int GetPlotIndex()const{return index;}bool isCity()const{return city;}
+ int GetPlotIndex()const{return index;}bool isCity()const{return city;}bool isFriendlyCity(const struct CvUnit&)const{return city;}
  const CvCity* getPlotCity()const{return city?&cityData:NULL;}
  bool needsEmbarkation(const struct CvUnit*)const{return embark;}
 };
 struct CvUnit{
  int id,domain,owner;bool combat,cargo,ranged,anti,flank,dead,delayed;int hp,maxHP,collateral;
  CvUnit(int n=0):id(n),domain(DOMAIN_LAND),owner(0),combat(true),cargo(false),ranged(false),anti(false),flank(false),dead(false),delayed(false),hp(100),maxHP(100),collateral(0){}
- int GetID()const{return id;}int getOwner()const{return owner;}
+ int GetID()const{return id;}int getOwner()const{return owner;}int getTeam()const{return owner;}
  bool IsCombatUnit()const{return combat;}bool isCargo()const{return cargo;}
  int getDomainType()const{return domain;}int GetMaxHitPoints()const{return maxHP;}
  int GetCurrHitPoints()const{return hp;}bool IsCanAttackRanged()const{return ranged;}
@@ -81,6 +84,10 @@ struct CvTacticalPosition{
  const SUnitIDValueContainer& GetUnitDamageDealt()const{return enemyDamage;}
 };
 struct CvDangerPlots{
+ // Outcome behavior is checked separately with actual damage math services.
+ bool IsDirty()const{return false;}
+ bool GetStackDangerOutcome(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&,SUnitIDValueContainer&,bool&,int&){return false;}
+ bool TryGetStackDangerFromOutcome(const CvPlot&,const CvUnit*,const SUnitIDValueContainer&,const SUnitIDValueContainer&,bool,int&){return false;}
  bool fixed,dynamicLeaf;int fixedValue,leafValue,leafCalls;void(*leafCallback)();
  CvDangerPlots():fixed(false),dynamicLeaf(false),fixedValue(0),leafValue(73),leafCalls(0),leafCallback(NULL){}
  bool TryGetFixedStackDanger(const CvPlot&,const CvUnit*,int&result){if(!fixed)return false;result=fixedValue;return true;}

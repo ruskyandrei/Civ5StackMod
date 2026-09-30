@@ -7799,6 +7799,8 @@ static volatile LONG gStackForecastOwnerThread = 0;
 static long gStackForecastSceneEpoch = 0;
 static unsigned long gStackForecastRevision = 0;
 static unsigned long gStackDangerHits = 0, gStackDangerMisses = 0;
+static unsigned long gStackOutcomeBuilds = 0, gStackOutcomeReuses = 0, gStackOutcomeBypasses = 0;
+static size_t gStackOutcomeCurrentBytes = 0, gStackOutcomePeakBytes = 0;
 static unsigned long gStackDefenderHits = 0, gStackDefenderMisses = 0;
 static unsigned long gStackInsertBypasses = 0, gStackNestedBypasses = 0;
 static unsigned long gStackDangerEvictions = 0, gStackDefenderEvictions = 0;
@@ -7944,6 +7946,8 @@ struct StackForecastScope
   }
   InvalidateStackForecastScene();
   gStackDangerHits = gStackDangerMisses = gStackDefenderHits = gStackDefenderMisses = 0;
+  gStackOutcomeBuilds = gStackOutcomeReuses = gStackOutcomeBypasses = 0;
+  gStackOutcomeCurrentBytes = gStackOutcomePeakBytes = 0;
   gStackInsertBypasses = gStackNestedBypasses = 0;
   gStackDangerEvictions = gStackDefenderEvictions = 0;
   gStackPeakEntries = gStackPeakKeyBytes = gStackPeakEstimatedBytes = 0;
@@ -8166,8 +8170,111 @@ static void AppendStackDamageProjected(StackForecastKey& key, const SUnitIDValue
  }
 }
 
+// Bind immutable inputs only for this short helper call. Reuse sits behind
+// scalar memo hits, so its key/FIFO admission and fast path remain unchanged.
+// The capacity ceiling bounds retained local outcomes, not the temporary copy
+// already required while simulating an original scalar leaf.
+struct StackDangerOutcomeBatch
+{
+ const CvPlot* plot;
+ const vector<const CvUnit*>& candidates;
+ const SUnitIDValueContainer& friendlyDamage;
+ const SUnitIDValueContainer& enemyDamage;
+ SUnitIDValueContainer finalDamage;
+ bool ready, building, cityCanFall, friendlyCity;
+ PlayerTypes owner;
+ TeamTypes team;
+ unsigned long revision;
+ long scene;
+ size_t retainedBytes;
+ StackDangerOutcomeBatch(const CvPlot* target, const vector<const CvUnit*>& members,
+  const SUnitIDValueContainer& friendly, const SUnitIDValueContainer& enemy):
+  plot(target),candidates(members),friendlyDamage(friendly),enemyDamage(enemy),
+  ready(false),building(false),cityCanFall(false),friendlyCity(false),owner(NO_PLAYER),team(NO_TEAM),
+  revision(0),scene(0),retainedBytes(0) {}
+ ~StackDangerOutcomeBatch() { Release(); }
+ void Release()
+ {
+  if (retainedBytes)
+   gStackOutcomeCurrentBytes -= retainedBytes;
+  retainedBytes = 0;
+  ready = false;
+  SUnitIDValueContainer empty;
+  finalDamage.swap(empty);
+ }
+ bool TryGet(const CvUnit* unit, const CvPlot* target, const vector<const CvUnit*>& members,
+  const SUnitIDValueContainer& friendly, const SUnitIDValueContainer& enemy, int& result)
+ {
+  // A foreign callback cannot touch an owning thread's payload or counters.
+  if (!IsStackForecastOwner())
+   return false;
+  if (building)
+  {
+   ++gStackOutcomeBypasses;
+   return false;
+  }
+  if (plot != target || &candidates != &members || &friendlyDamage != &friendly || &enemyDamage != &enemy ||
+   !unit || !plot || !StackForecastContext() || MOD_EVENTS_CAN_MOVE_INTO)
+  {
+   if (IsStackForecastOwner()) ++gStackOutcomeBypasses;
+   Release();
+   return false;
+  }
+  CvDangerPlots* danger = GET_PLAYER(unit->getOwner()).GetDangerPlots();
+  // Dirty refresh can rebuild source vectors and invalidate the current scene.
+  if (danger->IsDirty())
+   danger->GetStackDangerDamageIDs(*plot);
+  if (!StackForecastContext())
+  {
+   ++gStackOutcomeBypasses;
+   Release();
+   return false;
+  }
+  const unsigned long currentRevision = gStackForecastRevision;
+  const long currentScene = gStackForecastSceneEpoch;
+  const PlayerTypes currentOwner = unit->getOwner();
+  const TeamTypes currentTeam = unit->getTeam();
+  const bool currentFriendlyCity = plot->isFriendlyCity(*unit);
+  if (ready && revision == currentRevision && scene == currentScene && owner == currentOwner && team == currentTeam &&
+   friendlyCity == currentFriendlyCity && danger->TryGetStackDangerFromOutcome(*plot, unit, friendlyDamage, finalDamage, cityCanFall, result))
+  {
+   ++gStackOutcomeReuses;
+   if (!StackForecastContext() || revision != gStackForecastRevision || scene != gStackForecastSceneEpoch)
+    Release();
+   return true;
+  }
+  Release();
+  building = true;
+  ++gStackOutcomeBuilds;
+  const bool computed = danger->GetStackDangerOutcome(*plot, unit, candidates, friendlyDamage, enemyDamage, finalDamage, cityCanFall, result);
+  building = false;
+  const size_t bytes = finalDamage.m_aExtraStorage.capacity() * sizeof(SUnitIDValueContainer::value_type);
+  ready = computed && StackForecastContext() && currentRevision == gStackForecastRevision && currentScene == gStackForecastSceneEpoch &&
+   gStackOutcomeCurrentBytes <= gStackKeyPayloadLimit && bytes <= gStackKeyPayloadLimit - gStackOutcomeCurrentBytes;
+  if (ready)
+  {
+   revision = currentRevision; scene = currentScene;
+   owner = currentOwner; team = currentTeam; friendlyCity = currentFriendlyCity;
+   retainedBytes = bytes;
+   gStackOutcomeCurrentBytes += bytes;
+   gStackOutcomePeakBytes = max(gStackOutcomePeakBytes, gStackOutcomeCurrentBytes);
+  }
+  else
+  {
+   ++gStackOutcomeBypasses;
+   Release();
+  }
+  // Even if invalidated after the build, return this call's computed value once.
+  // Repeating the simulation here would duplicate scripted or engine callbacks.
+  return computed;
+ }
+private:
+ StackDangerOutcomeBatch(const StackDangerOutcomeBatch&);
+ StackDangerOutcomeBatch& operator=(const StackDangerOutcomeBatch&);
+};
+
 static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
- const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerOutcomeBatch* outcome = NULL)
 {
  int fixedDanger = 0;
  if (CvStacking::IsEnabled() && GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
@@ -8195,7 +8302,9 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
  }
  if (cacheable)
   ++gStackDangerMisses;
- const int result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
+ int result = 0;
+ if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
+  result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
  if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
   StoreStackDangerForecast(key, result);
  return result;
@@ -8360,7 +8469,8 @@ static bool HasSurvivingStackProtection(const CvUnit* unit, const CvPlot* plot,
   return false;
  // Some intermediate callers scale danger by aggression. Protection and survival
  // must compare raw forecasts on both sides, never raw solo against scaled stack.
- const int protectedDanger = GetCachedStackDanger(unit, plot, candidates, friendlyDamage, enemyDamage);
+ StackDangerOutcomeBatch fullOutcome(plot, candidates, friendlyDamage, enemyDamage);
+ const int protectedDanger = GetCachedStackDanger(unit, plot, candidates, friendlyDamage, enemyDamage, &fullOutcome);
  if (protectedDanger >= unit->GetCurrHitPoints() - friendlyDamage.GetValue(unit->GetID()))
   return false;
  vector<const CvUnit*> withoutProtectors;
@@ -8374,7 +8484,7 @@ static bool HasSurvivingStackProtection(const CvUnit* unit, const CvPlot* plot,
    member->isNativeDomain(plot) && member->GetCurrHitPoints() > friendlyDamage.GetValue(member->GetID());
   if (eligible)
   {
-   if (GetCachedStackDanger(member, plot, candidates, friendlyDamage, enemyDamage) >=
+   if (GetCachedStackDanger(member, plot, candidates, friendlyDamage, enemyDamage, &fullOutcome) >=
     member->GetCurrHitPoints() - friendlyDamage.GetValue(member->GetID()))
     return false;
    hasProtector = true;
@@ -9479,14 +9589,16 @@ static int CalculateLeavingStackProtectionScore(const SUnitStats& unit, const Cv
  GetVirtualFriendlyStack(assumedPosition, source, pUnit, unit.iSelfDamage, before, damage);
  vector<const CvUnit*> after = before;
  after.erase(std::remove(after.begin(), after.end(), pUnit), after.end());
+ StackDangerOutcomeBatch beforeOutcome(source, before, damage, assumedPosition.GetUnitDamageDealt());
+ StackDangerOutcomeBatch afterOutcome(source, after, damage, assumedPosition.GetUnitDamageDealt());
  int score = 0;
  for (size_t i = 0; i < after.size(); ++i)
  {
   const CvUnit* ranged = after[i];
   if (!ranged->IsCanAttackRanged())
    continue;
-  const int oldDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, before, damage, assumedPosition.GetUnitDamageDealt()));
-  const int newDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, after, damage, assumedPosition.GetUnitDamageDealt()));
+  const int oldDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, before, damage, assumedPosition.GetUnitDamageDealt(), &beforeOutcome));
+  const int newDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, after, damage, assumedPosition.GetUnitDamageDealt(), &afterOutcome));
   if (newDanger > oldDanger)
    score -= (newDanger - oldDanger) * CvStacking::GetInt("AIStackLeaveProtectorPenalty", 30) / max(1, ranged->GetMaxHitPoints());
  }
@@ -14254,13 +14366,14 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
 	{
 		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
 			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
 			strength.meleeHits,strength.meleeMisses,strength.rangedHits,strength.rangedMisses,
 			strength.attackHits,strength.attackMisses,strength.defenseHits,strength.defenseMisses,
-			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations);
+			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations,
+			gStackOutcomeBuilds,gStackOutcomeReuses,gStackOutcomeBypasses,(unsigned int)gStackOutcomeCurrentBytes,(unsigned int)gStackOutcomePeakBytes);
 	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,
