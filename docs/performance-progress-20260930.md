@@ -60,7 +60,50 @@ Two earlier attempts do execute ranged hits, so those are changed-state
 replans. The new failure diagnostics are needed to identify the repeated
 failures; Summary counts alone do not justify deleting retries.
 
-## Remaining candidates
+## DLL52 native result and the next correctness fix
+
+`c2de0e55f` built as `Release-5.4.6-52-gc2de0e55f Clean` in
+`work/msvc-output/Release/20260930-212752` (179 translation units,75.015s).
+DLL SHA256: `8B0440069823C61A54CB15AE65031A0E1868982C8DE136E22602757600E5350A`.
+
+Matched manual251→253 run: `work/test-runs/perf-d52-manual251-candidate`,
+native `Stacking-20260930T203510-790-p37228-r1`. Full252 fell from95.938s to
+**77.594s**, with PLAN67.526s→49.908s over the same125 searches. All274 retained
+semantic records match (199 PLAN,75 COMBAT_SUMMARY), with identical847-unit
+before and850-unit after censuses,81 cities and23 players. No capture branch
+was exercised. Normal API shutdown succeeded; no new dump. The game is closed.
+
+The full cache removed most generic-only hits but raised shared-cache evictions
+from755,940 to1,921,686 in252. Ranged misses increased2,172,185→2,489,429; complete
+attack/defense hits were6,125,306/15,827,936. This is a measured tradeoff, not
+evidence that cache capacity should be changed blindly.
+
+New execution diagnostics identify the expensive repeated-plan cause. All eight
+Arabia25:25 attempts fail `city_attack_gate`, for ranged units6976/7095 trying
+to fire from2138 into city2225. Repeated attempts have equal ordered basic unit
+signatures; preceding idempotent mission orders do exist, so this is not a claim
+that no calls occurred. Both city-attack scorer gate returns use `SetScore(0,0,0)`.
+`IsAcceptable()` rejects only the impossible sentinel, and virtual assignment
+application still applies the retained damage payload. A denied attack can
+therefore influence a plan and then fail execution repeatedly.
+
+The next candidate changes those two denial returns to `SetImpossible()`,
+preserving `AllowCityAttack` policy and search/retry limits. This is an intended
+correctness change, so subsequent actions/outcomes may differ; exact old-plan
+equivalence is no longer the acceptance test for that fix. Validate denied
+actions cannot enter virtual plans, preserve allowed/capture paths, then inspect
+runtime failures and complete-turn times. Ledger production remains on hold
+until this simpler fix is measured.
+
+The source fix and39 actual-source checks are ready: the old control admits
+50 points of phantom city damage; rejected fixed actions cannot enter the
+candidate list or advance the virtual city state. Allowed/capture/unit-combat
+paths retain their outputs. Native evidence identifies target2225 as Utrecht
+(Netherlands); the eight Arabia plans cost35.335s total, including valid earlier
+orders before failure. This is not a claim that all35.335s can be eliminated.
+See `work/test-runs/perf-d52-manual251-candidate/denied-city-attack-review.json`.
+
+## Further candidates
 
 - Caller-local reuse of complete stack damage outcomes behind the existing
   scalar cache. An isolated exact-source split prototype passed288,016 checks

@@ -9913,7 +9913,7 @@ static STacticalAssignment* ScorePlotForRangedAttack(const SUnitStats& unit, con
 		return result;
 	if(enemyPlot->isEnemyCity() && !CvStackingOffensiveAI::AllowCityAttack(unit.pUnit,
 		enemyPlot->getPlot()->getPlotCity(),assumedUnitPlot->getPlot(),false))
-	{ result->SetScore(0,0,0);return result; }
+	{ result->SetImpossible();return result; }
 
 	//what happens next?
 	if (AttackEndsTurn(unit.pUnit, unit.iAttacksLeft))
@@ -9970,7 +9970,7 @@ static STacticalAssignment* ScorePlotForMeleeAttack(const SUnitStats& unit, cons
 		return result;
 	if(enemyPlot->isEnemyCity() && !CvStackingOffensiveAI::AllowCityAttack(pUnit,
 		pEnemyPlot->getPlotCity(),assumedUnitPlot->getPlot(),result->eAssignmentType==A_MELEEKILL))
-	{ result->SetScore(0,0,0);return result; }
+	{ result->SetImpossible();return result; }
 
 	//what happens next? capturing a city always ends the turn
 	if (AttackEndsTurn(pUnit, iMaxAttacks) ||
