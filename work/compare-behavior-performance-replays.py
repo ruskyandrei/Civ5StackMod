@@ -11,6 +11,9 @@ source/preparation cannot qualify as agreement. Optional --output writes a new
 derived JSON report; no game connection or save mutation. Exit0=agreement,
 exit1=valid disagreement, exit2=invalid/incomplete input. Empty action categories
 remain explicitly uncovered; this is not proof for other saved positions.
+Recorded prepared views must match unless --allow-cross-view explicitly allows
+that one controlled difference. Cross-view qualification requires recorded
+actual mode on both sides; historical archives are labeled unknown, not guessed.
 """
 from __future__ import annotations
 
@@ -244,11 +247,46 @@ def read(folder):
     manifest, metadata = source_proof(folder)
     snapshots = {stage: world(folder / f'world-{stage}.json', manifest['StartTurn' if stage == 'before' else 'StopTurn']) for stage in ('before', 'after')}
     records, segments = native(folder, manifest)
-    return dict(manifest=manifest, metadata=metadata, snapshots=snapshots, records=records, segments=segments)
+    prepared = manifest.get('Prepared')
+    if prepared is None:
+        resumes = manifest.get('ResumeAttempts', [])
+        prepared = resumes[-1].get('verified', {}) if resumes else {}
+    requested = manifest.get('ViewMode', 'preserve')
+    if requested not in ('preserve', 'standard', 'strategic'):
+        raise InvalidEvidence(f'{folder}: invalid requested view mode')
+    actual = prepared.get('strategicView')
+    known = prepared.get('viewAPIAvailable') is True and type(actual) is bool
+    late = manifest.get('ViewPreparation')
+    if late is not None:
+        if (not isinstance(late, dict) or late.get('semantics') != 'late_paused_view_preparation'
+                or late.get('viewModeRequested') != requested
+                or any(late.get(key) != prepared.get(key) for key in
+                       ('turn', 'activePlayer', 'pausePlayer', 'autoplay', 'viewAPIAvailable', 'strategicView'))):
+            raise InvalidEvidence(f'{folder}: late view proof differs from final paused preparation')
+        initial = manifest.get('PreparedInitial')
+        if not isinstance(initial, dict) or initial.get('viewModeOriginal') != prepared.get('viewModeOriginal'):
+            raise InvalidEvidence(f'{folder}: initial/final original view evidence differs')
+    elif 'PreparedInitial' in manifest:
+        raise InvalidEvidence(f'{folder}: final prepared view lacks late-apply proof')
+    if requested != 'preserve' and (not known or actual is not (requested == 'strategic')):
+        raise InvalidEvidence(f'{folder}: explicit requested view lacks actual paused preparation proof')
+    for key, value in (('ViewModeOriginal', prepared.get('viewModeOriginal')),
+                       ('ViewModePrepared', actual)):
+        if key in manifest and manifest[key] != value:
+            raise InvalidEvidence(f'{folder}: inconsistent {key} evidence')
+    view = dict(requested=requested, recorded=known, strategic=actual if known else None,
+                original=prepared.get('viewModeOriginal'), stopped=manifest.get('Stopped', {}).get('strategicView'),
+                late_preparation_recorded=late is not None,
+                preparation_provenance='late_verified' if late is not None else 'historical_recorded_preparation')
+    return dict(manifest=manifest, metadata=metadata, view=view, snapshots=snapshots, records=records, segments=segments)
 
 
-def compare(baseline, candidate):
+def compare(baseline, candidate, allow_cross_view=False):
     before, after = read(baseline), read(candidate)
+    views_known = before['view']['recorded'] and after['view']['recorded']
+    views_equal = before['view']['strategic'] == after['view']['strategic'] if views_known else None
+    if allow_cross_view and not views_known:
+        raise InvalidEvidence('Cross-view comparison requires recorded actual prepared modes on both sides; use a fresh control')
     census = {}
     for stage in ('before', 'after'):
         census[stage] = {kind: rows_comparison(before['snapshots'][stage][kind], after['snapshots'][stage][kind]) for kind in ('players', 'units', 'cities', 'wars')}
@@ -259,17 +297,22 @@ def compare(baseline, candidate):
     for category in categories:
         a, b = [row for row in left if row[2] == category], [row for row in right if row[2] == category]
         per_category[category] = dict(counts=[len(a), len(b)], sequence_equal=a == b, first_difference=first_difference(a, b), covered=bool(a and b))
-    source_equal = before['metadata'] == after['metadata']
+    source_equal = before['metadata'] == after['metadata'] and (views_equal is not False or allow_cross_view)
     return dict(schema=1, baseline=before['manifest']['NativeRun'], candidate=after['manifest']['NativeRun'],
                 loadedDLLSHA256=[before['manifest']['SHA256'], after['manifest']['SHA256']], source_and_preparation_equal=source_equal,
                 source_metadata=[before['metadata'], after['metadata']], snapshots=census,
+                view_comparison=dict(recorded_on_both_sides=views_known, actual_modes_equal=views_equal,
+                    explicit_cross_view_allowed=allow_cross_view, intentional_cross_view=allow_cross_view and views_equal is False,
+                    evidence=[before['view'], after['view']]),
                 native_semantics=dict(record_counts=[len(left), len(right)], segment_numbers=[before['segments'], after['segments']],
                                       sequence_equal=left == right, first_difference=first_difference(left, right), categories=per_category),
                 before_census_equal=census['before']['all_rows_equal'], after_census_equal=census['after']['all_rows_equal'],
                 all_compared_semantics_equal=source_equal and census['before']['all_rows_equal'] and census['after']['all_rows_equal'] and left == right,
                 limits='Exact retained snapshot/semantic comparison for this bounded replay only. UTC/PID/native clock prefixes and PLAN milliseconds are excluded; own run IDs normalized. '
                        'Other semantic fields and event ordering retained. No empty-census equivalence; uncovered categories are not exercised-branch evidence. '
-                       'World snapshots are expected-turn tags supported by prepared/stopped manifest proof. Source and final return-player turns may be partial; this tool does not compare wall performance or unrecorded game state.')
+                       'World snapshots are expected-turn tags supported by prepared/stopped manifest proof. Unrecorded historical view modes remain unknown; ordinary comparisons do not establish view equality in that case. '
+                       'Explicit cross-view allowance excludes only the recorded prepared-view difference; all source/census/native requirements remain. '
+                       'Source and final return-player turns may be partial; this tool does not compare wall performance or unrecorded game state.')
 
 
 def self_test():
@@ -299,6 +342,46 @@ def self_test():
             (directory/'native-segments').mkdir();(directory/'native-segments'/'segment0.log').write_text(log,encoding='utf-8')
             (directory/'native-segments'/'rolling-copy.log').write_text(log,encoding='utf-8')
         equal=compare(a,b);assert equal['all_compared_semantics_equal'] and equal['native_semantics']['record_counts']==[6,6]
+        assert equal['view_comparison']['recorded_on_both_sides'] is False
+        try: compare(a,b,True)
+        except InvalidEvidence as exc: assert 'fresh control' in str(exc)
+        else: raise AssertionError('Unknown historical view admitted as controlled cross-view')
+        for directory, run in ((a,'Stacking-a'),(b,'Stacking-b')):
+            recorded=copy.deepcopy(manifest)
+            recorded.update(NativeRun=run,ViewMode='standard',ViewModeOriginal=False,ViewModePrepared=False)
+            recorded['Prepared'].update(viewAPIAvailable=True,strategicView=False,viewModeOriginal=False)
+            write(directory/'replay-manifest.json',recorded)
+        assert compare(a,b)['all_compared_semantics_equal']
+        strategic=read_json(b/'replay-manifest.json')
+        strategic.update(ViewMode='strategic',ViewModePrepared=True)
+        strategic['Prepared']['strategicView']=True
+        write(b/'replay-manifest.json',strategic)
+        assert not compare(a,b)['all_compared_semantics_equal']
+        allowed=compare(a,b,True)
+        assert allowed['all_compared_semantics_equal'] and allowed['view_comparison']['intentional_cross_view']
+        late_version=copy.deepcopy(strategic)
+        late_version['PreparedInitial']=copy.deepcopy(late_version['Prepared'])
+        late_version['PreparedInitial']['strategicView']=False
+        late_version['ViewPreparation']={key:late_version['Prepared'][key] for key in
+            ('turn','activePlayer','pausePlayer','autoplay','viewAPIAvailable','strategicView')}
+        late_version['ViewPreparation'].update(semantics='late_paused_view_preparation',viewModeRequested='strategic',before=False,toggled=True)
+        write(b/'replay-manifest.json',late_version)
+        late_equal=compare(a,b,True)
+        assert late_equal['all_compared_semantics_equal'] and late_equal['view_comparison']['evidence'][1]['late_preparation_recorded']
+        late_version['ViewPreparation']['strategicView']=False;write(b/'replay-manifest.json',late_version)
+        try: compare(a,b,True)
+        except InvalidEvidence: pass
+        else: raise AssertionError('Initial immediate mode overrode mismatched final late proof')
+        strategic['QuickMovement']=False;strategic['Prepared']['quickMovement']=False
+        write(b/'replay-manifest.json',strategic)
+        assert not compare(a,b,True)['source_and_preparation_equal']
+        strategic['QuickMovement']=True;strategic['Prepared']['quickMovement']=True
+        strategic['Prepared']['strategicView']=False;write(b/'replay-manifest.json',strategic)
+        try: compare(a,b,True)
+        except InvalidEvidence: pass
+        else: raise AssertionError('Explicit view request without matching actual view admitted')
+        for directory, run in ((a,'Stacking-a'),(b,'Stacking-b')):
+            write(directory/'replay-manifest.json',dict(manifest,NativeRun=run))
         human=read_json(b/'replay-manifest.json');human['SourceMode']='human'
         human['Prepared'].update(sourceMode='human',sourceActivePlayer=0,restoredAutoplay=0)
         write(b/'replay-manifest.json',human)
@@ -344,12 +427,13 @@ def main():
     parser.add_argument('candidate',type=Path,nargs='?')
     parser.add_argument('--output',type=Path)
     parser.add_argument('--self-test',action='store_true')
+    parser.add_argument('--allow-cross-view',action='store_true',help='Allow only a recorded actual prepared-view difference; both archives must record mode')
     args=parser.parse_args()
     if args.self_test:self_test();return 0
     if args.baseline is None or args.candidate is None:parser.error('baseline and candidate run directories required')
     if args.output and (args.output.suffix.lower()!='.json' or args.output.name in ('replay-manifest.json','world-before.json','world-after.json') or args.output.parent.name=='native-segments'):
         parser.error('--output must be a derived .json, not an archived input')
-    try:result=compare(args.baseline,args.candidate)
+    try:result=compare(args.baseline,args.candidate,args.allow_cross_view)
     except (InvalidEvidence,OSError,UnicodeError,KeyError,TypeError,ValueError) as exc:
         result=dict(ok=False,all_compared_semantics_equal=False,error=str(exc));exit_code=2
     else:exit_code=0 if result['all_compared_semantics_equal'] else 1

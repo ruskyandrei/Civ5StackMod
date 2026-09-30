@@ -23,6 +23,12 @@ Read-only per-player snapshots before/after include unit identity/type/position,
 HP/movement, city name/original owner/HP/strength/population and active wars.
 Per-player calls avoid the tuner's10,000-value result limit for whole campaigns.
 The named watch city (defaultAbernethy) is sampled during status polling too.
+--view-mode preserves the current view by default. Explicit standard/strategic
+requests validate the engine globals before preparation mutates game settings,
+then apply the view in a separate late InGame request after the census while
+paused. This lets deferred active-player restoration run first. A further
+InGame status verifies final mode before continuation. Actual view is recorded
+even for preserve when the API exists; old archives have unknown view.
 
 Commands and structured responses are archived with numbered files, alongside
 Lua.log, rolling native segments, save/DLL identities, snapshots and analyzer
@@ -59,7 +65,12 @@ EXPECTED_MODS = {"d1b6328c-ff44-4b0d-aad7-c657f83610cd": 151, "8411a7a8-dad3-462
                  "24923240-e4fb-4bf6-8f0e-6e5b6cf4d3c2": 1, "3645dbca-bdfb-4d86-bdc5-46cb5a426cc2": 1}
 
 
-def prepared(status, start, count):
+def view_matches(status, mode):
+    return mode == "preserve" or (status.get("viewAPIAvailable") is True
+        and status.get("strategicView") is (mode == "strategic"))
+
+
+def prepared(status, start, count, view_mode="preserve"):
     return (status.get("turn") == start and status.get("autoplay") == count
             # VP observer slots can report IsHuman()==true or false. The
             # observer/pause/counter checks establish paused preparation.
@@ -67,7 +78,8 @@ def prepared(status, start, count):
             and status.get("pausePlayer") == status.get("activePlayer")
             and isinstance(status.get("activePlayer"), int) and status["activePlayer"] >= 0
             and status.get("diagnostics") == 1 and status.get("quickCombat") is True
-            and status.get("quickMovement") is True and status.get("multiplayer") is False)
+            and status.get("quickMovement") is True and status.get("multiplayer") is False
+            and view_matches(status, view_mode))
 
 
 def stopped(status, stop, player):
@@ -80,8 +92,22 @@ def lua_sources(args):
     start, stop, player = args.start_turn, args.stop_turn, args.return_player
     count = stop - start
     source_mode = getattr(args, "source_mode", "observer")
+    view_mode = getattr(args, "view_mode", "preserve")
     if source_mode not in ("observer", "human"):
         raise ValueError("Unknown replay source mode")
+    if view_mode not in ("preserve", "standard", "strategic"):
+        raise ValueError("Unknown replay view mode")
+    view_literal = tuner.lua_string(view_mode)
+    view_check = f"""local requestedView={view_literal}
+local originalView=nil
+if type(InStrategicView)=='function' then originalView=InStrategicView() end
+if requestedView~='preserve' then
+ assert(type(InStrategicView)=='function' and type(ToggleStrategicView)=='function'
+  and type(originalView)=='boolean','Strategic view APIs unavailable')
+end"""
+    view_continue = "" if view_mode == "preserve" else f"""
+assert(type(InStrategicView)=='function' and InStrategicView()=={str(view_mode == 'strategic').lower()},
+ 'Prepared view changed')"""
     if source_mode == "observer":
         source_check = """assert(Players[active] and Players[active]:IsObserver(),'Behavior source must be an observer save')
 assert(Game.GetPausePlayer()==active,'Load screen must still pause the original observer')"""
@@ -100,6 +126,9 @@ assert(active~=sourceActive and Players[active] and Players[active]:IsObserver()
 Game.SetPausePlayer(active)"""
     status = perf.STATUS.replace("return {", "local result={", 1) + f"""
 result.returnPlayerAlive=Players[{player}] and Players[{player}]:IsAlive() or false
+result.viewModeRequested={view_literal}
+result.viewAPIAvailable=type(InStrategicView)=='function'
+if result.viewAPIAvailable then result.strategicView=InStrategicView() end
 result.watchCities={{}}
 local watched={tuner.lua_string(args.watch_city)}
 for owner=0,63 do local p=Players[owner];if p and p:IsAlive() and not p:IsObserver() then
@@ -121,6 +150,7 @@ local returning=Players[{player}]
 assert(returning and returning:IsAlive() and not returning:IsMinorCiv() and not returning:IsObserver()
  and not returning:IsBarbarian(),'Return civilization must be alive major')
 assert(Game.SetStackingDiagnosticsLevel and Game.FlushStackingDiagnostics,'Diagnostics APIs unavailable')
+{view_check}
 local restored=Game.GetAIAutoPlay()
 {stop_restored}
 Game.SetStackingDiagnosticsLevel(1)
@@ -134,7 +164,8 @@ assert(PreGame.GetQuickCombat() and PreGame.GetQuickMovement(),'Quick settings d
 Game.FlushStackingDiagnostics()
 print('BEHAVIOR_READY',Game.GetGameTurn(),Game.GetAIAutoPlay(),Game.GetActivePlayer())
 local ready=(function(){status}end)();ready.restoredAutoplay=restored
-ready.sourceMode='{source_mode}';ready.sourceActivePlayer=sourceActive;return ready
+ready.sourceMode='{source_mode}';ready.sourceActivePlayer=sourceActive
+ready.viewModeOriginal=originalView;ready.viewModeResult=ready.strategicView;return ready
 """
     continuation = f"""
 assert(not Controls.ActivateButton:IsHidden(),'Load screen not ready')
@@ -144,9 +175,43 @@ assert(Game.GetGameTurn()=={start} and Game.GetAIAutoPlay()=={count} and Players
  and Game.GetPausePlayer()==active,'Prepared observer replay changed')
 assert(Game.GetStackingDiagnosticsLevel()==1 and PreGame.GetQuickCombat() and PreGame.GetQuickMovement(),
  'Prepared diagnostics/options changed')
+{view_continue}
 Events.LoadScreenClose();Game.SetPausePlayer(-1);UI.SetDontShowPopups(false);return 'continued'
 """
     return status, prepare, continuation
+
+
+def lua_view_preparation(args):
+    """Run after source normalization/census callbacks, before continuation."""
+    mode = getattr(args, "view_mode", "preserve")
+    if mode not in ("preserve", "standard", "strategic"):
+        raise ValueError("Unknown replay view mode")
+    return f"""
+assert(not PreGame.IsMultiplayerGame(),'Single-player replay only')
+local active=Game.GetActivePlayer()
+assert(Game.GetGameTurn()=={args.start_turn} and Game.GetAIAutoPlay()=={args.stop_turn-args.start_turn}
+ and Players[active] and Players[active]:IsObserver() and Game.GetPausePlayer()==active,
+ 'Late view preparation must remain paused at the original turn')
+assert(Game.GetStackingDiagnosticsLevel()==1 and PreGame.GetQuickCombat() and PreGame.GetQuickMovement(),
+ 'Prepared diagnostics/options changed')
+local requested={tuner.lua_string(mode)}
+local available=type(InStrategicView)=='function'
+local before=nil
+if available then before=InStrategicView() end
+local toggled=false
+if requested~='preserve' then
+ assert(available and type(ToggleStrategicView)=='function' and type(before)=='boolean',
+  'Strategic view APIs unavailable')
+ local desired=requested=='strategic'
+ if before~=desired then ToggleStrategicView();toggled=true end
+ assert(InStrategicView()==desired,'Requested strategic view did not apply')
+end
+local after=nil
+if available then after=InStrategicView() end
+return {{turn=Game.GetGameTurn(),activePlayer=active,pausePlayer=Game.GetPausePlayer(),
+ autoplay=Game.GetAIAutoPlay(),viewModeRequested=requested,viewAPIAvailable=available,
+ before=before,strategicView=after,toggled=toggled,semantics='late_paused_view_preparation'}}
+"""
 
 
 OWNER_LIST = """
@@ -184,6 +249,7 @@ class BehaviorReplay(perf.Replay):
     def __init__(self, args):
         super().__init__(args)
         self.status_source, self.prepare_source, self.continue_source = lua_sources(args)
+        self.view_source = lua_view_preparation(args)
         self.deadline = None
 
     def snapshot(self, stage):
@@ -248,6 +314,8 @@ class BehaviorReplay(perf.Replay):
                         "ExpectedDLLSHA256": self.args.expected_dll_sha}
             if self.manifest.get("SourceMode", "observer") != self.args.source_mode:
                 raise ValueError("Resume source mode changed")
+            if self.manifest.get("ViewMode", "preserve") != self.args.view_mode:
+                raise ValueError("Resume view mode changed")
             if any(self.manifest.get(key) != value for key, value in expected.items()) or Path(self.manifest["Save"]).resolve() != save:
                 raise ValueError("Resume source/process/behavior settings changed")
             if self.manifest.get("ContinuedUTC") or self.manifest.get("Stopped") or self.manifest.get("Status") not in ("preparing", "armed", "failed"):
@@ -269,6 +337,8 @@ class BehaviorReplay(perf.Replay):
             live = self.call("InGame", self.status_source, "resume-paused-behavior-state")[0]
             if not prepared(live, self.args.start_turn, count) or not live["returnPlayerAlive"]:
                 raise ValueError("Live paused state is unsafe to resume")
+            self.manifest["ViewModeOriginal"] = result.get("values", [{}])[0].get("viewModeOriginal")
+            self.manifest["ViewModePrepared"] = live.get("strategicView")
             if self.call("LoadScreen", "return not Controls.ActivateButton:IsHidden()", "resume-load-ready")[0] is not True:
                 raise ValueError("Load-screen activation button must remain visible")
             self.manifest.setdefault("ResumeAttempts", []).append({"utc": perf.utc(), "verified": live})
@@ -276,6 +346,7 @@ class BehaviorReplay(perf.Replay):
             self.manifest = {"Status": "preparing", "Save": str(save), "SaveSHA256": self.args.save_sha,
                              "StartTurn": self.args.start_turn, "StopTurn": self.args.stop_turn, "TurnLimit": count,
                              "SourceMode": self.args.source_mode,
+                             "ViewMode": self.args.view_mode,
                              "ReturnPlayer": self.args.return_player, "DiagnosticLevel": 1, "QuickCombat": True, "QuickMovement": True,
                              "PID": self.args.game_pid, "StartTicks": self.args.start_ticks, "StartedUTC": perf.utc(),
                              "ExpectedDLLSHA256": self.args.expected_dll_sha, "WatchCity": self.args.watch_city,
@@ -308,6 +379,8 @@ class BehaviorReplay(perf.Replay):
             if not prepared(ready, self.args.start_turn, count):
                 raise ValueError("Behavior preparation failed ready-state validation")
             self.manifest["Prepared"] = ready
+            self.manifest["ViewModeOriginal"] = ready.get("viewModeOriginal")
+            self.manifest["ViewModePrepared"] = ready.get("strategicView")
             self.save_manifest()
         proof = perf.gamecore_metadata(lambda: perf.exact_process(self.args.game_pid, self.args.start_ticks, guards),
                                        lambda **fields: self.progress("loaded-dll-metadata", **fields))
@@ -320,6 +393,33 @@ class BehaviorReplay(perf.Replay):
         if not (self.run / "world-before.json").exists():
             self.snapshot("before")
         shutil.copyfile(self.args.logs / "Lua.log", self.run / "Lua-start.log")
+        # A delayed WorldView active-player callback can reset the immediate
+        # preparation's view after its Lua returns. Set the explicit view only
+        # after the census requests, then verify from another InGame request.
+        # Never retry a dispatched late mutation after an unknown result.
+        prior_view = list(self.run.glob("*-prepare-replay-view.lua"))
+        if prior_view:
+            if (len(prior_view) != 1 or prior_view[0].read_text(encoding="utf-8") != self.view_source
+                    or not prior_view[0].with_suffix(".json").exists()):
+                raise ValueError("Previous late view preparation is not safely recoverable; never repeat it")
+            previous = json.loads(prior_view[0].with_suffix(".json").read_text(encoding="utf-8-sig"))["result"]
+            if not previous.get("ok") or not previous.get("values"):
+                raise ValueError("Previous late view preparation did not succeed; never repeat it")
+            view_proof = previous["values"][0]
+        else:
+            view_proof = self.call("InGame", self.view_source, "prepare-replay-view")[0]
+        final_ready = self.call("InGame", self.status_source, "verify-final-prepared-view")[0]
+        if (not prepared(final_ready, self.args.start_turn, count, self.args.view_mode)
+                or not final_ready["returnPlayerAlive"] or not isinstance(view_proof, dict)
+                or view_proof.get("semantics") != "late_paused_view_preparation"
+                or view_proof.get("viewModeRequested") != self.args.view_mode
+                or view_proof.get("strategicView") != final_ready.get("strategicView")):
+            raise ValueError("Final paused view preparation failed validation")
+        initial_ready = self.manifest.get("Prepared", result["values"][0] if self.args.resume_prepared else {})
+        self.manifest.setdefault("PreparedInitial", initial_ready.copy())
+        self.manifest["Prepared"] = {**initial_ready, **final_ready, "viewModeResult": final_ready.get("strategicView")}
+        self.manifest["ViewPreparation"] = view_proof
+        self.manifest["ViewModePrepared"] = final_ready.get("strategicView")
         self.manifest["Status"] = "armed"
         self.save_manifest()
         self.call("LoadScreen", self.continue_source, "continue-bounded-behavior")
@@ -333,9 +433,11 @@ class BehaviorReplay(perf.Replay):
                 self.safe_stop = True
                 (self.run / "complete.signal").write_text("Expected behavior replay stopped "+perf.utc()+"\n", encoding="utf-8")
                 self.manifest.update(Status="stopped", Stopped=status, StoppedUTC=perf.utc())
+                self.manifest["ViewModeStopped"] = status.get("strategicView")
                 self.save_manifest()
                 break
-            if status["turn"] > self.args.stop_turn or status["autoplay"] == 0 or not status["returnPlayerAlive"] or time.monotonic() >= self.deadline:
+            if (status["turn"] > self.args.stop_turn or status["autoplay"] == 0 or not status["returnPlayerAlive"]
+                    or not view_matches(status, self.args.view_mode) or time.monotonic() >= self.deadline):
                 # A dead return player can leave observer autoplay advancing at
                 # counter0. Pause once while the channel is known usable; fail
                 # visibly instead of silently switching another civilization.
@@ -474,9 +576,98 @@ Game.SetPausePlayer=function(n) assert(n==8);calls[#calls+1]={'pause',n};state.p
             except Exception: pass
             else: raise AssertionError("Invalid human source was normalized")
             assert len(lua.globals().calls)==0
+        # View APIs must be validated before autoplay/options/diagnostics mutate.
+        # Preserve queries an available API but never toggles; human normalization
+        # may restore another player's view, so apply the request afterwards.
+        view_args = argparse.Namespace(**vars(human_args), view_mode="strategic")
+        _, strategic_prepare, strategic_continue = lua_sources(view_args)
+        strategic_late = lua_view_preparation(view_args)
+        assert syntax(strategic_prepare) and syntax(strategic_continue) and syntax(strategic_late)
+        for unavailable in ("InStrategicView=nil;ToggleStrategicView=nil",
+                            "InStrategicView=function() return false end;ToggleStrategicView=nil",
+                            "InStrategicView=function() return 1 end;ToggleStrategicView=function() end"):
+            lua.execute(human_reset+"\n"+unavailable)
+            try: lua.execute(strategic_prepare)
+            except Exception as exc: assert "Strategic view APIs unavailable" in str(exc)
+            else: raise AssertionError("Missing/invalid view API admitted")
+            assert len(lua.globals().calls)==0
+        view_mock = """
+state.strategic=ORIGINAL_VIEW;state.toggles=0
+InStrategicView=function() return state.strategic end
+ToggleStrategicView=function()
+ assert(state.active==8 and state.pause==8,'Toggle outside paused observer')
+ state.toggles=state.toggles+1;state.strategic=not state.strategic
+end
+"""
+        for mode, original, expected, toggles in (("preserve",False,False,0),("preserve",True,True,0),
+                ("strategic",False,True,1),("strategic",True,True,0),
+                ("standard",False,False,0),("standard",True,False,1)):
+            configured = argparse.Namespace(**vars(human_args), view_mode=mode)
+            _, source, _ = lua_sources(configured)
+            lua.execute(human_reset+"\n"+view_mock.replace("ORIGINAL_VIEW",str(original).lower()))
+            initial = dict(lua.execute(source).items())
+            assert initial['strategicView'] is original and lua.globals().state.toggles==0
+            proof = dict(lua.execute(lua_view_preparation(configured)).items())
+            status_for_view, _, _ = lua_sources(configured)
+            got = {**initial, **dict(lua.execute(status_for_view).items()), 'viewModeResult':proof['strategicView']}
+            assert prepared(got,215,15,mode) and got['strategicView'] is expected
+            assert got['viewModeOriginal'] is original and got['viewModeResult'] is expected
+            assert got['viewModeRequested']==mode and lua.globals().state.toggles==toggles
+            assert len(lua.globals().calls)==5
+        # Model the engine's delayed per-player restoration after preparation
+        # returned and the census was sampled. Immediate view is not final proof.
+        lua.execute(human_reset+"\n"+view_mock.replace("ORIGINAL_VIEW","true")+"""
+state.delayedViewReset=false
+""")
+        initial = dict(lua.execute(strategic_prepare).items())
+        assert initial['viewModeOriginal'] is True and initial['strategicView'] is True and lua.globals().state.toggles==0
+        lua.execute("state.strategic=state.delayedViewReset")
+        proof = dict(lua.execute(strategic_late).items())
+        final_status, _, _ = lua_sources(view_args)
+        got = {**initial, **dict(lua.execute(final_status).items()), 'viewModeResult':proof['strategicView']}
+        assert prepared(got,215,15,"strategic") and proof['before'] is False and proof['strategicView'] is True
+        assert got['viewModeOriginal'] is True and lua.globals().state.toggles==1
+        lua.execute(human_reset+"\n"+view_mock.replace("ORIGINAL_VIEW","false")+"""
+ToggleStrategicView=function() assert(state.active==8 and state.pause==8);state.toggles=state.toggles+1 end
+""")
+        lua.execute(strategic_prepare)
+        try: lua.execute(strategic_late)
+        except Exception as exc: assert "Requested strategic view did not apply" in str(exc)
+        else: raise AssertionError("Unapplied view silently continued")
+        assert lua.globals().state.toggles==1 and lua.globals().state.pause==8 and lua.globals().state.turn==215
+        lua.execute(human_reset+"\n"+view_mock.replace("ORIGINAL_VIEW","true"))
+        lua.execute(strategic_prepare)
+        lua.execute(strategic_late)
+        lua.execute("state.strategic=false")
+        status_source, _, _ = lua_sources(view_args)
+        changed = dict(lua.execute(status_source).items())
+        assert changed['viewModeRequested']=='strategic' and changed['strategicView'] is False
+        assert not prepared(changed,215,15,"strategic") and not view_matches(changed,"strategic")
+        lua.execute("""
+state.continued=0
+Controls={ActivateButton={IsHidden=function() return false end}}
+Events={LoadScreenClose=function() state.continued=state.continued+1 end}
+UI={SetDontShowPopups=function() end}
+Game.SetPausePlayer=function(n) assert(n==8 or n==-1);state.pause=n end
+""")
+        try: lua.execute(strategic_continue)
+        except Exception as exc: assert "Prepared view changed" in str(exc)
+        else: raise AssertionError("Changed view continued")
+        assert lua.globals().state.continued==0 and lua.globals().state.pause==8
+        lua.execute("state.strategic=true")
+        assert lua.execute(strategic_continue)=='continued' and lua.globals().state.continued==1
+        assert lua.globals().state.pause==-1
+        # Preserve still works when engine view globals are absent.
+        lua.execute(human_reset+"\nInStrategicView=nil;ToggleStrategicView=nil")
+        preserved = dict(lua.execute(human_prepare).items())
+        assert prepared(preserved,215,15) and preserved['viewAPIAvailable'] is False and 'strategicView' not in preserved
+        preserve_late = dict(lua.execute(lua_view_preparation(human_args)).items())
+        assert preserve_late['viewAPIAvailable'] is False and preserve_late['toggled'] is False
     print(json.dumps({"ok": True, "offline": True, "gameCommandsSent": 0, "negativeStateCases": 12,
                       "lua51Validated": runtime.exists(), "snapshotsAndCityWatchValidated": runtime.exists(),
-                      "explicitHumanSourceValidated": runtime.exists(), "humanSourceNegativeCases": 6}))
+                      "explicitHumanSourceValidated": runtime.exists(), "humanSourceNegativeCases": 6,
+                      "viewModesValidated": runtime.exists(), "viewMissingAPINegativeCases": 3,
+                      "delayedViewRestorationValidated": runtime.exists()}))
 
 
 def main():
@@ -490,6 +681,8 @@ def main():
     parser.add_argument("--return-player", type=int, default=0)
     parser.add_argument("--source-mode", choices=("observer", "human"), default="observer",
                         help="Human explicitly allows the same paused return-player save to switch to observer, including VP slot-change AI decisions")
+    parser.add_argument("--view-mode", choices=("preserve", "standard", "strategic"), default="preserve",
+                        help="Preserve the loaded view by default; explicit modes apply while paused after observer normalization and are verified in status polls")
     parser.add_argument("--watch-city", default="Abernethy")
     parser.add_argument("--logs", type=Path, default=perf.DEFAULT_LOGS)
     parser.add_argument("--game-pid", type=int)
