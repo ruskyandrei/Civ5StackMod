@@ -57,6 +57,31 @@ namespace
         EntryCosts():turn(-1),thread(0),generation(0),calls(0),busyReturns(0),cpuMeasured(0),
             hookMs(0),guardMs(0),hookCPU100ns(0),guardCPU100ns(0),maxHookMs(0),maxGuardMs(0){}
     } entryCosts[MAX_PLAYERS];
+    enum { GAP_ACTIVATION=4, GAP_HEAD=5, GAP_PARTS=6 };
+    struct GapCost
+    {
+        bool open, cpuAvailable;
+        unsigned long started;
+        unsigned __int64 cpuStarted, milliseconds, cpu100ns;
+        unsigned int calls, cpuMeasured;
+        GapCost():open(false),cpuAvailable(false),started(0),cpuStarted(0),milliseconds(0),cpu100ns(0),calls(0),cpuMeasured(0){}
+    };
+    struct PendingUpdateGap
+    {
+        bool active, cpuAvailable, lastExit, lastExitCPUAvailable, clippedWrapperStart;
+        PlayerTypes actor;
+        int turn;
+        unsigned long started, thread, generation, serial, lastExitTick, maximumDispatchMs;
+        unsigned __int64 cpuStarted, lastExitCPU, dispatchMs, dispatchCPU100ns;
+        unsigned int dispatchCalls, dispatchCPUMeasured, nestedScopes;
+        GapCost part[GAP_PARTS];
+        PendingUpdateGap():active(false),cpuAvailable(false),lastExit(false),lastExitCPUAvailable(false),clippedWrapperStart(false),
+            actor(NO_PLAYER),turn(-1),started(0),thread(0),generation(0),serial(0),lastExitTick(0),maximumDispatchMs(0),
+            cpuStarted(0),lastExitCPU(0),dispatchMs(0),dispatchCPU100ns(0),dispatchCalls(0),dispatchCPUMeasured(0),nestedScopes(0){}
+    } updateGap;
+    unsigned int updateDepth[4]={0,0,0,0};
+    unsigned long updateThread=0, updateSerial=0;
+    bool updateHeadOpen=false;
     unsigned int configHash = 0;
     unsigned long bytesWritten = 0;
     wchar_t directory[MAX_PATH] = L"";
@@ -119,7 +144,7 @@ namespace
             !strcmp(category,"CITY") || !strncmp(category,"SAMPLE_",7) || !strncmp(category,"DECISION_",9) || !strcmp(category,"UNIT_DECISION")) return 1;
         if(!strncmp(category,"COMBAT_",7) || !strcmp(category,"CITY_CAPTURE")) return 8;
         if(!strcmp(category,"MEMORY")) return 32;
-        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE")) return 16;
+        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE") || !strcmp(category,"TURN_UPDATE_GAP")) return 16;
         if(!strncmp(category,"PLAN",4) || !strncmp(category,"RECRUIT",7) || !strcmp(category,"LONG_PLAN") || !strcmp(category,"ATTACK_GATE")) return 4;
         return 2;
     }
@@ -151,6 +176,74 @@ namespace
         // Safety anomalies remain available regardless of the selected evidence family.
         if(!strcmp(category,"LONG_PLAN") || !strncmp(category,"ANOMALY",7)) return true;
         return (setting("DiagnosticsCategoryMask",63)&categoryBit(category))!=0;
+    }
+    bool updateTimingEnabled(PlayerTypes player)
+    {
+        if(!categoryEnabledUnlocked(1,player,"TURN_UPDATE_GAP")) return false;
+        const int interval=setting("DiagnosticsPerformanceInterval",1);
+        return interval>0 && GC.getGame().getGameTurn()%interval==0;
+    }
+    void clearUpdateGapState()
+    {
+        updateGap=PendingUpdateGap();updateThread=0;updateHeadOpen=false;
+        for(int i=0;i<4;++i) updateDepth[i]=0;
+    }
+    bool validUpdateGap()
+    {
+        if(!updateGap.active) return false;
+        if(updateGap.generation!=phaseGeneration || updateGap.turn!=GC.getGame().getGameTurn() ||
+            !updateTimingEnabled(updateGap.actor))
+        { updateGap=PendingUpdateGap();return false; }
+        // Another thread must neither time nor consume this pending activation.
+        return updateGap.thread==GetCurrentThreadId();
+    }
+    void updateGapSample(unsigned long& tick,unsigned __int64& cpu,bool& available)
+    {
+        tick=GetTickCount();cpu=0;
+        available=updateGap.cpuAvailable && threadCPU100ns(cpu) && cpu>=updateGap.cpuStarted;
+        if(!available) updateGap.cpuAvailable=false;
+    }
+    void startGapPart(int part,unsigned long tick,unsigned __int64 cpu,bool available)
+    {
+        GapCost& cost=updateGap.part[part];
+        if(cost.open) return;
+        cost.open=true;cost.started=tick;cost.cpuStarted=cpu;cost.cpuAvailable=available;++cost.calls;
+    }
+    void finishGapPart(int part,unsigned long tick,unsigned __int64 cpu,bool available)
+    {
+        GapCost& cost=updateGap.part[part];
+        if(!cost.open) return;
+        cost.open=false;cost.milliseconds+=tick-cost.started;
+        if(cost.cpuAvailable && available && cpu>=cost.cpuStarted)
+        { ++cost.cpuMeasured;cost.cpu100ns+=cpu-cost.cpuStarted; }
+    }
+    void finishUpdateGapAtEntry(PlayerTypes player)
+    {
+        if(updateGap.active && updateGap.actor==player && updateGap.thread!=GetCurrentThreadId())
+        { updateGap=PendingUpdateGap();return; }
+        if(!validUpdateGap() || updateGap.actor!=player) return;
+        unsigned long ended=0;unsigned __int64 cpuEnded=0;bool available=false;
+        updateGapSample(ended,cpuEnded,available);
+        for(int i=0;i<GAP_PARTS;++i) finishGapPart(i,ended,cpuEnded,available);
+        const PendingUpdateGap gap=updateGap;
+        updateGap=PendingUpdateGap(); // Entry/reentrant/busy calls consume once, before search.
+        CvStackingDiagnostics::Record(1,gap.actor,"TURN_UPDATE_GAP",
+            "startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu cpuAvailable=%d cpuStart100ns=%I64u cpuEnd100ns=%I64u cpu100ns=%I64u semantics=activation_to_first_unit_entry totals=inclusive_overlapping_not_phase_bounds "
+            "wrapperCalls=%u wrapperMs=%I64u wrapperCPU100ns=%I64u wrapperCPUMeasured=%u wrapperClippedStart=%d "
+            "gameCalls=%u gameMs=%I64u gameCPU100ns=%I64u gameCPUMeasured=%u "
+            "activationTailCalls=%u activationTailMs=%I64u activationTailCPU100ns=%I64u activationTailCPUMeasured=%u "
+            "beginHookCalls=%u beginHookMs=%I64u beginHookCPU100ns=%I64u beginHookCPUMeasured=%u "
+            "endHookCalls=%u endHookMs=%I64u endHookCPU100ns=%I64u endHookCPUMeasured=%u "
+            "preMovesHeadCalls=%u preMovesHeadMs=%I64u preMovesHeadCPU100ns=%I64u preMovesHeadCPUMeasured=%u "
+            "dispatchCalls=%u dispatchMs=%I64u dispatchCPU100ns=%I64u dispatchCPUMeasured=%u maximumDispatchMs=%lu nestedScopes=%u; wrapper and game totals include their child hooks/tails; dispatch is between measured wrapper calls, not proof of a particular engine wait",
+            gap.started,ended,ended-gap.started,gap.thread,available?1:0,available?gap.cpuStarted:0,available?cpuEnded:0,available?cpuEnded-gap.cpuStarted:0,
+            gap.part[0].calls,gap.part[0].milliseconds,gap.part[0].cpu100ns,gap.part[0].cpuMeasured,gap.clippedWrapperStart?1:0,
+            gap.part[1].calls,gap.part[1].milliseconds,gap.part[1].cpu100ns,gap.part[1].cpuMeasured,
+            gap.part[GAP_ACTIVATION].calls,gap.part[GAP_ACTIVATION].milliseconds,gap.part[GAP_ACTIVATION].cpu100ns,gap.part[GAP_ACTIVATION].cpuMeasured,
+            gap.part[2].calls,gap.part[2].milliseconds,gap.part[2].cpu100ns,gap.part[2].cpuMeasured,
+            gap.part[3].calls,gap.part[3].milliseconds,gap.part[3].cpu100ns,gap.part[3].cpuMeasured,
+            gap.part[GAP_HEAD].calls,gap.part[GAP_HEAD].milliseconds,gap.part[GAP_HEAD].cpu100ns,gap.part[GAP_HEAD].cpuMeasured,
+            gap.dispatchCalls,gap.dispatchMs,gap.dispatchCPU100ns,gap.dispatchCPUMeasured,gap.maximumDispatchMs,gap.nestedScopes);
     }
     bool openSegment()
     {
@@ -275,6 +368,7 @@ namespace CvStackingDiagnostics
     {
         Lock lock;
         ++phaseGeneration;
+        clearUpdateGapState();
         closeFile(); level = -1; rowTurn = -1; memoryTurn = -1; rows = 0;
         initialized = false; failed = false; suppressed = false; optionsLoaded = false;
         prefix[0] = 0; directory[0] = 0; configHash = 0;
@@ -309,6 +403,7 @@ namespace CvStackingDiagnostics
         Lock lock;
         if (value < 0 || value > 2) return;
         ++phaseGeneration;
+        clearUpdateGapState();
         getLevelUnlocked();
         if (output) writeLine(GC.getGame().getGameTurn(), -1, "LEVEL", value == 0 ? "off" : value == 1 ? "summary" : "verbose");
         if (!value) { closeFile(); strcpy_s(status, sizeof(status), "Off"); }
@@ -369,6 +464,86 @@ namespace CvStackingDiagnostics
         cpuAvailable=cpuAvailable && threadCPU100ns(cpuEnded) && cpuEnded>=cpuStarted;
         Record(1,actor,"TURN_PHASE","phase=%s startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu cpuAvailable=%d cpuStart100ns=%I64u cpuEnd100ns=%I64u cpu100ns=%I64u semantics=inclusive cpuSemantics=inclusive_same_thread; nested TURN_PHASE and PLAN intervals overlap; do not sum all phase wall or CPU durations as a round",name,started,ended,ended-started,thread,cpuAvailable?1:0,cpuAvailable?cpuStarted:0,cpuAvailable?cpuEnded:0,cpuAvailable?cpuEnded-cpuStarted:0);
     }
+    UpdateBoundaryScope::UpdateBoundaryScope(UpdateBoundaryPart value):active(false),part(value),thread(0),generation(0)
+    {
+        Lock lock;
+        if(value<UPDATE_WRAPPER || value>UPDATE_END_HOOK || !updateTimingEnabled(NO_PLAYER)) return;
+        thread=GetCurrentThreadId();generation=phaseGeneration;
+        bool any=false;for(int i=0;i<4;++i) any=any || updateDepth[i]!=0;
+        if(any && updateThread!=thread) return;
+        updateThread=thread;
+        const bool outer=updateDepth[part]++==0;
+        active=true;
+        if(part==UPDATE_GAME && outer) updateHeadOpen=true;
+        if(!validUpdateGap()) return;
+        if(!outer) { ++updateGap.nestedScopes;return; }
+        unsigned long tick=0;unsigned __int64 cpu=0;bool available=false;
+        updateGapSample(tick,cpu,available);
+        if(part==UPDATE_WRAPPER && updateGap.lastExit)
+        {
+            const unsigned long elapsed=tick-updateGap.lastExitTick;
+            ++updateGap.dispatchCalls;updateGap.dispatchMs+=elapsed;
+            updateGap.maximumDispatchMs=max(updateGap.maximumDispatchMs,elapsed);
+            if(available && updateGap.lastExitCPUAvailable && cpu>=updateGap.lastExitCPU)
+            { ++updateGap.dispatchCPUMeasured;updateGap.dispatchCPU100ns+=cpu-updateGap.lastExitCPU; }
+            updateGap.lastExit=false;
+        }
+        startGapPart(part,tick,cpu,available);
+        if(part==UPDATE_GAME) startGapPart(GAP_HEAD,tick,cpu,available);
+    }
+    UpdateBoundaryScope::~UpdateBoundaryScope()
+    {
+        if(!active) return;
+        Lock lock;
+        if(generation!=phaseGeneration || thread!=GetCurrentThreadId() || updateThread!=thread || updateDepth[part]==0) return;
+        const bool outer=--updateDepth[part]==0;
+        if(!outer) return;
+        if(part==UPDATE_GAME) updateHeadOpen=false;
+        if(!validUpdateGap()) return;
+        unsigned long tick=0;unsigned __int64 cpu=0;bool available=false;
+        updateGapSample(tick,cpu,available);
+        finishGapPart(part,tick,cpu,available);
+        if(part==UPDATE_GAME) finishGapPart(GAP_HEAD,tick,cpu,available);
+        if(part==UPDATE_WRAPPER)
+        { updateGap.lastExit=true;updateGap.lastExitTick=tick;updateGap.lastExitCPU=cpu;updateGap.lastExitCPUAvailable=available; }
+    }
+    void BeforeUpdateMoves()
+    {
+        Lock lock;
+        if(updateDepth[UPDATE_GAME]!=1 || updateThread!=GetCurrentThreadId()) return;
+        updateHeadOpen=false;
+        if(!validUpdateGap() || !updateGap.part[GAP_HEAD].open) return;
+        unsigned long tick=0;unsigned __int64 cpu=0;bool available=false;
+        updateGapSample(tick,cpu,available);finishGapPart(GAP_HEAD,tick,cpu,available);
+    }
+    ActivationTailScope::ActivationTailScope():active(false),serial(0),thread(0),generation(0){}
+    void ActivationTailScope::Start(PlayerTypes player,bool eligible)
+    {
+        if(active || !eligible || player<0 || player>=MAX_PLAYERS) return;
+        Lock lock;
+        if(!updateTimingEnabled(player)) return;
+        updateGap=PendingUpdateGap();updateGap.active=true;updateGap.actor=player;
+        updateGap.turn=GC.getGame().getGameTurn();updateGap.generation=generation=phaseGeneration;
+        updateGap.thread=thread=GetCurrentThreadId();
+        updateGap.serial=serial=++updateSerial;
+        updateGap.started=GetTickCount();updateGap.cpuAvailable=threadCPU100ns(updateGap.cpuStarted);
+        startGapPart(GAP_ACTIVATION,updateGap.started,updateGap.cpuStarted,updateGap.cpuAvailable);
+        if(updateThread==thread)
+        {
+            for(int i=0;i<4;++i) if(updateDepth[i]) startGapPart(i,updateGap.started,updateGap.cpuStarted,updateGap.cpuAvailable);
+            if(updateDepth[UPDATE_GAME] && updateHeadOpen) startGapPart(GAP_HEAD,updateGap.started,updateGap.cpuStarted,updateGap.cpuAvailable);
+            updateGap.clippedWrapperStart=updateDepth[UPDATE_WRAPPER]!=0;
+        }
+        active=true;
+    }
+    ActivationTailScope::~ActivationTailScope()
+    {
+        if(!active) return;
+        Lock lock;
+        if(generation!=phaseGeneration || thread!=GetCurrentThreadId() || updateGap.serial!=serial || !validUpdateGap()) return;
+        unsigned long tick=0;unsigned __int64 cpu=0;bool available=false;
+        updateGapSample(tick,cpu,available);finishGapPart(GAP_ACTIVATION,tick,cpu,available);
+    }
     UnitAIEntryScope::UnitAIEntryScope(PlayerTypes player):active(false),hookDone(false),cpuAvailable(false),actor(player),
         turn(-1),started(0),hookEnded(0),thread(0),generation(0),cpuStarted(0),cpuHookEnded(0)
     {
@@ -378,6 +553,7 @@ namespace CvStackingDiagnostics
         if(interval<=0) return;
         turn=GC.getGame().getGameTurn();
         if(turn%interval) return;
+        finishUpdateGapAtEntry(player);
         generation=phaseGeneration;thread=GetCurrentThreadId();started=GetTickCount();
         cpuAvailable=threadCPU100ns(cpuStarted);active=true;
     }

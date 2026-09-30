@@ -3,6 +3,10 @@
 Uses production source, or --candidate for an isolated prepared copy. Actual
 outcome APIs, complete danger sequences and batch/cache wrapper are compiled;
 engine damage/selection, synchronization and scalar-map services are deterministic.
+
+Run work/test-danger-ledger-prototype.py first: this fixture consumes its freshly
+generated work/danger-ledger-prototype/test.cpp scaffold. For --candidate runs,
+run both scripts with --candidate so the scaffold and batch use the same source.
 """
 from pathlib import Path
 import hashlib,json,os,subprocess,sys

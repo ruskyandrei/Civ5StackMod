@@ -16747,8 +16747,21 @@ int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot,
 	const CvCity* city = pToPlot && pToPlot->isCity() ? pToPlot->getPlotCity() : NULL;
 	// Unlike the generic modifier, full attack strength deliberately retains
 	// NULL origins: its adjacency/river/amphibious/flanking branches skip them.
-	const CvStackingStrengthCache::Key key = MakeStackStrengthKey(2, this, pDefender, city,
+	CvStackingStrengthCache::Key key = MakeStackStrengthKey(2, this, pDefender, city,
 		pFromPlot, pToPlot, true, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	// Full attack observes projected wounds only through this exact modifier
+	// and two opponent health predicates. Keep all live metadata in the key.
+	key.values[17] = key.values[18] = 0;
+	if (GetBaseCombatStrength() != 0)
+	{
+		key.values[17] = GetDamageCombatModifier(false, key.values[4] + iAssumeExtraDamage);
+		if (pDefender)
+		{
+			const int opponentDamage = key.values[9] + iAssumeExtraOtherDamage;
+			key.values[18] = (opponentDamage > 0 ? 1 : 0) |
+				(opponentDamage < key.values[10] / 2 ? 2 : 0);
+		}
+	}
 	int result;
 	if (CvStackingStrengthCache::Lookup(key, generation, result))
 		return result;
@@ -16983,6 +16996,12 @@ int CvUnit::GetMaxDefenseStrength(const CvPlot* pInPlot, const CvUnit* pAttacker
 	// including live embark state when the caller supplied no defense plot.
 	key.values[16] |= (bFromRangedAttack ? 8 : 0) | (isEmbarked() ? 16 : 0) |
 		(CanEverEmbark() ? 32 : 0) | (pInPlot && pInPlot->needsEmbarkation(this) ? 64 : 0);
+	// Preserve the original helper's nonpositive fallback, wounded traits and
+	// ranged-defense health rule; no projected HP bucket changes combat math.
+	const bool embarkedDefense = (!pInPlot && (key.values[16] & 16) != 0) ||
+		(pInPlot && (key.values[16] & 32) != 0 && (key.values[16] & 64) != 0);
+	key.values[17] = !embarkedDefense && GetBaseCombatStrength() != 0 ?
+		GetDamageCombatModifier(bFromRangedAttack, key.values[4] + iAssumeExtraDamage) : 0;
 	int result;
 	if (CvStackingStrengthCache::Lookup(key, generation, result))
 		return result;

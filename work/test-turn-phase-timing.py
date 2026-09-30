@@ -17,6 +17,30 @@ out.mkdir(exist_ok=True)
 (out / "logs").mkdir(exist_ok=True)
 core = root / "CvGameCoreDLL_Expansion2"
 source = (core / "CvStackingDiagnostics.cpp").read_text(encoding="utf-8-sig")
+# Fixed DLL54 source control: removing only these diagnostic statements must
+# preserve the complete original update/activation functions and callback order.
+for name, signature, added in (
+    ("CvDllGame.cpp", "void CvDllGame::Update()", (
+        "\tCvStackingDiagnostics::UpdateBoundaryScope boundary(CvStackingDiagnostics::UPDATE_WRAPPER);\n",)),
+    ("CvGame.cpp", "void CvGame::update()", (
+        "\tCvStackingDiagnostics::UpdateBoundaryScope updateBoundary(CvStackingDiagnostics::UPDATE_GAME);\n",
+        "\t\t\tCvStackingDiagnostics::UpdateBoundaryScope hookBoundary(CvStackingDiagnostics::UPDATE_BEGIN_HOOK);\n",
+        "\t\t\tCvStackingDiagnostics::UpdateBoundaryScope hookBoundary(CvStackingDiagnostics::UPDATE_END_HOOK);\n",
+        "\t\t\t\tCvStackingDiagnostics::BeforeUpdateMoves();\n")),
+    ("CvPlayer.cpp", "void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn)", (
+        "\tCvStackingDiagnostics::ActivationTailScope activationTail;\n",
+        "\t\t\t\t\t\tactivationTail.Start(GetID(),!isHuman(ISHUMAN_AI_UNITS) && !isObserver());\n")),
+):
+    current = (core / name).read_text(encoding="utf-8-sig")
+    baseline = subprocess.check_output(["git", "show", "0273c8e3e:CvGameCoreDLL_Expansion2/"+name], cwd=root).decode("utf-8-sig")
+    def body(text):
+        start = text.index(signature)
+        return text[start:text.index("\n//", start)].strip()
+    actual_body = body(current)
+    for line in added:
+        assert actual_body.count(line) == 1, (name, "missing/duplicate diagnostic boundary")
+        actual_body = actual_body.replace(line, "")
+    assert actual_body == body(baseline), (name, "original callback/control-flow changed")
 actual = source[source.index("namespace\n"):source.index("    void OnPlayerTurn(")] + "}\n"
 header = (core / "CvStackingDiagnostics.h").read_text(encoding="utf-8-sig")
 declaration = header[header.index("    class TurnPhaseScope"):header.index("    class CombatScope")]
@@ -216,7 +240,72 @@ void entryFlowTests(){
  try{FlowPlayer p;p.AI_unitUpdate(false);}catch(int){}
  expect(flowGuardCalls==0&&entryCosts[0].calls==0&&countText(logs(),"phase=unit_ai_entry")==0,"actual throwing callback preserves early unwind and clears incomplete entry window");flowThrow=false;
 }
-int main(){expect(sizeof(void*)==4,"native x86 VC9");disabledTests();intervalAndNestedTests();lifecycleAndErrorTests();cpuTests();entryDisabledTests();entryAggregationTests();entryLifecycleTests();entryFlowTests();CvStackingDiagnostics::Reset();printf("turn phase timing: %d checks, %d failures\n",checks,failures);return failures?1:0;}
+void gapDisabledTests(){
+ using namespace CvStackingDiagnostics;
+ for(int mode=0;mode<6;++mode){fresh();if(mode){if(mode==1)cfg["DiagnosticsCategoryMask"]=2;if(mode==2)cfg["DiagnosticsPerformanceInterval"]=0;if(mode==3)cfg["DiagnosticsPerformanceInterval"]=3;if(mode==4)cfg["DiagnosticsPlayer"]=2;SetLevel(1);}phaseTickCalls=phaseCPUReads=0;int before=writes;
+  {UpdateBoundaryScope wrapper(UPDATE_WRAPPER);UpdateBoundaryScope game(UPDATE_GAME);BeforeUpdateMoves();ActivationTailScope tail;tail.Start(0,mode!=5);{UpdateBoundaryScope hook(UPDATE_END_HOOK);}}
+  expect(phaseTickCalls==0&&phaseCPUReads==0&&writes==before,"disabled/masked/unsampled/filtered/ineligible gap has zero clocks, CPU and rows");
+  expect(!updateGap.active,"disabled/ineligible activation creates no pending player");}
+}
+void gapTimelineTests(){
+ using namespace CvStackingDiagnostics;
+ fresh();SetLevel(1);phaseTickCalls=phaseCPUReads=0;phaseClock=100;phaseCPU=1000;
+ {UpdateBoundaryScope wrapper(UPDATE_WRAPPER);UpdateBoundaryScope game(UPDATE_GAME);
+  expect(phaseTickCalls==0&&phaseCPUReads==0,"boundaries without pending player do not sample");BeforeUpdateMoves();
+  phaseClock=110;phaseCPU=2000;{ActivationTailScope tail;tail.Start(3,true);phaseClock=130;phaseCPU=2200;}
+  expect(countText(logs(),"|TURN_UPDATE_GAP|")==0,"activation and per-update boundaries produce no rows");
+  phaseClock=140;phaseCPU=2300;{UpdateBoundaryScope hook(UPDATE_END_HOOK);phaseClock=190;phaseCPU=2600;}
+  phaseClock=200;phaseCPU=2700;
+ }
+ // Distinguish game end and wrapper end in an ordinary two-call timeline.
+ // Above both share one destructor tick; their overlap is intentional.
+ phaseClock=400;phaseCPU=2700;
+ {UpdateBoundaryScope wrapper(UPDATE_WRAPPER);phaseClock=401;phaseCPU=2710;UpdateBoundaryScope game(UPDATE_GAME);
+  phaseClock=410;phaseCPU=2720;{UpdateBoundaryScope hook(UPDATE_BEGIN_HOOK);phaseClock=470;phaseCPU=2730;}
+  phaseClock=480;phaseCPU=2740;BeforeUpdateMoves();phaseClock=490;phaseCPU=2800;
+  UnitAIEntryScope first(3);expect(!updateGap.active,"first unit-AI entry consumes pending window before hook/search");
+  phaseClock=495;phaseCPU=2850;first.HookFinished();phaseClock=497;phaseCPU=2860;first.Finish(true);
+  phaseClock=10000;phaseCPU=100000; // Search/late enclosing destructors cannot extend closed window.
+ }
+ string text=logs();
+ expect(countText(text,"|TURN_UPDATE_GAP|")==1,"one gap row despite busy first entry and enclosing late destructors");
+ expect(text.find("|player=3|TURN_UPDATE_GAP|")!=string::npos,"pending new AI owner used instead of observer");
+ expect(text.find("startTick=110 endTick=490 elapsedMs=380 thread=17 cpuAvailable=1 cpuStart100ns=2000 cpuEnd100ns=2800 cpu100ns=800")!=string::npos,"pending exact wall and absolute same-thread CPU bounds");
+ expect(text.find("wrapperCalls=2 wrapperMs=180 wrapperCPU100ns=800 wrapperCPUMeasured=2 wrapperClippedStart=1")!=string::npos,"wrapper totals clip mid-call activation and first entry without search");
+ expect(text.find("gameCalls=2 gameMs=179 gameCPU100ns=790 gameCPUMeasured=2")!=string::npos,"game overlaps wrapper with independent inclusive totals");
+ expect(text.find("activationTailCalls=1 activationTailMs=20 activationTailCPU100ns=200")!=string::npos,"activation post-doTurn tail measured separately");
+ expect(text.find("beginHookCalls=1 beginHookMs=60 beginHookCPU100ns=10")!=string::npos&&text.find("endHookCalls=1 endHookMs=50 endHookCPU100ns=300")!=string::npos,"begin and end engine-Lua hooks measured separately");
+ expect(text.find("preMovesHeadCalls=1 preMovesHeadMs=79 preMovesHeadCPU100ns=30")!=string::npos,"next update head ends before updateMoves");
+ expect(text.find("dispatchCalls=1 dispatchMs=200 dispatchCPU100ns=0 dispatchCPUMeasured=1 maximumDispatchMs=200")!=string::npos,"between-wrapper wall wait separated from DLL body and CPU");
+ expect(text.find("totals=inclusive_overlapping_not_phase_bounds")!=string::npos,"spanning summary cannot masquerade as phase union");
+ entry(3,11000,11001,11002,false,100000,100001,100002);
+ expect(countText(logs(),"|TURN_UPDATE_GAP|")==1,"later busy/real passes do not emit duplicate activation gap");
+}
+void gapLifecycleTests(){
+ using namespace CvStackingDiagnostics;
+ fresh();SetLevel(1);phaseClock=5;{ActivationTailScope tail;tail.Start(1,true);tail.Start(2,true);phaseClock=8;}
+ entry(2,10,11,12,false,0,0,0);expect(updateGap.active&&updateGap.actor==1,"other unit-AI actor cannot consume pending player");
+ entry(1,15,16,17,false,0,0,0);expect(countText(logs(),"|TURN_UPDATE_GAP|")==1,"duplicate Start preserves first pending owner");
+ fresh();SetLevel(1);{ActivationTailScope old;old.Start(1,true);{ActivationTailScope replacement;replacement.Start(2,true);} }
+ entry(1,10,11,12,false,0,0,0);expect(updateGap.active&&updateGap.actor==2,"old destructor/actor cannot alter replaced pending activation");
+ entry(2,20,21,22,false,0,0,0);expect(countText(logs(),"|TURN_UPDATE_GAP|")==1,"replacement is attributed once to its actual owner");
+ for(int mode=0;mode<3;++mode){fresh();SetLevel(1);{UpdateBoundaryScope wrapper(UPDATE_WRAPPER);ActivationTailScope tail;tail.Start(1,true);if(mode==0)Reset();if(mode==1)SetLevel(2);if(mode==2)++GC.game.turn;}
+  entry(1,10,11,12,false,0,0,0);expect(countText(logs(),"|TURN_UPDATE_GAP|")==0,"reset/level/turn changes drop stale gap without row");}
+ fresh();SetLevel(1);{ActivationTailScope tail;tail.Start(1,true);}phaseThread=18;entry(1,10,11,12,false,0,0,0);phaseThread=17;entry(1,20,21,22,false,0,0,0);
+ expect(countText(logs(),"|TURN_UPDATE_GAP|")==0,"foreign-thread first owner entry drops untrustworthy pending window");
+ fresh();SetLevel(1);phaseClock=10;{UpdateBoundaryScope wrapper(UPDATE_WRAPPER);UpdateBoundaryScope game(UPDATE_GAME);ActivationTailScope tail;tail.Start(1,true);
+  phaseClock=20;{UpdateBoundaryScope nestedWrapper(UPDATE_WRAPPER);UpdateBoundaryScope nestedGame(UPDATE_GAME);BeforeUpdateMoves();phaseClock=30;entry(1,30,31,32,false,0,0,0);}phaseClock=100;}
+ string text=logs();expect(countText(text,"|TURN_UPDATE_GAP|")==1&&text.find("nestedScopes=2")!=string::npos,"nested wrappers counted without duplicate body totals/rows");
+ expect(text.find("wrapperCalls=1 wrapperMs=20")!=string::npos&&text.find("gameCalls=1 gameMs=20")!=string::npos,"reentrant entry clips outer spans before search");
+ fresh();SetLevel(1);phaseClock=0xfffffff0UL;{ActivationTailScope tail;tail.Start(0,true);phaseClock=0xfffffff5UL;}entry(0,10,11,12,false,0,0,0);
+ expect(logs().find("startTick=4294967280 endTick=10 elapsedMs=26")!=string::npos,"pending DWORD wrap retains elapsed span");
+ fresh();SetLevel(1);phaseCPUAvailable=false;{ActivationTailScope tail;tail.Start(0,true);}entry(0,10,11,12,false,0,0,0);
+ expect(logs().find("|TURN_UPDATE_GAP|startTick=0 endTick=10 elapsedMs=10 thread=17 cpuAvailable=0 cpuStart100ns=0 cpuEnd100ns=0 cpu100ns=0")!=string::npos,"pending unavailable CPU explicitly marked safe");
+ fresh();SetLevel(1);try{UpdateBoundaryScope wrapper(UPDATE_WRAPPER);ActivationTailScope tail;tail.Start(1,true);phaseClock=8;throw 71;}catch(int){}
+ expect(updateDepth[UPDATE_WRAPPER]==0&&!updateGap.part[GAP_ACTIVATION].open&&!updateGap.part[UPDATE_WRAPPER].open,"exception/early unwind balances pending boundary depths");
+ entry(1,10,11,12,false,0,0,0);expect(countText(logs(),"|TURN_UPDATE_GAP|")==1,"completed unwind still yields bounded pending-to-entry diagnostic");
+}
+int main(){expect(sizeof(void*)==4,"native x86 VC9");disabledTests();intervalAndNestedTests();lifecycleAndErrorTests();cpuTests();entryDisabledTests();entryAggregationTests();entryLifecycleTests();entryFlowTests();gapDisabledTests();gapTimelineTests();gapLifecycleTests();CvStackingDiagnostics::Reset();printf("turn phase timing: %d checks, %d failures\n",checks,failures);return failures?1:0;}
 '''
 
 cpp = out / "turn-phase-source-test.cpp"

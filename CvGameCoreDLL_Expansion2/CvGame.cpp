@@ -1617,6 +1617,7 @@ bool ExternalPause()
 //	---------------------------------------------------------------------------
 void CvGame::update()
 {
+	CvStackingDiagnostics::UpdateBoundaryScope updateBoundary(CvStackingDiagnostics::UPDATE_GAME);
 	if(IsWaitingForBlockingInput())
 	{
 		if(!GC.GetEngineUserInterface()->isDiploActive())
@@ -1637,6 +1638,7 @@ void CvGame::update()
 		{
 			CvLuaArgsHandle args;
 			bool bResult = false;
+			CvStackingDiagnostics::UpdateBoundaryScope hookBoundary(CvStackingDiagnostics::UPDATE_BEGIN_HOOK);
 			LuaSupport::CallHook(pkScriptSystem, "GameCoreUpdateBegin", args.get(), bResult);
 		}
 	}
@@ -1687,6 +1689,7 @@ void CvGame::update()
 
 				updateWar();
 
+				CvStackingDiagnostics::BeforeUpdateMoves();
 				updateMoves();
 
 				if(!isPaused()) // And again, the player can change after the automoves and that can pause the game
@@ -1728,6 +1731,7 @@ void CvGame::update()
 		{
 			CvLuaArgsHandle args;
 			bool bResult = false;
+			CvStackingDiagnostics::UpdateBoundaryScope hookBoundary(CvStackingDiagnostics::UPDATE_END_HOOK);
 			LuaSupport::CallHook(pkScriptSystem, "GameCoreUpdateEnd", args.get(), bResult);
 		}
 	}

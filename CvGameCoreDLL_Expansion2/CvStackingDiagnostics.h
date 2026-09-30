@@ -55,6 +55,34 @@ namespace CvStackingDiagnostics
         unsigned long started, hookEnded, thread, generation;
         unsigned __int64 cpuStarted, cpuHookEnded;
     };
+    // One pending AI activation, ending at its first unit-AI entry. These
+    // boundaries aggregate silently; the spanning summary is not TURN_PHASE.
+    enum UpdateBoundaryPart { UPDATE_WRAPPER, UPDATE_GAME, UPDATE_BEGIN_HOOK, UPDATE_END_HOOK };
+    class UpdateBoundaryScope
+    {
+    public:
+        explicit UpdateBoundaryScope(UpdateBoundaryPart part);
+        ~UpdateBoundaryScope();
+    private:
+        UpdateBoundaryScope(const UpdateBoundaryScope&);
+        UpdateBoundaryScope& operator=(const UpdateBoundaryScope&);
+        bool active;
+        UpdateBoundaryPart part;
+        unsigned long thread, generation;
+    };
+    void BeforeUpdateMoves();
+    class ActivationTailScope
+    {
+    public:
+        ActivationTailScope();
+        ~ActivationTailScope();
+        void Start(PlayerTypes player, bool eligible);
+    private:
+        ActivationTailScope(const ActivationTailScope&);
+        ActivationTailScope& operator=(const ActivationTailScope&);
+        bool active;
+        unsigned long serial, thread, generation;
+    };
     class CombatScope
     {
     public:

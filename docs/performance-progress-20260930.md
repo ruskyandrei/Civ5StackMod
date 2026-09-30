@@ -166,7 +166,7 @@ DLL47 and DLL50 controls, saved inputs, normal-exit records and crash evidence.
 
 `perf-d53-steady251-control` completed manual251-to254 and quit normally;
 native run `Stacking-20260930T211159-845-p16080-r1`. Interior252-to253 is
-**45.033s**, PLAN14.757s over116 searches, with17421ms in measured phase
+**45.031s**, PLAN14.757s over116 searches, with17421ms in measured phase
 work outside PLAN and about12.9s outside selected-turn phase scopes. This
 confirms that returning to a human did not explain most of the earlier48s.
 
@@ -185,3 +185,76 @@ acquire-read semantics for owner/epoch reads while retaining atomic writes.
 Sampled entry-hook/busy timing and absolute same-thread CPU counters distinguish
 script/lock waits from work between existing phases. Offline numerical/thread
 fixtures establish bounded equivalence, not measured native speed gains.
+
+## DLL54 outcome-cache and CPU instrumentation result
+
+Clean commit0273c8e3e built54 in `work/msvc-output/Release/20260930-222029`
+(79.953s,179TUs). DLL SHA256 FAC046D16E8D71B1286D868D8A7A616DD1DAAAB811FD7FF325BF14414724593F;
+PDB88A0D4CC7D77A0C8021610E7E46176138B8CA2F3E9F6E6814E4C9495691FC343.
+Run `perf-d54-steady251-candidate`, native `Stacking-20260930T212613-631-p22664-r1`,
+completed251-to254, normal API quit and service stop, no new crash.
+
+All506 compared semantic records match53, including329 plans,176 combats and
+one city capture. Before847 and after840 unit rows,81 cities,23 players and
+90-to102 directed war rows also match exactly. Turn252 measured42.922s,
+PLAN14.799s; turn253 measured142.000s,PLAN104.543s. Compared with45.031/14.757
+and132.188/99.943, this pair does **not** establish a tactical speed improvement.
+Do not report the isolated cache microbenchmark as a whole-turn gain.
+
+Outcome reuse is active but rare on252:3869 builds,6434 reuses,0 bypasses,
+peak retained payload288B, versus193667 scalar misses and6762339 hits. Its
+future retention should depend on broader/isolated measurements, not test counts.
+
+The added CPU endpoints localize the252 gap: all-bound phase coverage32.753s,
+uncovered10.169s, only359ms of measurable same-thread CPU in those gaps.
+Large gaps before unit-AI entry for players1/7/4/6 were1813/1375/906/906ms
+with unchanged GameCore CPU counters. Entry instrumentation recorded23 calls,
+zero busy returns and zero hook/guard coarse milliseconds. This turn does not
+implicate that pre-AI Lua callback. Other threads can be working while GameCore
+waits; renderer, engine dispatch and lock causes remain hypotheses.
+
+Next controlled presentation experiment uses recorded explicit standard and
+strategic modes on this same54 build, with unchanged gameplay/diagnostics and
+exact semantic/census comparisons. Earlier runs did not record actual view mode,
+so they are not sufficient proof of a standard-vs-strategic causal comparison.
+Separately,253 execution analysis found garrison-victim identity checks and
+post-city-capture stale defender pointers worth fixing under dedicated tests;
+valid damage-roll/movement divergence must continue to cause replanning.
+
+## Presentation and legacy logging controls (DLL54)
+
+Explicit standard-view/full-legacy-log control:
+`perf-d54-standard-full-logging`, native `Stacking-20260930T213726-727-p36392-r1`.
+T25246.703s/PLAN15.183s; T253128.797s. Raw252 phase CPU31.203s and
+unscoped wall13.392s with343.75ms of same-thread gap CPU. Hook/busy checks
+remain23 calls,0 busy returns and0 coarse milliseconds.
+
+The first strategic setup (`perf-d54-strategic-full-logging`) failed before
+continuation: EUI's deferred active-player handler restored standard view after
+the immediate preparation toggle. Verified251/observer8/counter3/paused8, quit
+normally; no autoplay time accepted. The harness now applies explicit view in
+a separate late InGame command after census/slot events, verifies it separately,
+and retains initial and final preparation proof. No ambiguous mutation retry.
+
+Successful strategic retry: `perf-d54-strategic-full-logging2`, native
+`Stacking-20260930T215134-377-p10560-r1`. T25243.750s/PLAN14.194s;
+T253128.313s/PLAN95.295s. All506 semantic events and all census rows match
+standard control, including the city capture. Gap12.139s still contains only
+312.5ms same-thread CPU; strategic view did not eliminate the waits. The small
+single-pair total difference is not a general renderer speedup claim.
+
+Legacy logs disabled in a fresh standard-view process: only AILog, AIPerfLog,
+BuilderAILog changed1-to0, preserving LoggingEnabled/MessageLog and native Summary.
+`perf-d54-standard-native-logging`, native `Stacking-20260930T220122-917-p32108-r1`,
+T25244.797s/PLAN14.685s, T253130.265s/PLAN95.956s. All506 events and censuses
+again match. This is a small measured contribution, not the main bottleneck.
+`work/engine-logging-profile.py` backed up and restored original config bytes;
+restoration22:05UTC hash04b4aaa0a9360cadbb8ef0da277441a11af95dd50bfa8334d3bc179b29b627f3.
+All game/service processes from these experiments are closed; no new crash dump.
+
+Next56 candidate is exact full-strength wound-key canonicalization plus bounded
+update/activation timing, preserving54 gameplay for native equivalence testing.
+A separate explicit primary victim owner/ID tactical fix is prepared under
+`work/primary-identity-production.patch`, deliberately held until after the cache
+comparison. It avoids the more intrusive discarded projected-damage HP gate.
+Do not claim these pending changes are installed or native-validated yet.

@@ -17,6 +17,7 @@
 #include "CvDllCity.h"
 
 #include "CvGameTextMgr.h"
+#include "CvStackingDiagnostics.h"
 
 CvDllGame::CvDllGame(CvGame* pGame)
 	: m_uiRefCount(1)
@@ -494,6 +495,7 @@ void CvDllGame::UnitIsMoving()
 //------------------------------------------------------------------------------
 void CvDllGame::Update()
 {
+	CvStackingDiagnostics::UpdateBoundaryScope boundary(CvStackingDiagnostics::UPDATE_WRAPPER);
 	m_pGame->update();
 }
 //------------------------------------------------------------------------------

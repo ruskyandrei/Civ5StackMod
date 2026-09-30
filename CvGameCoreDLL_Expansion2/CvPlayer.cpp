@@ -33742,6 +33742,7 @@ void CvPlayer::setTurnActiveForPbem(bool bActive)
 
 void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default is true (CvPlayer.h)
 {
+	CvStackingDiagnostics::ActivationTailScope activationTail;
 	//in single player mode create autosaves after the first player's (human) turn for easier reproduction of observed AI problems
 	//also they will have the correct year in the name! hooray
 	if(!GC.getGame().isNetworkMultiPlayer() && m_eID==GC.getGame().getFirstAlivePlayer() && !bNewValue)
@@ -34051,6 +34052,7 @@ void CvPlayer::setTurnActive(bool bNewValue, bool bDoTurn) // R: bDoTurn default
 
 						//this is misleading - actual turn processing now happens in CvGame::updateMoves()
 						doTurn();
+						activationTail.Start(GetID(),!isHuman(ISHUMAN_AI_UNITS) && !isObserver());
 					}
 				}
 

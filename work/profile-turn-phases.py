@@ -1,7 +1,7 @@
 """Offline native TURN_PHASE interval profile; writes only the requested JSON.
 
 Inclusive phase/PLAN durations must never all be added together. The native
-Primary round bounds exclude newly added TURN_PHASE rows for comparison with
+Primary round bounds exclude newly added TURN_PHASE/TURN_UPDATE_GAP rows for comparison with
 the old DLL. The original all-event profile-campaign-log.py bounds are retained
 separately; that older script does not exclude TURN_PHASE.
 PLAN location is estimated: its high precision timer stops before finalization.
@@ -15,6 +15,7 @@ from pathlib import Path
 import re
 
 MOD = 1 << 32
+TIMING_CATEGORIES = ("TURN_PHASE", "TURN_UPDATE_GAP")
 HALF = MOD // 2
 SESSION = re.compile(r"^STACKDIAG\|SESSION\|(.+)$")
 RECORD = re.compile(r"^STACKDIAG\|(\d+)\|turn=(-?\d+)\|player=(-?\d+)\|([^|]+)\|(.*)$")
@@ -184,8 +185,8 @@ def analyze(records, turn, player_filter=None, quality=None):
     any_begin = min(r["tick"] for r in current)
     any_next = min((r["tick"] for r in following), default=None)
     any_window = (any_begin, any_next) if any_next is not None and any_next >= any_begin else None
-    legacy_current = [r for r in current if r["category"] != "TURN_PHASE"]
-    legacy_following = [r for r in following if r["category"] != "TURN_PHASE"]
+    legacy_current = [r for r in current if r["category"] not in TIMING_CATEGORIES]
+    legacy_following = [r for r in following if r["category"] not in TIMING_CATEGORIES]
     first_legacy = min(legacy_current, key=lambda r: r["tick"], default=None)
     next_legacy = min(legacy_following, key=lambda r: r["tick"], default=None)
     begin = first_legacy["tick"] if first_legacy else None
@@ -245,9 +246,9 @@ def analyze(records, turn, player_filter=None, quality=None):
     dropped = [dict(player=r["player"], origin=r.get("origin"), dropped=r["values"].get("dropped"))
                for r in current if r["category"] == "DIAGNOSTIC_COST" and r["values"].get("dropped", 0) > 0]
     if not complete_boundary:
-        warnings.append("Legacy non-TURN_PHASE boundaries are incomplete; comparable full-round duration/unattributed time are unavailable.")
+        warnings.append("Legacy non-timing boundaries (excluding TURN_PHASE/TURN_UPDATE_GAP) are incomplete; comparable full-round duration/unattributed time are unavailable.")
     if (begin, next_begin) != (any_begin, any_next):
-        warnings.append("New timing rows change first-event boundaries; use the legacy non-TURN_PHASE window for DLL comparison.")
+        warnings.append("New timing rows change first-event boundaries; use the legacy non-timing window for DLL comparison.")
     if not phases:
         warnings.append("No TURN_PHASE rows: timings may be disabled, filtered, unsampled, or unavailable; absence is not zero work.")
     if truncations or dropped:
@@ -333,7 +334,7 @@ def analyze(records, turn, player_filter=None, quality=None):
             next_first_category=next_legacy["category"] if next_legacy else None,
             first_origin=first_legacy.get("origin") if first_legacy else None,
             next_first_origin=next_legacy.get("origin") if next_legacy else None,
-            convention="first non-TURN_PHASE native record of selected turn to first non-TURN_PHASE record of following turn; legacy-comparable event window, not an engine CPU timer"),
+            convention="first native record excluding TURN_PHASE/TURN_UPDATE_GAP of selected turn to following turn; legacy-comparable event window, not an engine CPU timer"),
         native_all_event_window=dict(start_tick=any_begin, next_turn_first_tick=any_next, duration_ms=any_duration,
             convention="all native rows, matching existing profile-campaign-log; new timing rows can move these anchors"),
         all_event_coverage=dict(phase_union_ms=length(any_phases), estimated_PLAN_union_ms=length(any_plans),
@@ -458,6 +459,14 @@ def self_test():
     expect(anchored["coverage"]["phase_union_ms"] == 10 and anchored["all_event_coverage"]["phase_union_ms"] == 12, "each window clips early phase intervals independently")
     baseline_anchor = [x for x in anchor if x["category"] != "TURN_PHASE"]
     expect(analyze(baseline_anchor, 7)["native_round_window"] == anchored["native_round_window"], "timing rows cannot change baseline-comparable bounds")
+    mixed_anchor = sorted(anchor+[rec(2, category="TURN_UPDATE_GAP", startTick=0,endTick=2,elapsedMs=2),
+                                  rec(101,turn=8,category="TURN_UPDATE_GAP",startTick=80,endTick=101,elapsedMs=21)], key=lambda r:r["raw_tick"])
+    unwrap(mixed_anchor)
+    mixed = analyze(mixed_anchor,7)
+    expect(mixed["native_round_window"] == anchored["native_round_window"], "leading/trailing gap summaries cannot move legacy anchors")
+    expect(mixed["native_all_event_window"]["duration_ms"]==99, "all-event bounds intentionally retain new gap records")
+    expect(mixed["recorded_window_coverage"]["phase_union_ms"]==anchored["recorded_window_coverage"]["phase_union_ms"],
+           "spanning gap summary cannot count as a contiguous phase interval")
     expect(anchored["recorded_window_coverage"]["phase_union_ms"] == 15 and anchored["recorded_window_coverage"]["additional_phase_coverage_vs_selected_turn_ms"] == 5,
            "next-turn early preparation included alongside selected-turn view")
     expect(next(x for x in anchored["recorded_window_phase_intervals"] if x["phase"] == "next_early")["sourceTurn"] == 8,

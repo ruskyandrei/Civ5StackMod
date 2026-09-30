@@ -37,8 +37,8 @@ def analyze(records, turn, maximum_gaps=24):
             thread=value.get("thread"), interval=interval, elapsed_ms=interval[1]-interval[0], cpuAvailable=available,
             cpuStart100ns=cpu_start if available else None, cpuEnd100ns=cpu_end if available else None,
             cpu_ms=(cpu_end-cpu_start)/10000 if available else None, values=value, origin=record["origin"]))
-    current = [r for r in records if r["turn"] == turn and r["category"] != "TURN_PHASE"]
-    following = [r for r in records if r["turn"] == turn+1 and r["category"] != "TURN_PHASE"]
+    current = [r for r in records if r["turn"] == turn and r["category"] not in wall.TIMING_CATEGORIES]
+    following = [r for r in records if r["turn"] == turn+1 and r["category"] not in wall.TIMING_CATEGORIES]
     if not current:
         raise ValueError("Selected turn has no legacy native record")
     start = min(r["tick"] for r in current)
@@ -47,7 +47,7 @@ def analyze(records, turn, maximum_gaps=24):
     selected = [p for p in phases if p["sourceTurn"] == turn]
     if complete:
         window = (start, end)
-        window_convention = "first non-TURN_PHASE T to T+1 event; includes adjacent-turn preparation bounds"
+        window_convention = "first native event excluding TURN_PHASE/TURN_UPDATE_GAP from T to T+1; includes adjacent-turn preparation bounds"
     else:
         window = (start, max((p["interval"][1] for p in selected), default=start))
         window_convention = "partial observed phase extent only; not a complete native turn"
@@ -134,7 +134,13 @@ def self_test():
     assert analyze(next_turn,7)["phase_union_wall_ms"]==40
     unavailable=phase(0,20,1000,3000,"unavailable");unavailable["values"]["cpuAvailable"]=0
     assert analyze([rows[0],unavailable,rows[-1]],7)["unavailable_cpu_phase_calls"]==1
-    return {"checks":9,"failures":0,"scope":"synthetic nested CPU union/gap endpoints/cross-thread/invalid/unavailable/partial/adjacent-turn attribution"}
+    anchored=[rec(10,category="X"),*rows[1:-1],rec(110,turn=8,category="X")]
+    mixed=[rec(2,category="TURN_UPDATE_GAP",startTick=0,endTick=2,elapsedMs=2),*anchored,
+           rec(90,turn=8,category="TURN_UPDATE_GAP",startTick=0,endTick=90,elapsedMs=90)]
+    ordinary,new=analyze(anchored,7),analyze(mixed,7)
+    assert new["window"]==ordinary["window"] and new["window"]["duration_ms"]==100
+    assert new["phase_union_wall_ms"]==ordinary["phase_union_wall_ms"] and new["wall_gap_ms"]==ordinary["wall_gap_ms"]
+    return {"checks":11,"failures":0,"scope":"synthetic nested CPU union/gap endpoints/cross-thread/invalid/unavailable/partial/adjacent-turn/new-gap-anchor attribution"}
 
 
 def main():
