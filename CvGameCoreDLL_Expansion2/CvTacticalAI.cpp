@@ -892,7 +892,13 @@ bool CvTacticalAI::TryReservedCityCapture(CvPlot* target)
 	if(damage<remaining || retaliation>=unit->GetCurrHitPoints()) return false;
 	CvStackingOffensiveAI::ReleaseAssemblyHold(unit);
 	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_ORDER","target=%d unit=%d from=%d approach=%d hp=%d damage=%d retaliation=%d",target->GetPlotIndex(),unit->GetID(),unit->plot()->GetPlotIndex(),approach->GetPlotIndex(),remaining,damage,retaliation);
-	return ExecuteMoveToPlot(unit,target,false,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)!=INT_MAX;
+	const int unitID=unit->GetID();
+	const int turns=ExecuteMoveToPlot(unit,target,false,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION|CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY);
+	// A route estimate or a blocker workaround does not establish that the city
+	// changed hands. The mission can delete its unit; inspect the stable plot.
+	const bool captured=target->getOwner()==m_pPlayer->GetID();
+	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_RESULT","target=%d unit=%d captured=%d turnsRemaining=%d ownerAfter=%d",target->GetPlotIndex(),unitID,captured,turns,target->getOwner());
+	return captured;
 }
 
 void CvTacticalAI::ExecuteCaptureCityMoves()
@@ -964,10 +970,13 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 					//actual siege will typically be longer because not all units actually attack the city each turn
 					int iMaxSiegeTurns = CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()) ? CvStacking::GetInt("AIAssaultDamageHorizon",4) : 13;
 
-					int iCityHealRate = !pCity->IsBlockadedWaterAndLand() ? /*20 in CP, 8 in VP*/ GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN) : 0;
-
-					if (MOD_BALANCE_VP)
-						iCityHealRate += pCity->getPopulation();
+					int iCityHealRate = 0;
+					if (!pCity->IsBlockadedWaterAndLand())
+					{
+						iCityHealRate = /*20 in CP, 8 in VP*/ GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN);
+						if (MOD_BALANCE_VP)
+							iCityHealRate += pCity->getPopulation();
+					}
 
 					//assume the city heals each turn ...
 					if ((iExpectedDamagePerTurn - iCityHealRate) * iMaxSiegeTurns < iRequiredDamage)
@@ -3508,6 +3517,44 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 	return TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vUnits, pTargetPlot, eAggLvl);
 }
 
+// Each domain has its own roles, routes and readiness. A gathering army must
+// not hold a ready fleet, or inherit readiness from whichever unit sorts first.
+bool CvTacticalAI::StageGatheringCityAssault(vector<int>& unitIDs, CvPlot* pTarget)
+{
+	if(!pTarget || !pTarget->isCity() || !m_pPlayer->IsAtWarWith(pTarget->getOwner())) return false;
+	std::map<int,bool> readiness;
+	vector<int> active;
+	bool gathering=false;
+	for(size_t i=0;i<unitIDs.size();++i)
+	{
+		CvUnit* unit=m_pPlayer->getUnit(unitIDs[i]);
+		if(!unit || unit->isDelayedDeath() || unit->getOwner()!=m_pPlayer->GetID()) continue;
+		if(unit->IsCombatUnit() && unit->getDomainType()!=DOMAIN_AIR)
+		{
+			const int domain=unit->getDomainType();
+			std::map<int,bool>::iterator ready=readiness.find(domain);
+			if(ready==readiness.end())
+				ready=readiness.insert(std::make_pair(domain,CvStackingOffensiveAI::AssessAssault(
+					m_pPlayer->GetID(),pTarget->getPlotCity(),unit->getDomainType()).ready)).first;
+			if(!ready->second)
+			{
+				gathering=true;
+				if(unit->canUseNow() && !CvStackingOffensiveAI::StageUnit(unit,pTarget))
+				{
+					unit=m_pPlayer->getUnit(unitIDs[i]);
+					if(unit && !unit->isDelayedDeath() && unit->GetDanger()>0) ExecuteMovesToSafestPlot(unit);
+				}
+				// Failed safe staging does not authorize a generic ring-two
+				// approach into the same city's defensive fire.
+				continue;
+			}
+		}
+		active.push_back(unitIDs[i]);
+	}
+	unitIDs.swap(active);
+	return gathering;
+}
+
 //target can be friendly, neutral or hostile
 bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vInputUnits, CvPlot* pTarget)
 {
@@ -3516,26 +3563,11 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vInputUnits,
 	for(size_t i=0;i<vInputUnits.size();++i)
 		if(vInputUnits[i] && vInputUnits[i]->getOwner()==m_pPlayer->GetID())
 		{ unitIDs.push_back(vInputUnits[i]->GetID());vUnits.push_back(vInputUnits[i]); }
-	if(pTarget->isCity() && m_pPlayer->IsAtWarWith(pTarget->getOwner()))
-		for(size_t i=0;i<vUnits.size();++i)
-			if(vUnits[i] && vUnits[i]->IsCombatUnit() && vUnits[i]->getDomainType()!=DOMAIN_AIR)
-			{
-				const CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(m_pPlayer->GetID(),pTarget->getPlotCity(),vUnits[i]->getDomainType());
-				if(!plan.ready)
-				{
-					// Ring-two approximation and spotter/combat moves could expose
-					// individual gatherers. Reserve explicitly safe legal stage slots.
-					for(size_t j=0;j<unitIDs.size();++j)
-					{
-						CvUnit* unit=m_pPlayer->getUnit(unitIDs[j]);
-						if(!unit || !unit->canUseNow()) continue;
-						if(!CvStackingOffensiveAI::StageUnit(unit,pTarget))
-						{ unit=m_pPlayer->getUnit(unitIDs[j]);if(unit && unit->GetDanger()>0) ExecuteMovesToSafestPlot(unit); }
-					}
-					return true;
-				}
-				break;
-			}
+	const bool gathering=StageGatheringCityAssault(unitIDs,pTarget);
+	vUnits.clear();
+	for(size_t i=0;i<unitIDs.size();++i)
+	{ CvUnit* unit=m_pPlayer->getUnit(unitIDs[i]);if(unit && !unit->isDelayedDeath()) vUnits.push_back(unit); }
+	if(vUnits.empty()) return gathering;
 	//try to improve visibility. however, if the target is too far away this may fail ... in that case we chance it
 	ExecuteSpotterMove(vUnits, pTarget);
 	vUnits.clear();
@@ -3657,7 +3689,7 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vInputUnits,
 		if(pUnit && !pUnit->isDelayedDeath()) pUnit->SetTurnProcessed(true);
 	}
 
-	return bTactSimSuccess;
+	return bTactSimSuccess || gathering;
 }
 
 void CvTacticalAI::ExecuteLandingOperation(CvPlot* pTargetPlot)
@@ -4178,6 +4210,8 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 
 	if(!pUnit || !pTarget)
 		return iResult;
+	const int unitID=pUnit->GetID();
+	CvPlayer& owner=GET_PLAYER(pUnit->getOwner());
 
 	//for inspection in GUI
 	pUnit->SetMissionAI(MISSIONAI_TACTMOVE, pTarget, NULL);
@@ -4188,17 +4222,21 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 		iResult = 0;
 
 		TacticalAIHelpers::PerformRangedOpportunityAttack(pUnit);
+		pUnit=owner.getUnit(unitID);
+		if(!pUnit || pUnit->isDelayedDeath()) return iResult;
 		pUnit->PushMission(CvTypes::getMISSION_SKIP());
 	}
-	else if (pUnit->canMoveInto(*pTarget, CvUnit::MOVEFLAG_DESTINATION) || (iFlags&CvUnit::MOVEFLAG_APPROX_TARGET_RING1) || (iFlags&CvUnit::MOVEFLAG_APPROX_TARGET_RING2))
+	else if (pUnit->canMoveInto(*pTarget, CvUnit::MOVEFLAG_DESTINATION|(iFlags&CvUnit::MOVEFLAG_ATTACK)) || (iFlags&CvUnit::MOVEFLAG_APPROX_TARGET_RING1) || (iFlags&CvUnit::MOVEFLAG_APPROX_TARGET_RING2))
 	{
 		int iTurns = INT_MAX;
 		if (pUnit->GeneratePath(pTarget,iFlags,INT_MAX,&iTurns))
 		{
 			//pillage if it makes sense and we have movement points to spare
-			if (pUnit->shouldPillage(pUnit->plot(), true, true) && (pUnit->hasFreePillageMove() || pUnit->GetMovementPointsAtCachedTarget()>=GD_INT_GET(MOVE_DENOMINATOR)))
+			if (!(iFlags&CvUnit::MOVEFLAG_ATTACK) && pUnit->shouldPillage(pUnit->plot(), true, true) && (pUnit->hasFreePillageMove() || pUnit->GetMovementPointsAtCachedTarget()>=GD_INT_GET(MOVE_DENOMINATOR)))
 			{
 				pUnit->PushMission(CvTypes::getMISSION_PILLAGE());
+				pUnit=owner.getUnit(unitID);
+				if(!pUnit || pUnit->isDelayedDeath()) return iResult;
 				
 				if (GC.getLogging() && GC.getAILogging())
 				{
@@ -4208,8 +4246,10 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 				}
 			}
 
-			pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pTarget->getX(), pTarget->getY(), iFlags, false, false, MISSIONAI_TACTMOVE, pTarget);
 			iResult = iTurns - 1;
+			pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pTarget->getX(), pTarget->getY(), iFlags, false, false, MISSIONAI_TACTMOVE, pTarget);
+			pUnit=owner.getUnit(unitID);
+			if(!pUnit || pUnit->isDelayedDeath()) return iResult;
 
 			bool bAlreadyThere = false;
 			if (iFlags&CvUnit::MOVEFLAG_APPROX_TARGET_RING2)
@@ -4225,7 +4265,11 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 				//try to go to a better place if we're sure the unit will not be moved again this turn
 				pTarget = TacticalAIHelpers::FindSafestPlotInReach(pUnit, true).first;
 				if (pTarget)
+				{
 					pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pTarget->getX(), pTarget->getY(), 0 /*no approximate flags*/, false, false, MISSIONAI_TACTMOVE, pTarget);
+					pUnit=owner.getUnit(unitID);
+					if(!pUnit || pUnit->isDelayedDeath()) return iResult;
+				}
 			}
 		}
 		//maybe units are blocking our way? 
@@ -4237,6 +4281,8 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 				CvUnit* pPushUnit = pUnit->GetPotentialUnitToPushOut(*pTarget);
 				if (pPushUnit && pUnit->PushBlockingUnitOutOfPlot(*pTarget))
 					iResult = 0;
+				pUnit=owner.getUnit(unitID);
+				if(!pUnit || pUnit->isDelayedDeath()) return iResult;
 			}
 			else
 			{
@@ -4245,9 +4291,13 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 				if (pWorkaround)
 				{
 					pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pTarget->getX(), pTarget->getY(), iFlags, false, false, MISSIONAI_TACTMOVE, pTarget);
+					pUnit=owner.getUnit(unitID);
+					if(!pUnit || pUnit->isDelayedDeath()) return iTurns-1;
 					if (bSetProcessed || !pUnit->canMove())
-						UnitProcessed(pUnit->GetID());
+						UnitProcessed(unitID);
 					iResult = iTurns-1;
+					pUnit=owner.getUnit(unitID);
+					if(!pUnit || pUnit->isDelayedDeath()) return iResult;
 				}
 			}
 		}
@@ -4257,7 +4307,7 @@ int CvTacticalAI::ExecuteMoveToPlot(CvUnit* pUnit, CvPlot* pTarget, bool bSetPro
 	}
 
 	if (bSetProcessed)
-		UnitProcessed(pUnit->GetID());
+		UnitProcessed(unitID);
 
 	return iResult;
 }

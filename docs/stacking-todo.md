@@ -1,5 +1,17 @@
 # Stacking development TODO
 
+## AI follow-up checkpoint — 2026-09-30
+
+- [x] Commit exact performance improvements and confirm the preserved late-game round at 28.875s and 29.735s with Summary diagnostics; retain the replay as a regression check. Results apply to this saved position, not all campaigns.
+- [x] Repair reserved city capture execution: preserve the attack flag through movement legality, use the validated safe embark flags, preserve capture movement and re-resolve unit identities after missions. Record actual capture ownership with `CAPTURE_RESULT`.
+- [x] Separate land/naval gathering readiness during positioning so input order cannot hold a ready force or bypass another domain's assembly.
+- [x] Stop unchanged stalled production queues from repeatedly reconstructing a support claim and renewing an inactive offensive's progress clock.
+- [x] Correct both assault forecasts to give fully blockaded cities zero healing. Ordinary healing remains an approximation.
+- [ ] Build/deploy and replay preserved campaign01 turn 215 through 230, checking actual capture conversion, siege continuity, survivors and turn cost. Source save and existing autosaves must be preserved.
+- [ ] Review adjacent executable capture alternatives when the preferred cached capturer has spent its attacks or is unavailable; preserve deliberate processing and other commitments.
+- [ ] Track verified route progress toward a stable safe stage through detours around water/borders. Reuse existing path-query results, keep route progress separate from capture/assault progress, and do not renew on a changed stage or a repeated no-op. Avoid adding per-unit pathfinding to the turn refresh.
+- [ ] Validate the larger siege/reinforcement and ranged-defense policy in fresh campaigns after targeted replay checks. Historical unchecked design bullets below include requirements already partially implemented; use the current implementation record to distinguish remaining work.
+
 
 ## Implementation checkpoint — 2026-09-29 (offline pass)
 

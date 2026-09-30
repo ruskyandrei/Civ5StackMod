@@ -110,7 +110,7 @@ struct CvTacticalAI {
  CvPlayer*m_pPlayer;int commands,result;bool captureOnMove,removeOnMove;
  CvTacticalAI():m_pPlayer(&players[0]),commands(0),result(0),captureOnMove(false),removeOnMove(false){}
  bool TryReservedCityCapture(CvPlot*);
- int ExecuteMoveToPlot(CvUnit*u,CvPlot*p,bool,int){++commands;if(removeOnMove){players[0].units.erase(remove(players[0].units.begin(),players[0].units.end(),u),players[0].units.end());u->dead=true;}if(captureOnMove){p->owner=0;p->city->owner=0;}return result;}
+ int ExecuteMoveToPlot(CvUnit*u,CvPlot*p,bool,int){++commands;if(removeOnMove){players[0].units.erase(remove(players[0].units.begin(),players[0].units.end(),u),players[0].units.end());u->dead=true;}if(captureOnMove&&result!=INT_MAX){p->owner=0;p->city->owner=0;}return result;}
 };
 '''
 tests=r'''
@@ -263,6 +263,14 @@ void assaultTests(){
  target.visible=false;++GC.game.turn;check(CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND).ready,"hidden defenses retain ordinary VP scouting without hidden occupant assessment");
  target.visible=true;options["AIAssaultCoordinationEnabled"]=0;check(CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND).ready,"XML can disable coordination policy");
 }
+void blockadedReadinessTests(){
+ init();CvPlot target(10,10),field(1,7),adjacent(2,9);CvCity city(10,&target);city.owner=target.owner=1;city.strength=4000;city.blocked=true;target.ring.push_back(&field);GC.map.plots[target.id]=&target;
+ options["AIAssaultBaseUnits"]=4;options["AIAssaultUnitsPerCapacity"]=0;options["AIAssaultStrongCityExtraUnits"]=0;options["AIAssaultBaseSiege"]=2;options["AIAssaultStrongCityExtraSiege"]=0;options["AIAssaultCapacityPerExtraSiege"]=10;
+ CvUnit units[4];for(int i=0;i<4;++i){units[i].id=i+1;units[i].end=&adjacent;units[i].eta=2;units[i].cityShot=19;put(units[i],field);if(i){units[i].ranged=true;units[i].rs=40;units[i].role=units[i].info.role=UNITAI_CITY_BOMBARD;}}
+ CvStackingOffensiveAI::ObserveSiege(0,&city);CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND);
+ check(plan.ready&&plan.cityDamage==76,"blockaded populated city heals zero in assault readiness");
+ city.blocked=false;++GC.game.turn;plan=CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND);check(!plan.ready&&plan.reason==3,"ordinary populated city retains base plus population healing estimate");
+}
 void productionTests(){
  init();CvPlot target(10,10),rear(1),field(2,8),adjacent(3,9),rear2(4,1);CvCity enemy(10,&target),producer(1,&rear),second(2,&rear2);enemy.owner=target.owner=1;enemy.strength=4000;players[0].cities.push_back(&producer);players[0].cities.push_back(&second);GC.map.plots[target.id]=&target;
  GC.entries[1].role=UNITAI_CITY_BOMBARD;GC.entries[1].ranged=40;GC.entries[2].role=UNITAI_DEFENSE;GC.entries[2].ranged=40;
@@ -280,6 +288,33 @@ void productionTests(){
  check(!CvStackingOffensiveAI::ProductionBonus(&producer,(UnitTypes)1),"peace cancels offensive production demand");
  init();target.owner=enemy.owner=1;players[0].cities.push_back(&producer);GC.map.plots[target.id]=&target;CvStackingOffensiveAI::ObserveSiege(0,&enemy);producer.productionTurns=13;
  check(!CvStackingOffensiveAI::ProductionBonus(&producer,(UnitTypes)0),"production beyond configured completion horizon rejected");
+}
+void stalledProductionTests(){
+ init();CvPlot target(10,10),rear(1),otherTarget(20,12);CvCity enemy(10,&target),producer(1,&rear),another(20,&otherTarget);enemy.owner=target.owner=another.owner=otherTarget.owner=1;enemy.strength=another.strength=4000;players[0].cities.push_back(&producer);GC.map.plots[target.id]=&target;GC.map.plots[otherTarget.id]=&otherTarget;
+ GC.entries[1].role=UNITAI_CITY_BOMBARD;GC.entries[1].ranged=40;GC.entries[2].role=UNITAI_DEFENSE;GC.entries[2].ranged=40;producer.productionType=1;producer.productionTurns=8;CvStackingOffensiveAI::ObserveSiege(0,&enemy);CvStackingOffensiveAI::RecordProduction(&producer,(UnitTypes)1);
+ const Key factory(0,producer.id);const ObjectiveKey goal(0,target.id,DOMAIN_LAND);const int initialUseful=objectives[goal].lastUsefulTurn;
+ check(production.size()==1&&stalledProduction.empty(),"progressing queue initially receives one support claim");
+ GC.game.turn+=7;Sync(0);check(production.empty()&&stalledProduction.size()==1,"cancel then Sync cannot resurrect identical stalled queue");
+ for(int n=0;n<18;++n){++GC.game.turn;Sync(0);CvStackingOffensiveAI::RecordProduction(&producer,(UnitTypes)1);check(production.empty()&&stalledProduction.size()==1,"multiple stalled windows and explicit record calls remain uncredited");std::map<ObjectiveKey,Objective>::const_iterator i=objectives.find(goal);if(i!=objectives.end())check(i->second.lastUsefulTurn==initialUseful,"reconstruction never renews useful-offensive clock");}
+ objectives.clear();CvStackingOffensiveAI::ObserveSiege(0,&another);CvStackingOffensiveAI::RecordProduction(&producer,(UnitTypes)1);check(production.empty(),"new objective cannot relabel a still-stalled queue as progress");
+ producer.productionTurns=7;++GC.game.turn;Sync(0);const ObjectiveKey nextGoal(0,otherTarget.id,DOMAIN_LAND);
+ check(stalledProduction.empty()&&production.size()==1&&production[factory].goal==nextGoal,"real remaining-turn decrease resumes claim for current relevant objective");
+ const int resumed=production[factory].started;check(objectives[nextGoal].lastUsefulTurn==GC.game.turn,"resumed actual production renews useful-progress clock once");
+ CvStackingOffensiveAI::RecordProduction(&producer,(UnitTypes)1);++GC.game.turn;Sync(0);check(production[factory].started==resumed&&objectives[nextGoal].lastUsefulTurn==resumed,"unchanged resumed queue does not restart its claim each turn");
+ GC.game.turn+=6;Sync(0);check(production.empty()&&stalledProduction.size()==1,"resumed queue can stall again under unchanged window");
+ producer.productionTurns=9;++GC.game.turn;Sync(0);check(production.empty()&&stalledProduction[factory].turns==9,"increased remaining time updates observation without credit");
+ producer.productionTurns=8;++GC.game.turn;Sync(0);check(production.size()==1&&stalledProduction.empty(),"decrease from latest observed estimate permits genuine resumption");
+ GC.game.turn+=7;Sync(0);check(!stalledProduction.empty(),"queue change fixture starts from stalled state");producer.productionType=2;producer.productionTurns=5;CvStackingOffensiveAI::ObserveSiege(0,&another);CvStackingOffensiveAI::RecordProduction(&producer,(UnitTypes)2);
+ check(stalledProduction.empty()&&production[factory].unit==2,"actual queue type change removes stale signature and records new role");
+ production.clear();stalledProduction[factory]=StalledProductionQueue(2,5);producer.productionOperation=1;++GC.game.turn;Sync(0);check(stalledProduction.empty()&&production.empty(),"VP formation ownership supersedes stale support signature");producer.productionOperation=-1;
+ stalledProduction[Key(0,999)]=StalledProductionQueue(1,8);++GC.game.turn;Refresh();check(stalledProduction.empty(),"missing owned city prunes signature so history stays city-bounded");
+ CvStackingOffensiveAI::Reset();check(stalledProduction.empty()&&production.empty(),"new game/load reset clears stalled history");CvStackingOffensiveAI::ObserveSiege(0,&another);++GC.game.turn;Sync(0);
+ check(!production.empty()&&production[factory].unit==2,"load reconstruction credits a current queued role once objective exists");
+ // A live operation prevents ordinary memory expiry; a stalled build still
+ // must not stop the separate 24-turn no-useful-progress abandonment policy.
+ init();enemy.owner=target.owner=1;producer.productionOperation=-1;producer.productionType=1;producer.productionTurns=8;players[0].cities.push_back(&producer);GC.entries[1].role=UNITAI_CITY_BOMBARD;GC.entries[1].ranged=40;CvAIOperation op;CvArmyAI army;setup(op,army,target,rear);CvStackingOffensiveAI::ObserveOperation(&op);CvStackingOffensiveAI::RecordProduction(&producer,(UnitTypes)1);
+ for(int n=0;n<27;++n){++GC.game.turn;Sync(0);CvStackingOffensiveAI::ReviewObjectives(0);}
+ check(op.state==AI_OPERATION_STATE_ABORTED&&objectives.empty(),"stalled queue cannot prevent bounded assault abandonment");
 }
 void stagedReserveTests(){
  init();CvPlot target(10,10),stage(1,4),adjacent(2,9);CvCity enemy(10,&target);enemy.owner=target.owner=1;enemy.strength=4000;GC.map.plots[target.id]=&target;target.ring.push_back(&adjacent);target.ring.push_back(&stage);adjacent.route=false;
@@ -324,8 +359,9 @@ void stagePlacementTests(){
 void captureOrderTests(){
  init();CvPlot target(10,5),adjacent(1,4),far(2,2);CvCity city(10,&target);city.owner=target.owner=1;city.damage=290;GC.map.plots[target.id]=&target;CvUnit unit(1);unit.end=&adjacent;unit.eta=0;put(unit,adjacent);CvStackingOffensiveAI::ContinueSiege(0,&city);CvTacticalAI tactical;
  unit.cityShot=9;check(!tactical.TryReservedCityCapture(&target)&&!tactical.commands,"capture order waits for sufficient actual city damage");
- unit.cityShot=10;check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1,"actual softening permits reserved capture command independently of gathering forecast");
+ tactical.captureOnMove=true;unit.cityShot=10;check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1,"actual softening permits reserved capture independently of gathering forecast");city.owner=target.owner=1;
  city.damage=300;unit.cityShot=0;check(tactical.TryReservedCityCapture(&target),"zero-HP city still permits legal melee capture with zero further damage");
+ city.owner=target.owner=1;
  int before=tactical.commands;unit.moveLegal=false;check(!tactical.TryReservedCityCapture(&target)&&tactical.commands==before,"illegal final city entry cannot issue command");unit.moveLegal=true;
  unit.attacks=false;check(!tactical.TryReservedCityCapture(&target),"used attack allowance blocks duplicate capture");unit.attacks=true;
  unit.processed=true;check(!tactical.TryReservedCityCapture(&target),"processed unit cannot be reused for capture");unit.processed=false;
@@ -334,6 +370,7 @@ void captureOrderTests(){
  unit.ranged=true;check(!tactical.TryReservedCityCapture(&target),"ranged-only actor cannot execute melee capture");unit.ranged=false;
  target.owner=0;check(!tactical.TryReservedCityCapture(&target),"already-owned city cannot receive hostile capture order");target.owner=1;
  check(!tactical.TryReservedCityCapture(NULL),"null target rejected");tactical.result=INT_MAX;check(!tactical.TryReservedCityCapture(&target),"failed movement not reported as issued capture");tactical.result=0;
+ tactical.captureOnMove=false;check(!tactical.TryReservedCityCapture(&target),"successful movement return without ownership change is not capture");tactical.captureOnMove=true;
  tactical.removeOnMove=true;check(tactical.TryReservedCityCapture(&target),"callback removal does not leave a post-command unit dereference");check(!tactical.TryReservedCityCapture(&target),"deleted cached capturer cannot be reused");
  check(EntryCapture(&GC.entries[0]),"ordinary melee build recognized as capturing role");GC.entries[0].ranged=8;GC.entries[0].range=0;
  check(EntryCapture(&GC.entries[0])&&!EntryRanged(&GC.entries[0]),"unique zero-range support fire does not mask melee capture capability");
@@ -359,18 +396,21 @@ void captureArrivalRegressionTests(){
  for(int n=0;n<8;++n){++GC.game.turn;CvStackingOffensiveAI::ContinueSiege(0,&city);}
  check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"stationary ETA-one capturer cannot permit indefinite low-HP bombardment");
  check(!CvStackingOffensiveAI::GetReservedCapturer(0,&city),"stationary ETA-one candidate enters retry cooldown");
- init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;unit=CvUnit(1);unit.eta=1;unit.end=&adj;put(unit,stage);unit.exactCapturePath=true;unit.lastPath.push_back(&stage);unit.lastPath.push_back(&adj);unit.lastPath.push_back(&target);CvStackingOffensiveAI::ContinueSiege(0,&city);CvTacticalAI tactical;
+ init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;unit=CvUnit(1);unit.eta=1;unit.end=&adj;put(unit,stage);unit.exactCapturePath=true;unit.lastPath.push_back(&stage);unit.lastPath.push_back(&adj);unit.lastPath.push_back(&target);CvStackingOffensiveAI::ContinueSiege(0,&city);CvTacticalAI tactical;tactical.captureOnMove=true;
  check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1,"fast capturer may move through a legal approach and capture in this turn");
+ city.owner=target.owner=1;
  unit.exactCapturePath=false;check(!tactical.TryReservedCityCapture(&target),"approximate one-turn arrival cannot substitute for exact current-turn capture reach");
  unit.exactCapturePath=true;unit.lastPath[1]=&stage;check(!tactical.TryReservedCityCapture(&target),"nonadjacent final approach rejected even if mocked exact endpoint is target");unit.lastPath[1]=&adj;
  captureQueries[0]=32;check(!tactical.TryReservedCityCapture(&target),"exact distant capture obeys existing shared path budget");captureQueries[0]=0;
  unit.moves=false;check(!tactical.TryReservedCityCapture(&target),"no remaining movement forbids distant capture");unit.moves=true;
  unit.processed=true;check(!tactical.TryReservedCityCapture(&target),"arbitrarily processed fast unit cannot be reused");
  assemblyHolds[Key(0,unit.id)]=currentTurn;check(tactical.TryReservedCityCapture(&target)&&!unit.processed&&!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"specifically held reserve is released only for verified executable capture");
+ city.owner=target.owner=1;
  unit.processed=true;assemblyHolds[Key(0,unit.id)]=currentTurn;unit.cityShot=0;check(!tactical.TryReservedCityCapture(&target)&&unit.processed&&CvStackingOffensiveAI::IsAssemblyHeld(&unit),"insufficient damage leaves reserve hold intact");unit.cityShot=30;
  ++GC.game.turn;check(!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"hold exception expires at next turn");
  unit.processed=false;unit.position=&adj;unit.end=&adj;unit.hp=30;unit.eta=0;++GC.game.turn;
  check(tactical.TryReservedCityCapture(&target),"wounded adjacent unit that survives can capture without the recruitment health minimum");
+ city.owner=target.owner=1;
  retaliation=30;check(!tactical.TryReservedCityCapture(&target),"wounded adjacent unit with lethal retaliation still rejected");
  init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;options["AIOffensiveSupportMaximumObjectives"]=0;
  const CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND);
@@ -400,15 +440,15 @@ void firingApproachTests(){
  siege.eta=4;siege.end=&blocked;check(!AttackApproach(&siege,&target,3,eta),"late alternate firing route does not enter current wave");
 }
 void shutdownTests(){
- init();production[Key(0,7)]=ProductionClaim();
+ init();production[Key(0,7)]=ProductionClaim();stalledProduction[Key(0,7)]=StalledProductionQueue(1,8);
  check(CvStackingOffensiveAI::Enabled(0),"offensive bookkeeping active in live game");
  CvStackingOffensiveAI::Shutdown();
  check(!CvStackingOffensiveAI::Enabled(0),"teardown disables callbacks before player destruction");
- check(production.empty()&&objectives.empty()&&commitments.empty(),"teardown releases reconstructed histories");
+ check(production.empty()&&stalledProduction.empty()&&objectives.empty()&&commitments.empty(),"teardown releases reconstructed histories");
  GC.game.turn=101;Refresh();check(currentTurn==-1,"teardown refresh does not query destroyed players");
  CvStackingOffensiveAI::Reset();check(CvStackingOffensiveAI::Enabled(0),"new game reset re-enables live bookkeeping");
 }
-int main(){shutdownTests();policyTests();routeTests();openingTests();supportTests();capsTests();captureTests();navalTests();marchTests();expiryProgressTests();captureCommitmentTests();assaultTests();productionTests();stagedReserveTests();preparationProductionTests();stagePlacementTests();captureOrderTests();emptyApproximatePathTests();reassignmentTests();captureArrivalRegressionTests();cityAttackGateTests();firingApproachTests();printf("offensive support: %d checks, %d failures\n",checks,failed);return failed?1:0;}
+int main(){shutdownTests();policyTests();routeTests();openingTests();supportTests();capsTests();captureTests();navalTests();marchTests();expiryProgressTests();captureCommitmentTests();assaultTests();blockadedReadinessTests();productionTests();stalledProductionTests();stagedReserveTests();preparationProductionTests();stagePlacementTests();captureOrderTests();emptyApproximatePathTests();reassignmentTests();captureArrivalRegressionTests();cityAttackGateTests();firingApproachTests();printf("offensive support: %d checks, %d failures\n",checks,failed);return failed?1:0;}
 '''
 cpp=out/'offensive-source-test.cpp';cpp.write_text(stubs+header+policy+clean(source)+capture_harness+capture_actual+tests,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows';env=os.environ.copy()

@@ -62,12 +62,18 @@ namespace
         ObjectiveKey goal; int unit, started, progress, turns;
         ProductionClaim():unit(-1),started(-1),progress(-1),turns(INT_MAX){}
     };
+    struct StalledProductionQueue
+    {
+        int unit, turns;
+        StalledProductionQueue(int u=-1,int t=INT_MAX):unit(u),turns(t){}
+    };
     std::map<ObjectiveKey,Objective> objectives;
     std::map<Key,Commitment> commitments;
     std::map<ObjectiveKey,Failure> failures;
     std::map<Key,March> marches;
     std::map<Key,std::pair<int,int> > captureRetries; // unit -> target, expiry
     std::map<Key,ProductionClaim> production;
+    std::map<Key,StalledProductionQueue> stalledProduction;
     std::map<Key,int> assemblyHolds;
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
     bool shuttingDown=false;
@@ -86,6 +92,23 @@ namespace
         CvPlot* target=CvStackingOffensiveAI::CityTarget(operation);
         return !target || target->GetPlotIndex()!=goal.target;
     }
+    bool ProductionQueueStalled(const CvCity* city,const Key& key)
+    {
+        std::map<Key,StalledProductionQueue>::iterator stalled=stalledProduction.find(key);
+        if(stalled==stalledProduction.end()) return false;
+        if(!city || city->IsBuildingUnitForOperation() || city->getProductionUnit()!=stalled->second.unit)
+        { stalledProduction.erase(stalled);return false; }
+        const int remaining=city->getProductionTurnsLeft();
+        if(remaining<stalled->second.turns)
+        {
+            CvStackingDiagnostics::Record(1,(PlayerTypes)key.first,"OFFENSIVE_PRODUCTION","city=%d unitType=%d remaining=%d action=resume reason=queue_progress",key.second,stalled->second.unit,remaining);
+            stalledProduction.erase(stalled);return false;
+        }
+        // Cost/movement estimates can increase. Observe that value without
+        // crediting it, so a later strict decrease is real queue progress.
+        stalled->second.turns=remaining;
+        return true;
+    }
     void Refresh()
     {
         if(shuttingDown) return;
@@ -94,6 +117,13 @@ namespace
         currentTurn=turn;
         assemblyHolds.clear();
         for(int i=0;i<MAX_PLAYERS;++i) { synced[i]=-1; captureQueries[i]=0; extraBatches[i]=0; assaultQueries[i]=0; }
+        // One scalar signature per live owned-city queue prevents Sync from
+        // recreating the same stalled claim and renewing an abandoned siege.
+        for(std::map<Key,StalledProductionQueue>::iterator i=stalledProduction.begin();i!=stalledProduction.end();)
+        {
+            const Key key=i->first;++i;
+            ProductionQueueStalled(GET_PLAYER((PlayerTypes)key.first).getCity(key.second),key);
+        }
         // Tactical movement need not pass through RecordTransfer. Observe real
         // positions before aging objectives, including a dispatch near expiry.
         for(std::map<Key,Commitment>::iterator i=commitments.begin();i!=commitments.end();++i)
@@ -145,6 +175,8 @@ namespace
             }
             if(!valid || turn-i->second.progress>Setting("AIOffensiveProductionStallTurns",6))
             {
+                if(valid)
+                    stalledProduction[i->first]=StalledProductionQueue(i->second.unit,i->second.turns);
                 CvStackingDiagnostics::Record(1,(PlayerTypes)i->first.first,"OFFENSIVE_PRODUCTION","city=%d target=%d unitType=%d action=cancel reason=%s",i->first.second,i->second.goal.target,i->second.unit,valid?"stalled":"queue_or_objective_changed");
                 production.erase(i++);
             }
@@ -610,8 +642,12 @@ namespace CvStackingOffensiveAI
         const int hp=max(1,city->GetMaxHitPoints()-city->getDamage());
         if(hp<o.lowestHP || result.readyUnits>o.assault.readyUnits) o.lastUsefulTurn=currentTurn;
         o.lowestHP=min(o.lowestHP,hp);
-        int healing=city->IsBlockadedWaterAndLand()?0:GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN);
-        if(MOD_BALANCE_VP) healing+=city->getPopulation();
+        int healing=0;
+        if(!city->IsBlockadedWaterAndLand())
+        {
+            healing=GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN);
+            if(MOD_BALANCE_VP) healing+=city->getPopulation();
+        }
         const bool captureSoon=o.captureID>=0 && o.captureEta<=approachTurns;
         const bool roles=result.siege>=result.desiredSiege && captureSoon;
         const bool damageEnough=result.cityDamage>=hp ||
@@ -867,7 +903,9 @@ namespace CvStackingOffensiveAI
     {
         if(!city || !Enabled(city->getOwner()) || city->IsBuildingUnitForOperation() || city->getProductionUnit()!=unit ||
             Setting("AIOffensiveProductionMaximumUnits",4)==0) return;
-        Sync(city->getOwner()); ObjectiveKey chosen;
+        Sync(city->getOwner());
+        if(ProductionQueueStalled(city,Key(city->getOwner(),city->GetID()))) return;
+        ObjectiveKey chosen;
         if(!ProductionChoice(city,unit,chosen)) return;
         ProductionClaim& claim=production[Key(city->getOwner(),city->GetID())];
         if(claim.started>=0 && claim.unit==unit && claim.goal==chosen) return;
@@ -955,7 +993,7 @@ namespace CvStackingOffensiveAI
         }
     }
     void Reset()
-    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); assemblyHolds.clear(); currentTurn=-1; shuttingDown=false; }
+    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); currentTurn=-1; shuttingDown=false; }
     void Shutdown()
     {
         // Operation destructors abort armies after earlier player objects have

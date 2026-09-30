@@ -452,6 +452,7 @@ private:
 	bool ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel eAggLvl);
 	bool ExecuteAttackWithCities(CvUnit* pDefender);
 	bool PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget);
+	bool StageGatheringCityAssault(vector<int>& unitIDs, CvPlot* pTarget);
 	void ExecuteAirSweep(CvPlot* pTargetPlot);
 	void ExecuteAirAttack(CvPlot* pTargetPlot);
 	void ExecuteRepositionMoves();
