@@ -30282,6 +30282,7 @@ CvUnit* CvCity::CreateUnit(UnitTypes eUnitType, UnitAITypes eAIType, UnitCreatio
 		kOwner.changeUnitsBuiltCount(eUnitType, 1);
 
 	doUnitCompletionYields(pUnit, eReason);
+	if(eReason==REASON_TRAIN) CvStackingOffensiveAI::UnitProduced(this,pUnit);
 
 	return pUnit;
 }
@@ -33103,6 +33104,8 @@ int CvCity::getBombardRange(bool& bIndirectFireAllowed) const
 //	--------------------------------------------------------------------------------
 bool CvCity::canRangeStrike() const
 {
+	if (!CvStacking::CityRangedAttacksEnabled())
+		return false;
 	VALIDATE_OBJECT();
 
 	if (MOD_BALANCE_NO_CITY_RANGED_ATTACK)

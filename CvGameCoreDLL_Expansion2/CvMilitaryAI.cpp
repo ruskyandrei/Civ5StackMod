@@ -503,6 +503,7 @@ void CvMilitaryAI::DoTurn()
 	if(!m_pPlayer->isHuman(ISHUMAN_AI_UNITS))
 	{
 		UpdateOperations();
+		CvStackingOffensiveAI::ReviewObjectives(m_pPlayer->GetID());
 		if (!m_pPlayer->isHuman(ISHUMAN_AI_ECONOMY))
 		{
 			MakeEmergencyPurchases();

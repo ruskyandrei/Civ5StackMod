@@ -12,6 +12,7 @@
 #include "CvDiplomacyAIEnums.h"
 #include "CvEconomicAI.h"
 #include "CvMilitaryAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvGrandStrategyAI.h"
 #include "CvCitySpecializationAI.h"
 #include "CvEspionageClasses.h"
@@ -1107,6 +1108,8 @@ void CvCityStrategyAI::ChooseProduction(BuildingTypes eIgnoreBldg, UnitTypes eIg
 				{
 					UnitAITypes eUnitAI = pkUnitInfo->GetDefaultUnitAIType();
 					GetCity()->pushOrder(ORDER_TRAIN, eUnitType, eUnitAI, false, true, false, bRush);
+					if(selection.m_eBuildableType!=CITY_BUILDABLE_UNIT_FOR_OPERATION)
+						CvStackingOffensiveAI::RecordProduction(GetCity(),eUnitType);
 					bPushedOrderForSettler = pkUnitInfo->IsFound();
 				}
 				if (selection.m_eBuildableType == CITY_BUILDABLE_UNIT_FOR_OPERATION)

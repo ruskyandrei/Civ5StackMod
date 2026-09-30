@@ -28,6 +28,7 @@ namespace CvStackingDiagnostics
         void AddUnit(int owner, int id, const char* role, int rolledDamage);
         bool active, detailed, compact;
         int attackingOwner, cityOwnerBefore, cityIDBefore, cityHPBefore, cityProtectionBefore;
+        int attackingUnitID, attackingCityID, defendingOwner, defendingUnitID, defendingCityID;
         int primaryDamage, retaliationDamage, bystanderCount;
         long long bystanderDamage;
         bool ranged, bombing;

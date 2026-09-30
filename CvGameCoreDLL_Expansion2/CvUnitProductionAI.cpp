@@ -9,6 +9,8 @@
 #include "CvGameCoreDLLUtil.h"
 #include "CvUnitProductionAI.h"
 #include "CvStackingRules.h"
+#include "CvStackingAI.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvGameCoreUtils.h"
 #include "CvInfosSerializationHelper.h"
 #include "CvMilitaryAI.h"
@@ -1583,6 +1585,10 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 		iBonus += 250;
 	}
 
+	// Objective-specific deficits supplement the global ratios only after the
+	// existing economy, supply, resource and training sanity checks have passed.
+	const int iStackingOffensiveBonus=bCombat?CvStackingOffensiveAI::ProductionBonus(m_pCity,eUnit):0;
+	iBonus+=iStackingOffensiveBonus;
 	// MOD_AI_UNIT_PRODUCTION - NEW STRATEGIES -- consider if we have too much or too few of a unit
 	if (bCombat && MOD_AI_UNIT_PRODUCTION)
 	{
@@ -1610,12 +1616,19 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 		switch (pkUnitEntry->GetDefaultUnitAIType())
 		{
 		case UNITAI_RANGED:
+			if (iStackingOffensiveBonus>0) break;
+			if (CvStackingAI::RangedDefenseProductionBonus(m_pCity,pkUnitEntry->GetDefaultUnitAIType(),pkUnitEntry->GetRange())>0)
+			{
+				iBonus+=CvStackingAI::RangedDefenseProductionBonus(m_pCity,pkUnitEntry->GetDefaultUnitAIType(),pkUnitEntry->GetRange());
+				break;
+			}
 			if (kPlayer.GetMilitaryAI()->IsUsingStrategy(eStrategyArcher))
 				iBonus += iBonusValueFromStrategy;
 			else if (kPlayer.GetMilitaryAI()->IsUsingStrategy(eStrategyEnoughArcher))
 				return SR_BALANCE;
 			break;
 		case UNITAI_CITY_BOMBARD:
+			if (iStackingOffensiveBonus>0) break;
 			if (kPlayer.GetMilitaryAI()->IsUsingStrategy(eStrategySiege))
 				iBonus += iBonusValueFromStrategy;
 			else if (kPlayer.GetMilitaryAI()->IsUsingStrategy(eStrategyEnoughSiege))
@@ -1640,6 +1653,7 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 				return SR_BALANCE;*/ // ranged naval units may be resource limited, so don't discourage these
 			break;
 		case UNITAI_ASSAULT_SEA:
+			if (iStackingOffensiveBonus>0) break;
 			if (kPlayer.GetMilitaryAI()->IsUsingStrategy(eStrategyNavalRanged))
 				iBonus += iBonusValueFromStrategy;
 			else if (kPlayer.GetMilitaryAI()->IsUsingStrategy(eStrategyEnoughNavalRanged))

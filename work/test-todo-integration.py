@@ -81,6 +81,7 @@ void combat(){CvCity city;CvPlot plot(&city);CvUnit siege(1,0),ship(2,0),bomber(
  settings["CollateralPercent"]=0;check(CvUnitCombat::GetStackCollateralDamage(&siege,&plot,NULL,50,units,damage).empty(),"collateral off preserved");settings.clear();enabled=false;check(CvStacking::GetCityProtection(&city)==0,"stacking off");enabled=true;
 }
 void production(){CvAIOperation op;CvArmyAI army;op.army=&army;army.slots.resize(5);army.roles.resize(5);army.roles[0].m_primaryUnitType=UNITAI_GENERAL;
+ op.RefreshReinforcementRequests();check(op.m_viListOfUnitsWeStillNeedToBuild.size()==4,"expanded default allows four distinct proactive production slots");settings["AIOffensiveProductionMaximumUnits"]=2;
  op.RefreshReinforcementRequests();check(op.m_viListOfUnitsWeStillNeedToBuild.size()==2,"bounded proactive production before casualties");
  OperationSlot s=op.PeekAtNextUnitToBuild();check(s.m_iSlotID==1,"support/general not queued");check(op.CommitToBuildNextUnit(s),"first city reserves exactly once");check(!op.CommitToBuildNextUnit(s),"second city cannot reserve same slot");
  check(op.IsSlotCommitted(1),"reserve recruitment can exclude promised slot");op.RefreshReinforcementRequests();check(op.m_viListOfUnitsWeStillNeedToBuild.size()==1,"in-training counted toward production cap");

@@ -349,7 +349,7 @@ void CvAIOperation::RefreshReinforcementRequests()
     if(!army) return;
     m_viListOfUnitsWeStillNeedToBuild.clear();
     int count=(int)m_viListOfUnitsCitiesHaveCommittedToBuild.size();
-    const int limit=CvStacking::GetInt("AIOffensiveProductionMaximumUnits",2);
+    const int limit=CvStacking::GetInt("AIOffensiveProductionMaximumUnits",4);
     // Use VP's existing exclusive production reservations and supply/economy checks.
     // Formation size stays bounded; optional combat slots can be requested before losses.
     for(size_t i=0;i<army->GetNumFormationEntries() && count<limit;++i)

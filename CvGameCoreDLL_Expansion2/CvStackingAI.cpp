@@ -95,7 +95,7 @@ namespace
         {
             int result=GarrisonScore(u,city);
             // Keep available city defenders before tying down an already assembled army.
-            if (u->getArmyID()==-1) result+=100000;
+            if (u->getArmyID()==-1 && !CvStackingOffensiveAI::HasCommitment(u,NULL)) result+=100000;
             if (cavalry && CvStacking::IsAntiCavalry(u)) result+=Setting("AIStackAntiFlankBonus",12)*100;
             return result;
         }
@@ -109,6 +109,50 @@ namespace
         bool operator<(const Demand& other) const
         { return priority!=other.priority?priority>other.priority:plot!=other.plot?plot<other.plot:operation<other.operation; }
     };
+
+    bool RangedDefender(const CvUnit* unit)
+    {
+        return unit && unit->IsCanAttackRanged() && unit->GetRange()>1 &&
+            unit->AI_getUnitAIType()!=UNITAI_CITY_BOMBARD && unit->getUnitInfo().GetDefaultUnitAIType()!=UNITAI_CITY_BOMBARD;
+    }
+    int DefenderValue(const CvUnit* unit,const CvUnit* garrison)
+    {
+        const int strength=CvStackingAI::UnitStrength(unit);
+        int result=unit==garrison?strength*Setting("AICityGarrisonValuePercent",50)/100:0;
+        if(RangedDefender(unit)) result+=strength*Setting("AICityRangedValuePercent",100)/100;
+        else if(unit!=garrison) result+=strength*Setting("AICityMeleeReserveValuePercent",25)/100;
+        return max(1,result);
+    }
+    void CityRoster(const CvCity* city,const CvStackingAI::CityDefense& a,std::vector<const CvUnit*>& retained)
+    {
+        std::vector<const CvUnit*> units; Defenders(city,DOMAIN_LAND,units);
+        std::stable_sort(units.begin(),units.end(),RetentionOrder(city,a.cavalry>0));
+        if(units.empty() || !a.landMaximum || (!a.landMinimum && !a.landStrength && !a.rangedMinimum)) return;
+        // One useful garrison is sufficient for the passive city contribution.
+        // Prefer free defenders over retaining troops already marching in an army.
+        const CvUnit* garrison=city->GetGarrisonedUnit();
+        if(!garrison || garrison->getDomainType()!=DOMAIN_LAND ||
+            (garrison->getArmyID()!=-1 && units.front()->getArmyID()==-1) ||
+            (!a.immediate && CvStackingOffensiveAI::HasCommitment(garrison,NULL) && !CvStackingOffensiveAI::HasCommitment(units.front(),NULL)) ||
+            CvStackingAIPolicy::BetterGarrison(GarrisonScore(garrison,city),GarrisonScore(units.front(),city),Setting("AIGarrisonReplacementPercent",20)) ||
+            std::find(units.begin(),units.end(),garrison)==units.end()) garrison=units.front();
+        if(a.meleeMaximum==0 && !RangedDefender(garrison))
+            for(size_t i=0;i<units.size();++i)if(RangedDefender(units[i])){garrison=units[i];break;}
+        retained.push_back(garrison);
+        int ranged=RangedDefender(garrison)?1:0,melee=ranged?0:1,strength=DefenderValue(garrison,garrison);
+        for(size_t i=0;i<units.size() && ranged<a.rangedMinimum && retained.size()<(size_t)a.landMaximum;++i)
+            if(units[i]!=garrison && RangedDefender(units[i]))
+            { retained.push_back(units[i]);++ranged;strength+=DefenderValue(units[i],garrison); }
+        for(size_t i=0;i<units.size() && retained.size()<(size_t)a.landMaximum;++i)
+        {
+            const CvUnit* unit=units[i];
+            if(std::find(retained.begin(),retained.end(),unit)!=retained.end()) continue;
+            if(!RangedDefender(unit) && melee>=a.meleeMaximum) continue;
+            if(retained.size()>=(size_t)a.landMinimum && strength>=a.landStrength && ranged>=a.rangedMinimum) break;
+            retained.push_back(unit);strength+=DefenderValue(unit,garrison);
+            if(RangedDefender(unit))++ranged;else++melee;
+        }
+    }
 }
 
 namespace CvStackingAI
@@ -188,11 +232,28 @@ namespace CvStackingAI
         result.landStrength=max(0,result.enemyStrength*Setting("AICityDefenseStrengthPercent",120)/100-cityCredit);
         if (city->isCapital() && result.enemyStrength>0)
             result.landStrength=result.landStrength*Setting("AICapitalDefensePercent",125)/100;
+        result.meleeMaximum=result.landMaximum;
+        if(Setting("AICityRoleDefenseEnabled",1)!=0)
+        {
+            result.meleeMaximum=min(result.landMaximum,Setting("AICityMaximumMeleeDefenders",1));
+            if(city->isInDangerOfFalling()) result.meleeMaximum=result.landMaximum; // actual available emergency force
+            if(result.enemyStrength>0)
+            {
+                std::vector<const CvUnit*> current;Defenders(city,DOMAIN_LAND,current);
+                int mean=0;for(size_t i=0;i<current.size();++i)mean+=UnitStrength(current[i]);
+                mean=current.empty()?Setting("AICityUnitStrengthEstimate",25):max(1,mean/(int)current.size());
+                const int desired=min(result.landMaximum,max(result.landMinimum,(result.landStrength+mean-1)/mean));
+                result.rangedMinimum=min(result.landMaximum,max(Setting("AICityThreatenedMinimumRanged",2),
+                    (desired*Setting("AICityRangedSharePercent",75)+99)/100));
+                if(city->GetGarrisonedUnit() && !RangedDefender(city->GetGarrisonedUnit()))
+                    result.rangedMinimum=min(result.rangedMinimum,max(0,result.landMaximum-1));
+            }
+        }
         result.seaMaximum=result.seaStrength>0?min(CvStacking::GetCapacity(player.GetID(),DOMAIN_SEA,true),Setting("AICityMaximumNavalDefenders",2)):0;
         cities.insert(std::make_pair(key,result));
-        CvStackingDiagnostics::Record(1,player.GetID(),"CITY_DEFENSE","city=%d plot=%d immediate=%d nearby=%d enemyStrength=%d needStrength=%d minimum=%d maximum=%d navalMaximum=%d collateral=%d cavalry=%d; nearby is visibility-limited proximity, not confirmed reach",
+        CvStackingDiagnostics::Record(1,player.GetID(),"CITY_DEFENSE","city=%d plot=%d immediate=%d nearby=%d enemyStrength=%d needStrength=%d minimum=%d maximum=%d navalMaximum=%d collateral=%d cavalry=%d rangedMinimum=%d meleeMaximum=%d; nearby is visibility-limited proximity, not confirmed reach",
             city->GetID(),city->plot()->GetPlotIndex(),result.immediate,result.nearby,result.enemyStrength,result.landStrength,
-            result.landMinimum,result.landMaximum,result.seaMaximum,result.collateral,result.cavalry);
+            result.landMinimum,result.landMaximum,result.seaMaximum,result.collateral,result.cavalry,result.rangedMinimum,result.meleeMaximum);
         return result;
     }
     bool RetainCityUnit(const CvUnit* unit)
@@ -204,6 +265,11 @@ namespace CvStackingAI
         const DomainTypes domain=unit->getDomainType();
         if (!Eligible(unit,city->getOwner(),domain) || domain==DOMAIN_AIR) return false;
         const CityDefense assessment=AssessCity(city);
+        if(domain==DOMAIN_LAND && Setting("AICityRoleDefenseEnabled",1)!=0)
+        {
+            std::vector<const CvUnit*> retained;CityRoster(city,assessment,retained);
+            return std::find(retained.begin(),retained.end(),unit)!=retained.end();
+        }
         const int minimum=domain==DOMAIN_LAND?assessment.landMinimum:0;
         const int maximum=domain==DOMAIN_LAND?assessment.landMaximum:assessment.seaMaximum;
         const int desired=domain==DOMAIN_LAND?assessment.landStrength:assessment.seaStrength;
@@ -222,6 +288,15 @@ namespace CvStackingAI
     {
         if (!city) return false;
         const CityDefense a=AssessCity(city);
+        if(Setting("AICityRoleDefenseEnabled",1)!=0)
+        {
+            std::vector<const CvUnit*> retained;CityRoster(city,a,retained);
+            int ranged=0,strength=0;
+            for(size_t i=0;i<retained.size();++i)
+            { ranged+=RangedDefender(retained[i]);strength+=DefenderValue(retained[i],retained.front()); }
+            return (int)retained.size()<a.landMinimum || ranged<a.rangedMinimum ||
+                ((int)retained.size()<a.landMaximum && strength<a.landStrength);
+        }
         std::vector<const CvUnit*> units; Defenders(city,DOMAIN_LAND,units);
         int strength=0; for(size_t i=0;i<units.size();++i) strength+=UnitStrength(units[i]);
         return !CvStackingAIPolicy::ReachedDefense((int)units.size(),strength,a.landMinimum,a.landMaximum,a.landStrength);
@@ -230,13 +305,35 @@ namespace CvStackingAI
     {
         if (!candidate || !city || candidate->getDomainType()!=DOMAIN_LAND || candidate->isCargo()) return false;
         if (candidate->plot()==city->plot()) return false; // already counted, adds no defensive capacity
-        if (NeedsCityDefender(city)) return true;
+        if (NeedsCityDefender(city))
+        {
+            if(Setting("AICityRoleDefenseEnabled",1)==0 || RangedDefender(candidate)) return true;
+            const CityDefense a=AssessCity(city);std::vector<const CvUnit*> retained;CityRoster(city,a,retained);
+            int melee=0;for(size_t i=0;i<retained.size();++i)melee+=!RangedDefender(retained[i]);
+            const CvUnit* current=city->GetGarrisonedUnit();
+            return melee<a.meleeMaximum || (current && !RangedDefender(current) &&
+                CvStackingAIPolicy::BetterGarrison(GarrisonScore(current,city),GarrisonScore(candidate,city),Setting("AIGarrisonReplacementPercent",20)));
+        }
         const CvUnit* current=city->GetGarrisonedUnit();
         if (!current || current==candidate) return false;
         const CityDefense a=AssessCity(city);
         // Rear cities need an adequate garrison, not a perpetual search for a ranged one.
         if (!a.immediate && !a.nearby) return false;
         return CvStackingAIPolicy::BetterGarrison(GarrisonScore(current,city),GarrisonScore(candidate,city),Setting("AIGarrisonReplacementPercent",20));
+    }
+    bool WantsRangedDefender(const CvCity* city)
+    {
+        if(!city || !Enabled(city->getOwner()) || Setting("AICityRoleDefenseEnabled",1)==0) return false;
+        const CityDefense a=AssessCity(city);
+        if(!a.rangedMinimum) return false;
+        std::vector<const CvUnit*> units;Defenders(city,DOMAIN_LAND,units);
+        int ranged=0;for(size_t i=0;i<units.size();++i)ranged+=RangedDefender(units[i]);
+        return ranged<a.rangedMinimum;
+    }
+    int RangedDefenseProductionBonus(const CvCity* city,UnitAITypes role,int range)
+    {
+        if(role==UNITAI_CITY_BOMBARD || range<2 || !WantsRangedDefender(city)) return 0;
+        return Setting("AICityRangedProductionPriority",800);
     }
     bool RecruitmentBlocked(const CvUnit* unit,const CvPlot* target)
     {
@@ -368,7 +465,9 @@ namespace CvStackingAI
             }
             // A field unit next to a threatened city is part of its defense too.
             if(plotDistance(*unit->plot(),*city->plot())<=2 && threat>localStrength-UnitStrength(unit)) return false;
-            if(threat>localStrength) demands.push_back(Demand(city->plot()->GetPlotIndex(),Setting("AIReinforcementDefensePriority",300),threat-localStrength,-1,unit->getDomainType()));
+            const bool rangedNeed=unit->getDomainType()==DOMAIN_LAND && RangedDefender(unit) && WantsRangedDefender(city);
+            if(threat>localStrength || rangedNeed)
+                demands.push_back(Demand(city->plot()->GetPlotIndex(),Setting("AIReinforcementDefensePriority",300)+(rangedNeed?Setting("AICityRangedTransferPriority",80):0),max(UnitStrength(unit),threat-localStrength),-1,unit->getDomainType()));
         }
         if(demands.empty() && CvStackingOffensiveAI::JoinArrived(unit)) return true;
         std::vector<CvStackingOffensiveAI::Demand> offensive;

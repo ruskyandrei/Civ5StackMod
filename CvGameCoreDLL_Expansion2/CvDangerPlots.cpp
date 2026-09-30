@@ -265,7 +265,7 @@ void CvDangerPlots::UpdateDangerInternal(const PlotIndexContainer& plotsToIgnore
 		// for each city
 		for (CvCity* pLoopCity = loopPlayer.firstCity(&iLoop); pLoopCity != NULL; pLoopCity = loopPlayer.nextCity(&iLoop))
 		{
-			if (ShouldIgnoreCity(pLoopCity, false))
+			if (!CvStacking::CityRangedAttacksEnabled() || ShouldIgnoreCity(pLoopCity, false))
 				continue;
 
 			bool bIndirectFireAllowed = false; //this is an OUT parameter ...
@@ -581,6 +581,8 @@ void CvDangerPlots::AssignUnitDangerValue(const CvUnit* pUnit, CvPlot* pPlot)
 /// Contains the calculations to do the danger value for the plot according to the city
 void CvDangerPlots::AssignCityDangerValue(const CvCity* pCity, CvPlot* pPlot)
 {
+	if (!CvStacking::CityRangedAttacksEnabled())
+		return;
 	if (m_DangerPlots.empty() || !pCity || !pPlot)
 		return;
 

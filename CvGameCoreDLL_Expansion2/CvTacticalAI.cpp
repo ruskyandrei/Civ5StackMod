@@ -1,4 +1,4 @@
-/*	-------------------------------------------------------------------------------------------------------
+﻿/*	-------------------------------------------------------------------------------------------------------
 	© 1991-2012 Take-Two Interactive Software and its subsidiaries.  Developed by Firaxis Games.  
 	Sid Meier's Civilization V, Civ, Civilization, 2K Games, Firaxis Games, Take-Two Interactive Software 
 	and their respective logos are all trademarks of Take-Two interactive Software, Inc.  
@@ -878,6 +878,21 @@ void CvTacticalAI::AssignBarbarianMoves()
 }
 
 /// Assign a group of units to take down each city we can capture
+bool CvTacticalAI::TryReservedCityCapture(CvPlot* target)
+{
+	if(!target || !target->isCity() || target->getOwner()==NO_PLAYER || !m_pPlayer->IsAtWarWith(target->getOwner())) return false;
+	CvCity* city=target->getPlotCity();
+	CvUnit* unit=CvStackingOffensiveAI::GetReservedCapturer(m_pPlayer->GetID(),city);
+	if(!CvStackingOffensiveAI::CanCapture(unit,target) || !unit->canUseNow() || !unit->canMove() || unit->isOutOfAttacks() ||
+		plotDistance(*unit->plot(),*target)>1 || !unit->canMoveInto(*target,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)) return false;
+	int retaliation=0,garrison=0;
+	const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,unit,unit->plot(),retaliation,garrison);
+	const int remaining=max(0,city->GetMaxHitPoints()-city->getDamage());
+	if(damage<remaining || retaliation>=unit->GetCurrHitPoints()) return false;
+	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_ORDER","target=%d unit=%d hp=%d damage=%d retaliation=%d",target->GetPlotIndex(),unit->GetID(),remaining,damage,retaliation);
+	return ExecuteMoveToPlot(unit,target,false,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)!=INT_MAX;
+}
+
 void CvTacticalAI::ExecuteCaptureCityMoves()
 {
 	// See how many moves of this type we can execute
@@ -894,6 +909,10 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 			CvCity* pCity = pPlot->getPlotCity();
 
 			if(!CvStackingOffensiveAI::ContinueSiege(m_pPlayer->GetID(),pCity)) continue;
+			// Safe preparatory fire may have opened a capture while the shared
+			// gathering forecast is still cached. Actual legality wins over it.
+			if(TryReservedCityCapture(pPlot))
+			{ if(pPlot->getOwner()==m_pPlayer->GetID()) DeleteFocusArea(pPlot);continue; }
 
 			//first try the land zone
 			CvTacticalDominanceZone* pZone = GetTacticalAnalysisMap()->GetZoneByCity(pCity, false);
@@ -922,13 +941,26 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 			// Always recruit both naval and land based forces if available!
 			if(FindUnitsWithinStrikingDistance(pPlot))
 			{
+				if(CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()))
+				{
+					const CvStackingOffensiveAI::AssaultPlan land=CvStackingOffensiveAI::AssessAssault(m_pPlayer->GetID(),pCity,DOMAIN_LAND);
+					const CvStackingOffensiveAI::AssaultPlan sea=CvStackingOffensiveAI::AssessAssault(m_pPlayer->GetID(),pCity,DOMAIN_SEA);
+					if(!land.ready && !sea.ready)
+					{
+						vector<CvUnit*> gathering;
+						for(size_t i=0;i<m_CurrentMoveUnits.size();++i)
+						{ CvUnit* unit=m_pPlayer->getUnit(m_CurrentMoveUnits[i].GetID()); if(unit) gathering.push_back(unit); }
+						PositionUnitsAroundTarget(gathering,pPlot);
+						continue;
+					}
+				}
 				int iRequiredDamage = pCity->GetMaxHitPoints() - pCity->getDamage();
 				int iExpectedDamagePerTurn = ComputeTotalExpectedDamage(*pTarget);
 
 				if (iExpectedDamagePerTurn < iRequiredDamage)
 				{
 					//actual siege will typically be longer because not all units actually attack the city each turn
-					int iMaxSiegeTurns = 13; //do we even need a limit here or is this handled through the tactical posture?
+					int iMaxSiegeTurns = CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()) ? CvStacking::GetInt("AIAssaultDamageHorizon",4) : 13;
 
 					int iCityHealRate = !pCity->IsBlockadedWaterAndLand() ? /*20 in CP, 8 in VP*/ GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN) : 0;
 
@@ -990,6 +1022,9 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 				CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=attempt required=%d expected=%d candidates=%u melee=%d",
 					pPlot->getX(), pPlot->getY(), iRequiredDamage, iExpectedDamagePerTurn, (unsigned int)m_CurrentMoveUnits.size(), iMeleeCount);
 				ExecuteAttackWithUnits(pPlot, iMeleeCount>2 ? AL_HIGH : AL_MEDIUM);
+				// Ranged softening may have opened a capture after the search chose
+				// its actions. Recheck the reserved unit on the actual changed board.
+				TryReservedCityCapture(pPlot);
 
 				// Did it work?  If so, don't need a temporary dominance zone if had one here
 				if (pPlot->getOwner() == m_pPlayer->GetID())
@@ -1213,6 +1248,22 @@ void CvTacticalAI::PlotOperationalArmyMoves()
 	//clean up - have to do this in two steps so the iterator does not get invalidated
 	for (size_t i=0; i<opsToKill.size(); i++)
 		m_pPlayer->getAIOperation(opsToKill[i])->Kill();
+	PlotStackingOffensiveMoves();
+}
+
+void CvTacticalAI::PlotStackingOffensiveMoves()
+{
+	vector<CvStackingOffensiveAI::TacticalForce> forces;
+	CvStackingOffensiveAI::TacticalForces(m_pPlayer->GetID(),forces);
+	for(size_t i=0;i<forces.size();++i)
+	{
+		CvPlot* target=GC.getMap().plotByIndexUnchecked(forces[i].target);
+		if(!target || !target->isCity() || !m_pPlayer->IsAtWarWith(target->getOwner())) continue;
+		vector<CvUnit*> units;
+		for(size_t j=0;j<forces[i].units.size();++j)
+		{ CvUnit* unit=m_pPlayer->getUnit(forces[i].units[j]);if(unit && unit->canUseNow()) units.push_back(unit); }
+		if(!units.empty()) PositionUnitsAroundTarget(units,target);
+	}
 }
 
 /// Assigns units to pillage enemy improvements
@@ -3454,10 +3505,38 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 }
 
 //target can be friendly, neutral or hostile
-bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPlot* pTarget)
+bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vInputUnits, CvPlot* pTarget)
 {
+	if(!pTarget) return false;
+	vector<int> unitIDs;vector<CvUnit*> vUnits;
+	for(size_t i=0;i<vInputUnits.size();++i)
+		if(vInputUnits[i] && vInputUnits[i]->getOwner()==m_pPlayer->GetID())
+		{ unitIDs.push_back(vInputUnits[i]->GetID());vUnits.push_back(vInputUnits[i]); }
+	if(pTarget->isCity() && m_pPlayer->IsAtWarWith(pTarget->getOwner()))
+		for(size_t i=0;i<vUnits.size();++i)
+			if(vUnits[i] && vUnits[i]->IsCombatUnit() && vUnits[i]->getDomainType()!=DOMAIN_AIR)
+			{
+				const CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(m_pPlayer->GetID(),pTarget->getPlotCity(),vUnits[i]->getDomainType());
+				if(!plan.ready)
+				{
+					// Ring-two approximation and spotter/combat moves could expose
+					// individual gatherers. Reserve explicitly safe legal stage slots.
+					for(size_t j=0;j<unitIDs.size();++j)
+					{
+						CvUnit* unit=m_pPlayer->getUnit(unitIDs[j]);
+						if(!unit || !unit->canUseNow()) continue;
+						if(!CvStackingOffensiveAI::StageUnit(unit,pTarget))
+						{ unit=m_pPlayer->getUnit(unitIDs[j]);if(unit && unit->GetDanger()>0) ExecuteMovesToSafestPlot(unit); }
+					}
+					return true;
+				}
+				break;
+			}
 	//try to improve visibility. however, if the target is too far away this may fail ... in that case we chance it
 	ExecuteSpotterMove(vUnits, pTarget);
+	vUnits.clear();
+	for(size_t i=0;i<unitIDs.size();++i)
+	{ CvUnit* unit=m_pPlayer->getUnit(unitIDs[i]);if(unit && !unit->isDelayedDeath()) vUnits.push_back(unit); }
 
 	if (MOD_CORE_DEBUGGING)
 		LogTacticalMessage(CvString::format("seeking defensive positioning around %d:%d", pTarget->getX(), pTarget->getY()));
@@ -3465,6 +3544,10 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 	//first round: in case there are enemies around, do a combat simulation
 	vector<CvUnit*> vSimUnits = vUnits; //make a copy we can modify!
 	bool bTactSimSuccess = TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vSimUnits, pTarget, AL_LOW);
+	// The simulation executes combat and can destroy or upgrade participants.
+	vUnits.clear();
+	for(size_t i=0;i<unitIDs.size();++i)
+	{ CvUnit* unit=m_pPlayer->getUnit(unitIDs[i]);if(unit && !unit->isDelayedDeath()) vUnits.push_back(unit); }
 
 	//sometimes tactsim cannot use all units, eg if they are too far out
 	vector<CvUnit*> farout;
@@ -3494,12 +3577,15 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 			{ return (lhs->IsCivilianUnit() ? 2 : lhs->AI_getUnitAIType()==UNITAI_CITY_BOMBARD ? 1 : 0) < (rhs->IsCivilianUnit() ? 2 : rhs->AI_getUnitAIType() == UNITAI_CITY_BOMBARD ? 1 : 0); }
 	};
 	std::stable_sort(farout.begin(), farout.end(), PrSortCombatFirst());
+	vector<int> faroutIDs;
+	for(size_t i=0;i<farout.size();++i) faroutIDs.push_back(farout[i]->GetID());
 
 	//second round: move in as long as there is no danger and we're still far away
-	for (vector<CvUnit*>::const_iterator it = farout.begin(); it != farout.end(); ++it)
+	for (vector<int>::const_iterator it = faroutIDs.begin(); it != faroutIDs.end(); ++it)
 	{
 		//lots of flags ...
-		CvUnit* pUnit = *it;
+		CvUnit* pUnit = m_pPlayer->getUnit(*it);
+		if(!pUnit || pUnit->isDelayedDeath() || pUnit->TurnProcessed()) continue;
 		int	iFlags = CvUnit::MOVEFLAG_NO_STOPNODES | CvUnit::MOVEFLAG_APPROX_TARGET_RING2;
 		if (pUnit->isNativeDomain(pTarget)) //don't embark if we don't have to
 			iFlags |= CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN;
@@ -3538,9 +3624,10 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 	}
 
 	//third round: if the unit is in an army (no tactical moves) and did not move yet, move it to safety now
-	for (vector<CvUnit*>::const_iterator it = vUnits.begin(); it != vUnits.end(); ++it)
+	for (vector<int>::const_iterator it = unitIDs.begin(); it != unitIDs.end(); ++it)
 	{
-		CvUnit* pUnit = *it;
+		CvUnit* pUnit = m_pPlayer->getUnit(*it);
+		if(!pUnit || pUnit->isDelayedDeath()) continue;
 		//don't move in further if we're already close
 		if (pUnit->TurnProcessed() || pUnit->getArmyID() == -1)
 			continue;
@@ -3558,9 +3645,12 @@ bool CvTacticalAI::PositionUnitsAroundTarget(const vector<CvUnit*>& vUnits, CvPl
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pPlot->getX(), pPlot->getY(), 0, false, false, MISSIONAI_TACTMOVE);
 		}
 
+		pUnit=m_pPlayer->getUnit(*it);
+		if(!pUnit || pUnit->isDelayedDeath()) continue;
 		if (pUnit->canMove())
 			pUnit->PushMission(CvTypes::getMISSION_SKIP());
-		pUnit->SetTurnProcessed(true);
+		pUnit=m_pPlayer->getUnit(*it);
+		if(pUnit && !pUnit->isDelayedDeath()) pUnit->SetTurnProcessed(true);
 	}
 
 	return bTactSimSuccess;
@@ -13088,41 +13178,54 @@ void CvTacticalPosition::HealFriendlyUnit(int iUnitID, int iChange)
 
 bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl)
 {
-	int iCount = 0;
-	bool bSuccess = false;
-	set<int> unuseableUnits;
-	vector<CvUnit*> currentUnits = vUnits;
-	TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer, pTarget);
-	do
-	{
-		iCount++;
-
-		vector<STacticalAssignment> vAssignments = TacticalAIHelpers::FindBestUnitAssignments(currentUnits, pTarget, eAggLvl, unuseableUnits, true);
-		if (vAssignments.empty())
-		{
-			if (unuseableUnits.size()>0 && currentUnits.size()>unuseableUnits.size())
-			{
-				//drop the offending units and try again
-				vector<CvUnit*> remainingUnits;
-				for (vector<CvUnit*>::const_iterator it = currentUnits.begin(); it != currentUnits.end(); ++it)
-				{
-					if (unuseableUnits.find((*it)->GetID())==unuseableUnits.end())
-						remainingUnits.push_back(*it);
-				}
-				currentUnits = remainingUnits;
-			}
-			else
-				break; //give up
-		}
-		else
-			//restarts might happen when new enemies become visible
-			bSuccess = TacticalAIHelpers::ExecuteUnitAssignments(vUnits.front()->getOwner(), vAssignments);
-	}
-	while (!bSuccess && iCount < 4);
-
-	gDistanceToTargetPlots.clear();
-
-	return bSuccess;
+    if (!pTarget || vUnits.empty()) return false;
+    vector<int> unitIDs;
+    for (size_t i=0;i<vUnits.size();++i)
+        if (vUnits[i] && vUnits[i]->getOwner()==ePlayer) unitIDs.push_back(vUnits[i]->GetID());
+    set<int> assigned, rejected;
+    const bool wasEnemyCity=pTarget->isCity() && pTarget->getOwner()!=ePlayer;
+    const int batches=CvStackingOffensiveAI::Enabled(ePlayer) && unitIDs.size()>TACTSIM_MAX_UNITS
+        ? CvStacking::GetInt("AIAssaultTacticalBatches",3) : 1;
+    bool anySuccess=false;
+    for (int batch=0;batch<batches;++batch)
+    {
+        if (batch && wasEnemyCity && pTarget->getOwner()==ePlayer) break;
+        bool success=false;
+        const int retries=CvStacking::GetInt("AIAssaultTacticalRetries",4);
+        for (int attempt=0;attempt<retries && !success;++attempt)
+        {
+            vector<CvUnit*> currentUnits;
+            for (size_t i=0;i<unitIDs.size();++i)
+            {
+                // Combat can delete units. Resolve saved IDs after every execution.
+                CvUnit* unit=GET_PLAYER(ePlayer).getUnit(unitIDs[i]);
+                if (unit && !unit->isDelayedDeath() && !unit->TurnProcessed() && unit->canUseNow() &&
+                    assigned.count(unitIDs[i])==0 && rejected.count(unitIDs[i])==0 &&
+                    !CvStackingOffensiveAI::HoldForAssembly(unit,pTarget)) currentUnits.push_back(unit);
+            }
+            if (currentUnits.empty()) break;
+            if (batch && attempt==0 && !CvStackingOffensiveAI::ConsumeAdditionalTacticalBatch(ePlayer)) break;
+            TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer,pTarget);
+            set<int> unusable;
+            vector<STacticalAssignment> plan=TacticalAIHelpers::FindBestUnitAssignments(currentUnits,pTarget,eAggLvl,unusable,true);
+            if (plan.empty())
+            {
+                const size_t before=rejected.size(); rejected.insert(unusable.begin(),unusable.end());
+                if (rejected.size()==before) break;
+                continue;
+            }
+            success=TacticalAIHelpers::ExecuteUnitAssignments(ePlayer,plan);
+            if (success)
+            {
+                anySuccess=true;
+                for (size_t i=0;i<plan.size();++i) assigned.insert(plan[i].iUnitID);
+                if (batches>1) CvStackingDiagnostics::Record(1,ePlayer,"ASSAULT_BATCH","target=%d batch=%d supplied=%u assignedTotal=%u result=executed",pTarget->GetPlotIndex(),batch+1,(unsigned int)currentUnits.size(),(unsigned int)assigned.size());
+            }
+        }
+        if (!success) break;
+    }
+    gDistanceToTargetPlots.clear();
+    return anySuccess;
 }
 
 //make sure our units come in a defined order (important for reproducability, don't want to sort pointers!)

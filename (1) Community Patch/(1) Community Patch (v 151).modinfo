@@ -802,6 +802,7 @@
     <File md5="F10C5FF7AE8A7276B99B01F1A1066C65" import="1">Mapscripts/Terra.lua</File>
     <File md5="33AD5C8A71FB8CA6EF846D944269BA1C" import="0">Database Changes/StackingSchema.sql</File>
     <File md5="1EC1C75D1E627781072D14C3EB3D70F6" import="0">Database Changes/StackingConfig.xml</File>
+    <File md5="90587182C5784FD8F841740A3FC41D40" import="0">Database Changes/StackingFormations.sql</File>
     <File md5="B33D9F1EADAF2B5904824CCDE2A9E87D" import="1">Core Files/Stacking/StackingTests.lua</File>
     <File md5="B9E7136E43EBEA274790522F9009F0BD" import="1">Core Files/Stacking/StackingAITests.lua</File>
     <File md5="BC08CFCF6766190CF6CE8ACC9FE44171" import="1">Core Files/Stacking/StackingAirWaveTests.lua</File>
@@ -997,6 +998,7 @@
       <UpdateDatabase>Database Changes\AddTableIndexes.sql</UpdateDatabase>
       <UpdateDatabase>Database Changes\StackingSchema.sql</UpdateDatabase>
       <UpdateDatabase>Database Changes\StackingConfig.xml</UpdateDatabase>
+      <UpdateDatabase>Database Changes\StackingFormations.sql</UpdateDatabase>
     </OnModActivated>
   </Actions>
   <EntryPoints>

@@ -282,9 +282,9 @@ All controls remain in `StackingConfig.xml`. The new pass keeps the tactical 13-
 | AIWarOpeningStrengthPercent | 150 | 100–300 | Staged strength relative to visible target city and nearby defenders. |
 | AIOffensiveSupportMaximumObjectives | 8 | 1–24 | Maximum remembered city/domain objectives per player. |
 | AIOffensiveSupportMemoryTurns | 12 | 2–40 | Expire a handed-off objective after this many turns without a tactical siege observation. |
-| AIOffensiveSupportMinimumUnits | 6 | 2–24 | Baseline desired force, bounded by the maximum. |
-| AIOffensiveSupportMaximumUnits | 18 | 4–40 | Hard cap on assigned, local, travelling and in-training combat-unit credit per objective/domain. |
-| AIOffensiveSupportReserveUnits | 2 | 0–8 | Extra desired reserves above the largest observed core. |
+| AIOffensiveSupportMinimumUnits | 12 | 2–40 | Baseline desired force, bounded by the maximum. |
+| AIOffensiveSupportMaximumUnits | 32 | 4–64 | Hard cap on assigned, local, travelling and in-training combat-unit credit per objective/domain. |
+| AIOffensiveSupportReserveUnits | 4 | 0–16 | Extra desired reserves above the largest observed core. |
 | AIOffensiveSupportStrengthPercent | 150 | 100–400 | Desired strength relative to visible defenders before the reserve allowance. |
 | AIOffensiveSupportReservePercent | 25 | 0–100 | Base strength reserve allowance. |
 | AIOffensiveSupportTravelReservePercentPerTurn | 2 | 0–10 | Extra reserve percent for each approximate turn from staging to target. |
@@ -294,7 +294,7 @@ All controls remain in `StackingConfig.xml`. The new pass keeps the tactical 13-
 | AIOffensiveSupportLocalRadius | 4 | 2–6 | Radius for field-force credit and the front_arrival diagnostic; not proof of combat contribution. |
 | AIOffensiveSupportStallTurns | 5 | 2–20 | Expire a unit reservation when it has made no movement/ETA progress beyond this interval. |
 | AIOffensiveSupportRolePriority | 80 | 0–300 | Extra demand priority for a missing capture or ranged role. |
-| AIOffensiveProductionMaximumUnits | 2 | 0–6 | Maximum pending production requests plus units in training for a moving formation; 0 disables new requests. |
+| AIOffensiveProductionMaximumUnits | 4 | 0–12 | Pending formation and objective support production allowance; 0 disables additional requests. |
 | AIOffensiveProductionMaximumTurns | 12 | 1–30 | Maximum production plus approximate travel lead time for a moving formation request. |
 | AICapturePlanMaximumTurns | 6 | 1–15 | Actual unit-path horizon to a native-domain tile adjacent to a city, with safe embark paths allowed for assessment. |
 | AICapturePlanPathQueriesPerTurn | 32 | 1–128 | Per-player cap on capture path queries; exhausted budget means unknown, not impossible. |
@@ -313,4 +313,4 @@ Native `WAR_READINESS`, `WAR_DECLARATION`, `OPERATION_ROUTE`, `OPERATION_PROGRES
 
 Readiness uses intended-enemy army routes (respects third-party borders), not a precise future movement simulation. Capture assessment uses legal unit paths and simulated retaliation against a softened city. Strategic dispatch remains native-domain/no-embark; safe crossings may be recognized without this pass constructing an escorted landing. Existing VP naval/combined invasions and tactical landing code remain responsible for that movement.
 
-Objective, failed-route, progress and free-unit reservation histories are transient and reset on load. Active operations reconstruct objectives; tactical siege observations reconstruct handed-off objectives. A reload can therefore change retry timing or free-reserve choices; no exact replay equivalence is claimed. Existing operation production reservations remain serialized by VP. Completed production uses VP's existing army assignment path. This pass does not create a separate production queue beyond formation slots, a full attrition predictor, or a wounded-unit rotation scheduler.
+Objective, failed-route, progress and free-unit reservation histories are transient and reset on load. Active operations reconstruct objectives; tactical siege observations reconstruct handed-off objectives. A reload can therefore change retry timing or free-reserve choices; no exact replay equivalence is claimed. Existing operation production reservations remain serialized by VP. Objective support production also uses normal city queues, with exclusive transient claims reconstructed from actual queued units; completed units receive a target commitment. See [the decisive-war implementation](decisive-wars-implementation.md) for the additional assault, production, formation and city-role settings. Live campaign calibration is pending.

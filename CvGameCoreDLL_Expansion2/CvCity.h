@@ -1650,6 +1650,10 @@ public:
 	{
 		return m_unitBeingBuiltForOperation.IsValid();
 	}
+	int GetUnitProductionOperation() const
+	{
+		return m_unitBeingBuiltForOperation.IsValid()?m_unitBeingBuiltForOperation.m_iOperationID:-1;
+	}
 
 	const char* GetCityBombardEffectTag() const;
 	uint GetCityBombardEffectTagHash() const;

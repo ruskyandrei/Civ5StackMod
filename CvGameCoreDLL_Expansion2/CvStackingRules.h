@@ -15,6 +15,7 @@ namespace CvStacking
 {
 	void ResetCache();
 	bool IsEnabled();
+	bool CityRangedAttacksEnabled();
 	int GetInt(const char* szName, int iFallback);
 	int GetCapacity(const CvUnit* pUnit, const CvPlot* pDestination = NULL);
 	int GetCapacity(PlayerTypes eOwner, DomainTypes eDomain, bool bInCity = false);

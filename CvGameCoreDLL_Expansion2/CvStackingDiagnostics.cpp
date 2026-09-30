@@ -441,6 +441,7 @@ namespace CvStackingDiagnostics
     }
     CombatScope::CombatScope(const CvCombatInfo& info, unsigned int eventID) : active(false), detailed(false), compact(false),
         attackingOwner(-1), cityOwnerBefore(-1), cityIDBefore(-1), cityHPBefore(-1), cityProtectionBefore(0),
+        attackingUnitID(-1), attackingCityID(-1), defendingOwner(-1), defendingUnitID(-1), defendingCityID(-1),
         primaryDamage(0), retaliationDamage(0), bystanderCount(0), bystanderDamage(0), ranged(false), bombing(false),
         serial(0), actor(NO_PLAYER), plotIndex(-1), count(0)
     {
@@ -448,6 +449,13 @@ namespace CvStackingDiagnostics
         if(getLevelUnlocked()<1) return;
         const CvUnit* attacker = info.getUnit(BATTLE_UNIT_ATTACKER);
         const CvCity* attackingCity = info.getCity(BATTLE_UNIT_ATTACKER);
+        const CvUnit* defendingUnit = info.getUnit(BATTLE_UNIT_DEFENDER);
+        const CvCity* defendingCity = info.getCity(BATTLE_UNIT_DEFENDER);
+        attackingUnitID=attacker?attacker->GetID():-1;
+        attackingCityID=attackingCity?attackingCity->GetID():-1;
+        defendingOwner=defendingUnit?defendingUnit->getOwner():defendingCity?defendingCity->getOwner():-1;
+        defendingUnitID=defendingUnit?defendingUnit->GetID():-1;
+        defendingCityID=defendingCity?defendingCity->GetID():-1;
         actor = attacker ? attacker->getOwner() : attackingCity ? attackingCity->getOwner() : NO_PLAYER;
         attackingOwner=actor;
         const int filter=setting("DiagnosticsPlayer",-1);
@@ -512,8 +520,8 @@ namespace CvStackingDiagnostics
             if(cityOwnerBefore>=0 && cityOwnerAfter!=cityOwnerBefore)
                 Record(1,actor,"CITY_CAPTURE","combat=%u plot=%d oldOwner=%d newOwner=%d oldCity=%d newCity=%d",serial,plotIndex,cityOwnerBefore,cityOwnerAfter,cityIDBefore,city->GetID());
         }
-        if(compact) Record(1,actor,"COMBAT_SUMMARY","combat=%u plot=%d attackerOwner=%d ranged=%d bombing=%d rolledPrimary=%d rolledRetaliation=%d bystanders=%d bystanderRolledDamage=%I64d hpLostPresent=%I64d missingUnits=%d cityBeforeOwner=%d cityAfterOwner=%d cityHPBefore=%d cityHPAfter=%d protectionBefore=%d; bystanders include ordinary garrison absorption; missing is not a death claim",
-            serial,plotIndex,attackingOwner,ranged,bombing,primaryDamage,retaliationDamage,bystanderCount,bystanderDamage,healthLost,missing,cityOwnerBefore,cityOwnerAfter,cityHPBefore,cityHPAfter,cityProtectionBefore);
+        if(compact) Record(1,actor,"COMBAT_SUMMARY","combat=%u plot=%d attackerOwner=%d attackerUnit=%d attackerCity=%d defenderOwner=%d defenderUnit=%d defenderCity=%d ranged=%d bombing=%d rolledPrimary=%d rolledRetaliation=%d bystanders=%d bystanderRolledDamage=%I64d hpLostPresent=%I64d missingUnits=%d cityBeforeOwner=%d cityAfterOwner=%d cityHPBefore=%d cityHPAfter=%d protectionBefore=%d; bystanders include ordinary garrison absorption; missing is not a death claim",
+            serial,plotIndex,attackingOwner,attackingUnitID,attackingCityID,defendingOwner,defendingUnitID,defendingCityID,ranged,bombing,primaryDamage,retaliationDamage,bystanderCount,bystanderDamage,healthLost,missing,cityOwnerBefore,cityOwnerAfter,cityHPBefore,cityHPAfter,cityProtectionBefore);
         if(detailed) Record(2,actor,"COMBAT_END","combat=%u",serial);
         flushOutput(true);
     }

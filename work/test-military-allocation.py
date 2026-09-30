@@ -39,7 +39,7 @@ stubs=r'''
 #include <cstring>
 #include <climits>
 using namespace std;
-typedef int PlayerTypes;typedef int TeamTypes;typedef int DomainTypes;typedef int UnitTypes;typedef int ArmyType;typedef unsigned int uint;
+typedef int PlayerTypes;typedef int TeamTypes;typedef int DomainTypes;typedef int UnitTypes;typedef int ArmyType;typedef int UnitAITypes;typedef unsigned int uint;
 #define VALIDATE_OBJECT()
 const int MAX_PLAYERS=4,NO_PLAYER=-1,DOMAIN_LAND=2,DOMAIN_SEA=0,DOMAIN_AIR=1,ISHUMAN_AI_UNITS=1;
 #define GD_INT_GET(name) 70
@@ -164,8 +164,9 @@ void cityTests(){reset();CvPlot cplot(0),enemyPlot(1,1),outside(2,2);CvCity city
  check(!CvStackingAI::NeedsCityDefender(&city),"safe three-unit city needs no recruit");check(!CvStackingAI::UsefulGarrison(&b,&city),"same tile gives no extra defense");check(!CvStackingAI::UsefulGarrison(&outsideUnit,&city),"rear city stops replacement search");
  e.owner=1;e.cs=100;put(e,enemyPlot);players[0].attackers.push_back(&e);++GC.game.turn;
  check(CvStackingAI::AssessCity(&city).immediate==1,"known reachable attacker used");
- check(CvStackingAI::RetainCityUnit(&a)&&CvStackingAI::RetainCityUnit(&b)&&CvStackingAI::RetainCityUnit(&c),"strong immediate threat retains extra defenders");
- check(!CvStackingAI::NeedsCityDefender(&city),"capacity target limits recruitment even below strength");
+ check(CvStackingAI::RetainCityUnit(&a)&&!CvStackingAI::RetainCityUnit(&b)&&!CvStackingAI::RetainCityUnit(&c),"passive melee duplicates not all retained against strong threat");
+ check(CvStackingAI::NeedsCityDefender(&city)&&CvStackingAI::WantsRangedDefender(&city),"melee-only city requests missing ranged role despite occupied slots");
+ options["AICityRoleDefenseEnabled"]=0;++GC.game.turn;check(CvStackingAI::RetainCityUnit(&a)&&CvStackingAI::RetainCityUnit(&b)&&CvStackingAI::RetainCityUnit(&c)&&!CvStackingAI::NeedsCityDefender(&city),"XML-disabled role policy retains legacy capacity/strength behavior");options["AICityRoleDefenseEnabled"]=1;
  e.invisible=true;++GC.game.turn;check(CvStackingAI::AssessCity(&city).enemyStrength==0,"invisible attackers not read");
  e.invisible=false;enemyPlot.visible=false;players[0].attackers.clear();++GC.game.turn;check(CvStackingAI::AssessCity(&city).enemyStrength==0,"hidden nearby units ignored");
  enemyPlot.visible=true;++GC.game.turn;check(CvStackingAI::AssessCity(&city).nearby==1&&CvStackingAI::AssessCity(&city).enemyStrength==35,"uncertain approach is discounted");
@@ -252,12 +253,42 @@ void loggingAndResetTests(){int logged=diagnosticScenario(true),quiet=diagnostic
  reset();CvPlot p(1),q(2,1);p.ring.push_back(&q);CvCity city(1,&p);CvUnit e(1);e.owner=1;put(e,q);
  check(CvStackingAI::AssessCity(&city).enemyStrength>0,"pre-load threat cached");q.visible=false;CvStackingAI::Reset();check(CvStackingAI::AssessCity(&city).enemyStrength==0,"same-turn load reset discards threat cache");CvStackingDiagnostics::enabled=true;
 }
-int main(){policyTests();cityTests();progressTests();readinessTests();transferTests();integrationTests();budgetTests();loggingAndResetTests();printf("military allocation: %d checks, %d failures\n",checks,failures);return failures?1:0;}
+void rangedCityTests(){
+ reset();options["AICityMaximumDefenders"]=5;CvPlot center(0),enemyPlot(1,1),field(2,2);CvCity city(1,&center);players[0].cities.push_back(&city);center.ring.push_back(&enemyPlot);
+ CvUnit melee[4],ranged[3],enemy(20),candidate(21);
+ for(int i=0;i<4;++i){melee[i].id=i+1;put(melee[i],center);}melee[0].cs=60;city.garrison=&melee[0];
+ for(int i=0;i<3;++i){ranged[i].id=i+10;ranged[i].ranged=true;ranged[i].rs=40;}put(ranged[0],center);put(candidate,field);
+ enemy.owner=1;enemy.cs=100;put(enemy,enemyPlot);players[0].attackers.push_back(&enemy);
+ check(CvStackingAI::WantsRangedDefender(&city),"four melee plus one ranged exposes a firepower deficit");
+ check(CvStackingAI::RetainCityUnit(&melee[0])&&CvStackingAI::RetainCityUnit(&ranged[0]),"strong garrison and useful ranged defender retained");
+ check(!CvStackingAI::RetainCityUnit(&melee[1])&&!CvStackingAI::RetainCityUnit(&melee[2]),"redundant passive melee available for field duties");
+ check(!CvStackingAI::UsefulGarrison(&candidate,&city),"another ordinary melee cannot conceal ranged deficit");candidate.ranged=true;candidate.rs=40;
+ check(CvStackingAI::UsefulGarrison(&candidate,&city),"ranged reinforcement is useful despite generic occupied strength");
+ check(CvStackingAI::RangedDefenseProductionBonus(&city,UNITAI_DEFENSE,2)>0,"missing firepower creates production priority");
+ check(!CvStackingAI::RangedDefenseProductionBonus(&city,UNITAI_CITY_BOMBARD,2),"offensive siege is not blanket city-defense production");
+ for(int i=1;i<3;++i){center.units.erase(remove(center.units.begin(),center.units.end(),&melee[i]),center.units.end());melee[i].position=&field;field.units.push_back(&melee[i]);put(ranged[i],center);}++GC.game.turn;
+ check(!CvStackingAI::WantsRangedDefender(&city)&&!CvStackingAI::NeedsCityDefender(&city),"ranged-heavy force satisfies roles and weighted defensive contribution");
+ check(!CvStackingAI::RetainCityUnit(&melee[3]),"last unnecessary melee released with firepower present");
+ ranged[2].role=ranged[2].info.role=UNITAI_CITY_BOMBARD;++GC.game.turn;check(CvStackingAI::WantsRangedDefender(&city),"siege-role unit does not silently replace ordinary ranged quota");
+ enemyPlot.visible=false;players[0].attackers.clear();++GC.game.turn;check(!CvStackingAI::WantsRangedDefender(&city),"rear city does not perpetually request ranged units");
+ check(CvStackingAI::RetainCityUnit(&melee[0])&&!CvStackingAI::RetainCityUnit(&ranged[0]),"safe city reserves only economical coverage");
+ CvStackingOffensiveAI::committed.push_back(melee[0].id);++GC.game.turn;
+ check(!CvStackingAI::RetainCityUnit(&melee[0]),"safe rear city releases designated melee garrison committed to an offensive when coverage exists");
+ check(CvStackingAI::RetainCityUnit(&ranged[0]),"available ranged unit replaces departing offensive garrison");
+ city.garrison=&ranged[0];CvStackingOffensiveAI::committed.clear();++GC.game.turn;
+ check(CvStackingAI::RetainCityUnit(&ranged[0])&&!CvStackingAI::RetainCityUnit(&melee[0]),"ranged garrison alone provides economical rear coverage");
+ center.units.erase(remove(center.units.begin(),center.units.end(),&ranged[0]),center.units.end());ranged[0].position=&field;
+ check(CvStackingAI::RetainCityUnit(&melee[0]),"removed garrison is replaced by an eligible occupant without waiting for threat-cache expiry");
+ city.garrison=&melee[0];city.fall=true;enemyPlot.visible=true;players[0].attackers.push_back(&enemy);++GC.game.turn;
+ check(CvStackingAI::AssessCity(&city).meleeMaximum==5,"immediate falling-city emergency can use available melee reserves");
+}
+int main(){policyTests();cityTests();progressTests();readinessTests();transferTests();integrationTests();budgetTests();loggingAndResetTests();rangedCityTests();printf("military allocation: %d checks, %d failures\n",checks,failures);return failures?1:0;}
 '''.replace('DEFAULTS',default_settings)
 offense_stub=r'''
 namespace CvStackingOffensiveAI {
  struct Demand{int staging,target,operation,strength,priority;};
- void Reset(){} bool Enabled(int){return false;}bool JoinArrived(CvUnit*){return false;}bool HoldReserve(CvUnit*){return false;}void CancelCommitment(const CvUnit*){}bool IsCityAttack(const CvAIOperation*){return false;}
+ vector<int> committed;
+ void Reset(){committed.clear();} bool Enabled(int){return false;}bool HasCommitment(const CvUnit*u,const CvPlot*){return u && find(committed.begin(),committed.end(),u->GetID())!=committed.end();}bool JoinArrived(CvUnit*){return false;}bool HoldReserve(CvUnit*){return false;}void CancelCommitment(const CvUnit*){}bool IsCityAttack(const CvAIOperation*){return false;}
  void AddDemands(CvUnit*,vector<Demand>&){}void RecordTransfer(CvUnit*,int,int,int){}
 }
 '''

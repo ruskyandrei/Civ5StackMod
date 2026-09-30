@@ -388,9 +388,11 @@ private:
 
 	// Routines to manage identifying and implementing tactical moves
 	void ExecuteCaptureCityMoves();
+	bool TryReservedCityCapture(CvPlot* target);
 	void PlotGrabGoodyMoves();
 	void PlotMovesToSafety(bool bCombatUnits);
 	void PlotOperationalArmyMoves();
+	void PlotStackingOffensiveMoves();
 	void PlotPillageMoves(AITacticalTargetType eTarget, bool bImmediate);
 	void PlotPlunderTradeUnitMoves(DomainTypes eDomain);
 	void PlotBlockadeMoves();

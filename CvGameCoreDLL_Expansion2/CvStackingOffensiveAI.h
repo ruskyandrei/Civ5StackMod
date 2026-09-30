@@ -11,10 +11,23 @@ class CvAIOperation;
 // No fields are added to serialized game objects.
 namespace CvStackingOffensiveAI
 {
+    struct AssaultPlan
+    {
+        int phase, staging, readyUnits, siege, ranged, capturers, inbound;
+        int desiredUnits, desiredSiege, cityDamage, enemyStrength, captureUnit, captureOwner, reason;
+        bool ready, routeKnown;
+        AssaultPlan():phase(0),staging(-1),readyUnits(0),siege(0),ranged(0),capturers(0),inbound(0),
+            desiredUnits(0),desiredSiege(0),cityDamage(0),enemyStrength(0),captureUnit(-1),captureOwner(-1),reason(0),ready(false),routeKnown(false){}
+    };
     struct Demand
     {
         int staging, target, operation, strength, priority;
         Demand(int s,int t,int o,int n,int p):staging(s),target(t),operation(o),strength(n),priority(p){}
+    };
+    struct TacticalForce
+    {
+        int target, domain; std::vector<int> units;
+        TacticalForce(int t,int d):target(t),domain(d){}
     };
     bool Enabled(PlayerTypes owner);
     bool IsCityAttack(const CvAIOperation* operation);
@@ -38,5 +51,19 @@ namespace CvStackingOffensiveAI
     bool MovingStalled(CvAIOperation* operation, CvArmyAI* army, bool contact);
     bool CanCapture(const CvUnit* unit, const CvPlot* city);
     bool ContinueSiege(PlayerTypes owner, CvCity* city);
+    bool ConsumeAdditionalTacticalBatch(PlayerTypes owner);
+    bool IsSiegeUnit(const CvUnit* unit);
+    int DesiredAssaultUnits(PlayerTypes owner, const CvCity* city, DomainTypes domain);
+    int DesiredSiegeUnits(PlayerTypes owner, const CvCity* city, DomainTypes domain);
+    AssaultPlan AssessAssault(PlayerTypes owner, CvCity* city, DomainTypes domain);
+    CvPlot* GetStagingPlot(const CvUnit* unit, const CvPlot* cityTarget);
+    bool HoldForAssembly(const CvUnit* unit, const CvPlot* tacticalTarget);
+    void ReviewObjectives(PlayerTypes owner);
+    CvUnit* GetReservedCapturer(PlayerTypes owner, CvCity* city);
+    int ProductionBonus(const CvCity* city, UnitTypes unit);
+    void RecordProduction(CvCity* city, UnitTypes unit);
+    void UnitProduced(CvCity* city, CvUnit* unit);
+    void TacticalForces(PlayerTypes owner, std::vector<TacticalForce>& result);
+    bool StageUnit(CvUnit* unit, const CvPlot* cityTarget);
     bool PrioritizeExisting(PlayerTypes owner, CvPlot* target, bool naval);
 }
