@@ -57,7 +57,10 @@ assert '*this, EM_INTERMEDIATE, &leavingProtection' in ordinary_call
 services = r'''
 static unsigned int stackBuilds=0,dangerQueries=0;
 struct Globals{struct Map{CvPlot plot;Map():plot(1){}const CvPlot*plotByIndexUnchecked(int){return &plot;}}map;Map&getMap(){return map;}}GC;
-static int ScoreStackPosition(const CvUnit*,const CvPlot*,int,const CvTacticalPosition&){return 0;}
+// Destination scoring is an independent zero leaf in this source-protection
+// fixture. The actual destination query is checked against DLL47 separately.
+struct MovementDestinationStackQuery{void Release(){}};
+static int ScoreStackPosition(const CvUnit*,const CvPlot*,int,const CvTacticalPosition&,MovementDestinationStackQuery* = NULL){return 0;}
 '''
 leaf = r'''
 static int SourceDanger(const CvUnit*unit,const vector<const CvUnit*>&members,const SUnitIDValueContainer&friendly,const SUnitIDValueContainer&enemy,int base){
@@ -66,7 +69,7 @@ static int SourceDanger(const CvUnit*unit,const vector<const CvUnit*>&members,co
 }
 '''
 guards = '\nstatic int OriginalScore(const SUnitStats&unit,const CvPlot*pTestPlot,const CvTacticalPosition&assumedPosition,bool bMoving,int initialBonus=0){const CvUnit*pUnit=unit.pUnit;int iDangerScore=0,iSelfDamage=0,iBonusScore=initialBonus;\n' + scoring_guard(old) + '\nreturn iBonusScore;}\n'
-guards += '\nstatic int CurrentScore(const SUnitStats&unit,const CvPlot*pTestPlot,const CvTacticalPosition&assumedPosition,bool bMoving,LeavingStackProtectionMemo*leavingProtection,int initialBonus=0){const CvUnit*pUnit=unit.pUnit;int iDangerScore=0,iSelfDamage=0,iBonusScore=initialBonus;\n' + scoring_guard(text) + '\nreturn iBonusScore;}\n'
+guards += '\nstatic int CurrentScore(const SUnitStats&unit,const CvPlot*pTestPlot,const CvTacticalPosition&assumedPosition,bool bMoving,LeavingStackProtectionMemo*leavingProtection,int initialBonus=0){const CvUnit*pUnit=unit.pUnit;int iDangerScore=0,iSelfDamage=0,iBonusScore=initialBonus;MovementDestinationStackQuery destinationStack;\n' + scoring_guard(text) + '\nreturn iBonusScore;}\n'
 integration = r'''
 enum eUnitMoveEvalMode{EM_INTERMEDIATE,EM_FINAL};
 struct STacticalAssignment{int value;};

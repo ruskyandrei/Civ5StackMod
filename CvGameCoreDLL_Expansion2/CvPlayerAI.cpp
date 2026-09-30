@@ -104,12 +104,14 @@ void CvPlayerAI::AI_reset()
 
 void CvPlayerAI::AI_doTurnPre()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"ai_turn_pre");
 	PRECONDITION(getPersonalityType() != NO_LEADER, "getPersonalityType() is not expected to be equal with NO_LEADER");
 	PRECONDITION(getLeaderType() != NO_LEADER, "getLeaderType() is not expected to be equal with NO_LEADER");
 	PRECONDITION(getCivilizationType() != NO_CIVILIZATION, "getCivilizationType() is not expected to be equal with NO_CIVILIZATION");
 
 	if (!isHuman(ISHUMAN_AI_UNITS))
 	{
+		CvStackingDiagnostics::TurnPhaseScope sortPhase(GetID(),"unit_power_sort");
 		//make sure we iterate our units in a sensible order
 		struct CompareUnitPowerAscending
 		{
@@ -127,6 +129,7 @@ void CvPlayerAI::AI_doTurnPre()
 	}
 	if (!isHuman(ISHUMAN_AI_CITY_MANAGEMENT))
 	{
+		CvStackingDiagnostics::TurnPhaseScope annexPhase(GetID(),"annex_raze_ai");
 		AI_considerAnnex();
 		AI_considerRaze();
 	}
@@ -135,6 +138,7 @@ void CvPlayerAI::AI_doTurnPre()
 
 void CvPlayerAI::AI_doTurnPost()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"ai_turn_post");
 	if(isBarbarian())
 	{
 		return;
@@ -154,16 +158,26 @@ void CvPlayerAI::AI_doTurnPost()
 	}
 
 	if (!isHuman(ISHUMAN_AI_UNITS))
+	{
+		CvStackingDiagnostics::TurnPhaseScope greatPeoplePhase(GetID(),"great_people_ai");
 		ProcessGreatPeople();
+	}
 	if (!isHuman(ISHUMAN_AI_ESPIONAGE))
+	{
+		CvStackingDiagnostics::TurnPhaseScope espionagePhase(GetID(),"espionage_ai");
 		GetEspionageAI()->DoTurn();
+	}
 	if (!isHuman(ISHUMAN_AI_DIPLOMACY))
+	{
+		CvStackingDiagnostics::TurnPhaseScope tradePhase(GetID(),"trade_ai_post");
 		GetTradeAI()->DoTurn();
+	}
 }
 
 
 void CvPlayerAI::AI_doTurnUnitsPre()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"unit_cleanup_pre");
 	int iLoop = 0;
 
 	//order is important. when a unit was killed, an army might become invalid, which might invalidate an operation
@@ -209,6 +223,7 @@ void CvPlayerAI::AI_doTurnUnitsPre()
 
 void CvPlayerAI::AI_doTurnUnitsPost()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"unit_promotions_garrison_post");
 	CvUnit* pLoopUnit = NULL;
 	int iLoop = 0;
 
@@ -273,13 +288,18 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 	{
 		return;
 	}
+	// Measure real processing passes, not polling while animations are busy.
+	CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"unit_ai_update");
 	CvStackingDiagnostics::OnPlayerTurn(*this);
 
 	if(isHuman(ISHUMAN_AI_UNITS))
 	{
 		CvUnit::dispatchingNetMessage(true);
 		GetTacticalAI()->UpdateVisibility();
-		GetHomelandAI()->Update(bUpdateHomelandAI);
+		{
+			CvStackingDiagnostics::TurnPhaseScope homelandPhase(GetID(),"homeland_ai");
+			GetHomelandAI()->Update(bUpdateHomelandAI);
+		}
 		GetTacticalAI()->CleanUp();
 		CvUnit::dispatchingNetMessage(false);
 	}
@@ -288,7 +308,10 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 		// Now let the tactical AI run.  Putting it after the operations update allows units who have
 		// just been handed off to the tactical AI to get a move in the same turn they switch between
 		GetTacticalAI()->Update();
-		GetHomelandAI()->Update(true);
+		{
+			CvStackingDiagnostics::TurnPhaseScope homelandPhase(GetID(),"homeland_ai");
+			GetHomelandAI()->Update(true);
+		}
 		GetTacticalAI()->CleanUp();
 	}
 	CvStackingDiagnostics::AfterPlayerUnitAI(*this);

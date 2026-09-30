@@ -46,6 +46,7 @@ namespace
     bool initialized = false, suppressed = false, failed = false;
     FILE* output = NULL;
     unsigned int sequence = 0, runCounter = 0, combatCounter = 0;
+    unsigned long phaseGeneration = 0;
     unsigned int configHash = 0;
     unsigned long bytesWritten = 0;
     wchar_t directory[MAX_PATH] = L"";
@@ -94,7 +95,7 @@ namespace
             !strcmp(category,"CITY") || !strncmp(category,"SAMPLE_",7) || !strncmp(category,"DECISION_",9) || !strcmp(category,"UNIT_DECISION")) return 1;
         if(!strncmp(category,"COMBAT_",7) || !strcmp(category,"CITY_CAPTURE")) return 8;
         if(!strcmp(category,"MEMORY")) return 32;
-        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF")) return 16;
+        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE")) return 16;
         if(!strncmp(category,"PLAN",4) || !strncmp(category,"RECRUIT",7) || !strcmp(category,"LONG_PLAN") || !strcmp(category,"ATTACK_GATE")) return 4;
         return 2;
     }
@@ -249,6 +250,7 @@ namespace CvStackingDiagnostics
     void Reset()
     {
         Lock lock;
+        ++phaseGeneration;
         closeFile(); level = -1; rowTurn = -1; memoryTurn = -1; rows = 0;
         initialized = false; failed = false; suppressed = false; optionsLoaded = false;
         prefix[0] = 0; directory[0] = 0; configHash = 0;
@@ -281,6 +283,7 @@ namespace CvStackingDiagnostics
     {
         Lock lock;
         if (value < 0 || value > 2) return;
+        ++phaseGeneration;
         getLevelUnlocked();
         if (output) writeLine(GC.getGame().getGameTurn(), -1, "LEVEL", value == 0 ? "off" : value == 1 ? "summary" : "verbose");
         if (!value) { closeFile(); strcpy_s(status, sizeof(status), "Off"); }
@@ -311,6 +314,32 @@ namespace CvStackingDiagnostics
         if (!ensureFile()) return;
         if (opening) configHeader();
         writeLine(turn, player, category, text);
+    }
+    TurnPhaseScope::TurnPhaseScope(PlayerTypes player,const char* phase):
+        active(false),actor(player),name(phase),turn(-1),started(0),thread(0),generation(0)
+    {
+        Lock lock;
+        if(!phase || !categoryEnabledUnlocked(1,player,"TURN_PHASE")) return;
+        const int interval=setting("DiagnosticsPerformanceInterval",1);
+        if(interval<=0) return;
+        turn=GC.getGame().getGameTurn();
+        if(turn%interval) return;
+        generation=phaseGeneration;
+        thread=GetCurrentThreadId();
+        started=GetTickCount();
+        active=true;
+    }
+    TurnPhaseScope::~TurnPhaseScope()
+    { Finish(); }
+    void TurnPhaseScope::Finish()
+    {
+        if(!active) return;
+        active=false; // Explicit Finish followed by destruction records once.
+        const unsigned long ended=GetTickCount();
+        Lock lock;
+        if(generation!=phaseGeneration || turn!=GC.getGame().getGameTurn() ||
+            !categoryEnabledUnlocked(1,actor,"TURN_PHASE")) return;
+        Record(1,actor,"TURN_PHASE","phase=%s startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu semantics=inclusive; nested TURN_PHASE and PLAN intervals overlap; do not sum all phases as a round",name,started,ended,ended-started,thread);
     }
     void OnPlayerTurn(CvPlayer& player)
     {

@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingDiagnostics.h"
 #include "CvGlobals.h"
 #include "CvArea.h"
 #include "CvMap.h"
@@ -10108,6 +10109,7 @@ ArtStyleTypes CvPlayer::getArtStyleType() const
 //	---------------------------------------------------------------------------
 void CvPlayer::doTurn()
 {
+	CvStackingDiagnostics::TurnPhaseScope turnPhase(GetID(),"player_doTurn");
 	// Time building of these maps
 
 	PRECONDITION(isAlive(), "isAlive is expected to be true");
@@ -10279,7 +10281,11 @@ void CvPlayer::doTurn()
 	bool bHasActiveDiploRequest = false;
 	if (isAlive() && isMajorCiv())
 	{
-		GetGrandStrategyAI()->DoTurn();
+		{
+			CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"grand_strategy_ai");
+			GetGrandStrategyAI()->DoTurn();
+		}
+		CvStackingDiagnostics::TurnPhaseScope diplomacyPhase(GetID(),"diplomacy_ai");
 
 		if (GC.getGame().isReallyNetworkMultiPlayer() && MOD_ACTIVE_DIPLOMACY)
 		{
@@ -10325,7 +10331,9 @@ void CvPlayer::doTurn()
 
 void CvPlayer::doTurnPostDiplomacy()
 {
+	CvStackingDiagnostics::TurnPhaseScope turnPhase(GetID(),"player_post_diplomacy");
 	CvGame& kGame = GC.getGame();
+	CvStackingDiagnostics::TurnPhaseScope preparePhase(GetID(),"player_prepare");
 
 	if (isAlive())
 	{
@@ -10333,19 +10341,32 @@ void CvPlayer::doTurnPostDiplomacy()
 		UpdatePlots();
 		UpdateAreaEffectUnits();
 		UpdateAreaEffectPlots();
-		UpdateDangerPlots();
+		{
+			CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"player_danger_update");
+			UpdateDangerPlots();
+		}
 		GetTacticalAI()->GetTacticalAnalysisMap()->Invalidate();
-		UpdateMilitaryStats();
+		{
+			CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"military_stats");
+			UpdateMilitaryStats();
+		}
 		GET_TEAM(getTeam()).ClearWarDeclarationCache();
 		UpdateCurrentAndFutureWars();
 
 		if (!isBarbarian())
 		{
-			GetEconomicAI()->DoTurn();
-			GetMilitaryAI()->DoTurn();
+			{
+				CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"economic_ai");
+				GetEconomicAI()->DoTurn();
+			}
+			{
+				CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"military_ai");
+				GetMilitaryAI()->DoTurn();
+			}
 
 			if (isMajorCiv())
 			{
+				CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"religion_trade_specialization_league_ai");
 				GetReligionAI()->DoTurn();
 				GetTradeAI()->DoTurn();
 				GetCitySpecializationAI()->DoTurn();
@@ -10359,9 +10380,11 @@ void CvPlayer::doTurnPostDiplomacy()
 
 		if(isMinorCiv())
 		{
+			CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"minor_civ_ai");
 			GetMinorCivAI()->DoTurn();
 		}
 	}
+	preparePhase.Finish();
 
 	// Temporary boosts
 	if (GetAttackBonusTurns() > 0)
@@ -10413,6 +10436,7 @@ void CvPlayer::doTurnPostDiplomacy()
 	// Do turn for all Cities
 	if (getNumCities() > 0)
 	{
+		CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"cities_and_production");
 		// AI spaceship production and building Citizen Earth Protocol is planned on player level, overriding the normal AI city production selection
 		AI_doSpaceshipAndUtopiaProduction();
 
@@ -10437,6 +10461,7 @@ void CvPlayer::doTurnPostDiplomacy()
 	}
 
 	// Gold
+	CvStackingDiagnostics::TurnPhaseScope economyPhase(GetID(),"player_yields_research_culture");
 	GetTreasury()->DoGold();
 
 	// Tax out from after we've calculated our gold for this turn
@@ -10509,6 +10534,7 @@ void CvPlayer::doTurnPostDiplomacy()
 		pGameLeagues->DoPlayerTurn(*this);
 	}
 
+	economyPhase.Finish();
 	const int iGameTurn = kGame.getGameTurn();
 
 	GatherPerTurnReplayStats(iGameTurn);
@@ -10584,9 +10610,11 @@ void CvPlayer::doTurnPostDiplomacy()
 
 void CvPlayer::doTurnUnits()
 {
+	CvStackingDiagnostics::TurnPhaseScope turnPhase(GetID(),"player_unit_turn");
 	AI_doTurnUnitsPre();
 
 	// Start: old unit AI processing
+	CvStackingDiagnostics::TurnPhaseScope unitsPhase(GetID(),"unit_doTurn_calls");
 	for(int iPass = 0; iPass < 4; iPass++)
 	{
 		int iLoop = 0;
@@ -10631,6 +10659,7 @@ void CvPlayer::doTurnUnits()
 		}
 	}
 
+	unitsPhase.Finish();
 	if(GetID() == GC.getGame().getActivePlayer())
 	{
 		GC.GetEngineUserInterface()->setDirty(Waypoints_DIRTY_BIT, true);
@@ -10661,6 +10690,7 @@ void CvPlayer::SetAllUnitsUnprocessed()
 /// Units heal and then get their movement back
 void CvPlayer::DoUnitReset()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(GetID(),"unit_heal_reset");
 	int iLoop = 0;
 	for (CvUnit* pLoopUnit = firstUnit(&iLoop); pLoopUnit != NULL; pLoopUnit = nextUnit(&iLoop))
 	{

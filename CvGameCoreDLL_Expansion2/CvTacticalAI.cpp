@@ -272,15 +272,24 @@ void CvTacticalAI::RecruitUnits()
 /// Update the AI for units
 void CvTacticalAI::Update()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_ai");
 	UpdateVisibility();
+	CvStackingDiagnostics::TurnPhaseScope targetPhase(m_pPlayer->GetID(),"tactical_targets");
 	DropOldFocusAreas();
 	FindTacticalTargets();
+	targetPhase.Finish();
 
 	//do this after updating the target list!
-	RecruitUnits();
+	{
+		CvStackingDiagnostics::TurnPhaseScope recruitPhase(m_pPlayer->GetID(),"tactical_recruit");
+		RecruitUnits();
+	}
 	// Current legal captures and protected batteries act before healing,
 	// operational assembly or a withdrawing zone consumes their orders.
-	PlotImmediateCityOpportunities();
+	{
+		CvStackingDiagnostics::TurnPhaseScope opportunityPhase(m_pPlayer->GetID(),"immediate_city_opportunities");
+		PlotImmediateCityOpportunities();
+	}
 
 	// Loop through each dominance zone assigning moves
 	ProcessDominanceZones();
@@ -345,6 +354,7 @@ bool CvTacticalAI::IsInFocusArea(const CvPlot* pPlot) const
 /// Setup knowledge of other players' seen plots
 void CvTacticalAI::UpdateVisibility()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_visibility");
 	const TeamTypes eTeam = m_pPlayer->getTeam();
 
 	CvPlot* pLoopPlot;
@@ -719,6 +729,7 @@ void CvTacticalAI::PrioritizeNavalTargetsAndAddToMainList()
 
 void CvTacticalAI::ProcessDominanceZones()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_dominance");
 	// Barbarian processing is straightforward -- just one big list of priorites and everything is considered at once
 	if(m_pPlayer->isBarbarian())
 	{
@@ -731,6 +742,7 @@ void CvTacticalAI::ProcessDominanceZones()
 		AssignGlobalHighPrioMoves();
 
 		//then confront the enemy in each tactical zone
+		CvStackingDiagnostics::TurnPhaseScope zonePhase(m_pPlayer->GetID(),"tactical_zone_attacks");
 		for(int iI = 0; iI < GetTacticalAnalysisMap()->GetNumZones(); iI++)
 		{
 			CvTacticalDominanceZone* pZone = GetTacticalAnalysisMap()->GetZoneByIndex(iI);
@@ -780,9 +792,12 @@ void CvTacticalAI::ProcessDominanceZones()
 			}
 		}
 
+		zonePhase.Finish();
 		//second pass: bring in reinforcements
+		CvStackingDiagnostics::TurnPhaseScope reinforcePhase(m_pPlayer->GetID(),"tactical_reinforcements");
 		for (int iI = 0; iI < GetTacticalAnalysisMap()->GetNumZones(); iI++)
 			PlotReinforcementMoves(GetTacticalAnalysisMap()->GetZoneByIndex(iI));
+		reinforcePhase.Finish();
 
 		//now mid prio moves like capturing barb camps, pillaging
 		AssignGlobalMidPrioMoves();
@@ -798,6 +813,7 @@ void CvTacticalAI::ProcessDominanceZones()
 /// Choose which tactics to run and assign units to it
 void CvTacticalAI::AssignGlobalHighPrioMoves()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_high_priority");
 	ExtractTargetsForZone(NULL);
 
 	//make some space near the frontline
@@ -812,6 +828,7 @@ void CvTacticalAI::AssignGlobalHighPrioMoves()
 /// Choose which tactics to run and assign units to it
 void CvTacticalAI::AssignGlobalMidPrioMoves()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_mid_priority");
 	ExtractTargetsForZone(NULL);
 
 	//air sweeps / attacks are already done during zone attacks, this is just for the remaining units
@@ -845,6 +862,7 @@ void CvTacticalAI::AssignGlobalMidPrioMoves()
 /// Choose which tactics to run and assign units to it
 void CvTacticalAI::AssignGlobalLowPrioMoves()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_low_priority");
 	ExtractTargetsForZone(NULL);
 
 	//defense preparation for next turn
@@ -1364,6 +1382,7 @@ void CvTacticalAI::PlotPlunderTradeUnitMoves(DomainTypes eDomain)
 /// Process units that we recruited out of operational moves.
 void CvTacticalAI::PlotOperationalArmyMoves()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"tactical_operations");
 	//just so that UnitProcessed() sets the right flags
 	ClearCurrentMoveUnits(AI_TACTICAL_OPERATION);
 
@@ -1384,6 +1403,7 @@ void CvTacticalAI::PlotOperationalArmyMoves()
 
 void CvTacticalAI::PlotStackingOffensiveMoves()
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(m_pPlayer->GetID(),"stacking_offensive_moves");
 	vector<CvStackingOffensiveAI::TacticalForce> forces;
 	CvStackingOffensiveAI::TacticalForces(m_pPlayer->GetID(),forces);
 	for(size_t i=0;i<forces.size();++i)
@@ -7874,6 +7894,10 @@ struct VirtualFriendlyStackBuffer
 };
 static VirtualFriendlyStackBuffer gStackVirtualScratch;
 static bool gStackVirtualScratchBusy = false;
+// Movement's destination survives intervening turn-end/flanking queries. Keep
+// their ordinary scratch available instead of forcing private allocations.
+static VirtualFriendlyStackBuffer gStackDestinationScratch;
+static bool gStackDestinationScratchBusy = false;
 struct VirtualFriendlyStackQuery
 {
  bool borrowed;
@@ -7948,6 +7972,7 @@ struct StackForecastScope
    vector<int>().swap(gStackDefenderScratch.state);
    vector<pair<int,int> >().swap(gStackSortScratch);
    gStackVirtualScratch.release();
+   gStackDestinationScratch.release();
    gStackKeyPayloadBytes = 0;
    InterlockedExchange(&gStackForecastOwnerThread, 0);
   }
@@ -8263,6 +8288,64 @@ static size_t CountVirtualFriendlyStack(const CvTacticalPosition& position, cons
  return count + (arriving && !arrivingPresent ? 1 : 0);
 }
 
+// One movement evaluation asks about this exact destination twice. Materialize
+// its roster only when required, and rebuild after a nested/dirty/foreign scene.
+// This reuses temporary membership, not a forecast or a tactical decision.
+struct MovementDestinationStackQuery
+{
+ VirtualFriendlyStackBuffer* buffer;
+ bool borrowed, reusable;
+ const CvTacticalPosition* savedPosition;
+ const CvPlot* savedPlot;
+ const CvUnit* savedUnit;
+ int savedDamage;
+ unsigned long revision;
+ long scene;
+ MovementDestinationStackQuery():buffer(NULL),borrowed(false),reusable(false),
+  savedPosition(NULL),savedPlot(NULL),savedUnit(NULL),savedDamage(0),revision(0),scene(0) {}
+ ~MovementDestinationStackQuery() { Release(); }
+ void Release()
+ {
+  if (!buffer)
+   return;
+  if (borrowed) gStackDestinationScratchBusy = false;
+  else delete buffer;
+  buffer = NULL;
+  borrowed = reusable = false;
+ }
+ const VirtualFriendlyStackBuffer& Get(const CvTacticalPosition& position, const CvPlot* plot,
+  const CvUnit* unit, int selfDamage)
+ {
+  const bool context = StackForecastContext();
+  if (buffer && reusable && context && revision == gStackForecastRevision && scene == gStackForecastSceneEpoch &&
+   savedPosition == &position && savedPlot == plot && savedUnit == unit && savedDamage == selfDamage)
+   return *buffer;
+  // A query resumed inside a nested search no longer owns shared storage.
+  if (buffer && borrowed && !context)
+   Release();
+  if (!buffer)
+  {
+   borrowed = context && !gStackDestinationScratchBusy;
+   buffer = borrowed ? &gStackDestinationScratch : new VirtualFriendlyStackBuffer;
+   if (borrowed) gStackDestinationScratchBusy = true;
+  }
+  revision = context ? gStackForecastRevision : 0;
+  scene = context ? gStackForecastSceneEpoch : 0;
+  buffer->candidates.clear();
+  buffer->damage.clear();
+  GetVirtualFriendlyStack(position, plot, unit, selfDamage, buffer->candidates, buffer->damage);
+  savedPosition = &position;
+  savedPlot = plot;
+  savedUnit = unit;
+  savedDamage = selfDamage;
+  reusable = context && StackForecastContext() && revision == gStackForecastRevision && scene == gStackForecastSceneEpoch;
+  return *buffer;
+ }
+private:
+ MovementDestinationStackQuery(const MovementDestinationStackQuery&);
+ MovementDestinationStackQuery& operator=(const MovementDestinationStackQuery&);
+};
+
 // A same-tile escort counts only when removing eligible melee members would
 // expose this unit to more real forecast damage, and those escorts survive.
 // This also rejects a weak defender or a cavalry-bypassed escort that adds no cover.
@@ -8365,16 +8448,25 @@ static bool HasVirtualCityEncirclement(const CvTacticalPosition& position, const
  return true;
 }
 
-static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition)
+static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition,
+ MovementDestinationStackQuery* destinationStack = NULL)
 {
  int iDanger = 0;
  if (CvStacking::IsEnabled() && pUnit->IsCombatUnit() && pUnit->getDomainType() != DOMAIN_AIR)
  {
   if (!GET_PLAYER(pUnit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*pPlot, pUnit, iDanger))
   {
-   VirtualFriendlyStackQuery stack;
-   GetVirtualFriendlyStack(assumedPosition, pPlot, pUnit, iSelfDamage, stack.candidates, stack.damage);
-   iDanger = GetCachedStackDanger(pUnit, pPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt());
+   if (destinationStack)
+   {
+    const VirtualFriendlyStackBuffer& stack = destinationStack->Get(assumedPosition, pPlot, pUnit, iSelfDamage);
+    iDanger = GetCachedStackDanger(pUnit, pPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt());
+   }
+   else
+   {
+    VirtualFriendlyStackQuery stack;
+    GetVirtualFriendlyStack(assumedPosition, pPlot, pUnit, iSelfDamage, stack.candidates, stack.damage);
+    iDanger = GetCachedStackDanger(pUnit, pPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt());
+   }
   }
  }
  else if (!gTactPosStorage.getDangerCache().findDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger))
@@ -8424,17 +8516,9 @@ static unsigned char GetStackAttackThreatFlags(const CvUnit* unit, const CvPlot*
 
 // Value actual protection and its cost in collateral exposure. This considers
 // the candidate position, including friendly units omitted from the search.
-static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDamage, const CvTacticalPosition& position)
+static int ScoreStackPositionMembers(const CvUnit* unit, const CvPlot* plot, const CvTacticalPosition& position,
+ const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage)
 {
- if (!StackPreferencesEnabled())
-  return 0;
- int fixedDanger = 0;
- if (GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
-  return 0;
- VirtualFriendlyStackQuery stack;
- vector<const CvUnit*>& candidates = stack.candidates;
- SUnitIDValueContainer& damage = stack.damage;
- GetVirtualFriendlyStack(position, plot, unit, selfDamage, candidates, damage);
  if (candidates.size() < 2)
   return 0;
  // City bombardment alone can make a protective pair valuable. The forecast
@@ -8491,6 +8575,24 @@ static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDa
   score -= penalty;
  }
  return score;
+}
+
+static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDamage, const CvTacticalPosition& position,
+ MovementDestinationStackQuery* destinationStack = NULL)
+{
+ if (!StackPreferencesEnabled())
+  return 0;
+ int fixedDanger = 0;
+ if (GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
+  return 0;
+ if (destinationStack)
+ {
+  const VirtualFriendlyStackBuffer& stack = destinationStack->Get(position, plot, unit, selfDamage);
+  return ScoreStackPositionMembers(unit, plot, position, stack.candidates, stack.damage);
+ }
+ VirtualFriendlyStackQuery stack;
+ GetVirtualFriendlyStack(position, plot, unit, selfDamage, stack.candidates, stack.damage);
+ return ScoreStackPositionMembers(unit, plot, position, stack.candidates, stack.damage);
 }
 
 // what is the rough state looking like after this assignment
@@ -9632,7 +9734,8 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 		DamageAdjacentUnits(result->unitDamage, iDamageDelta, pTestPlot, pUnit->getAoEDamageOnMove(), assumedPosition);
 
 	// assume difference in danger from AoE damage on move is negligible (it's definitely not worth the CPU time)
-	int iDanger = GetUnitDangerForPlot(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition);
+	MovementDestinationStackQuery destinationStack;
+	int iDanger = GetUnitDangerForPlot(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition, &destinationStack);
 
 	//many considerations are only relevant if we end the turn here (critical for skirmishers which can move after attacking ...)
 	//we only consider this when explicitly ending the turn!
@@ -9708,7 +9811,8 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
 
  if (StackPreferencesEnabled())
  {
-  iDangerScore += ScoreStackPosition(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition);
+  iDangerScore += ScoreStackPosition(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition, &destinationStack);
+  destinationStack.Release();
   if (bMoving && !pUnit->IsCanAttackRanged())
    iBonusScore += leavingProtection ? leavingProtection->Get(unit, assumedPosition) : CalculateLeavingStackProtectionScore(unit, assumedPosition);
  }

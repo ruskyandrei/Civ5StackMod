@@ -45,6 +45,9 @@ static int testFlush(FILE*p){return flushFailure?EOF:fflush(p);}
 #define _wfsopen testOpen
 #define fprintf testPrint
 """
+diagnostics_header=(root/'CvGameCoreDLL_Expansion2/CvStackingDiagnostics.h').read_text(encoding='utf-8-sig')
+phase_declaration=diagnostics_header[diagnostics_header.index('    class TurnPhaseScope'):diagnostics_header.index('    class CombatScope')]
+head+='\nnamespace CvStackingDiagnostics {\n'+phase_declaration+'}\n'
 tail=r"""
 #undef fflush
 #undef _wfsopen

@@ -78,7 +78,7 @@ void CvUnit::PushMission(int mission,int x,int,int,bool,bool,int,CvPlot*){read()
  else if(mission==MOVE_MISSION){if(!abortCapture&&target){position=target;target->owner=owner;++captures;}moves=0;if(removeCaptor){players[0].units.erase(id);stale=true;}}
 }
 namespace CvStackingAI{bool RetainCityUnit(const CvUnit*){return retained;}}
-namespace CvStackingDiagnostics{void Record(int,int,const char*,const char*,...) {}}
+namespace CvStackingDiagnostics{void Record(int,int,const char*,const char*,...) {}struct TurnPhaseScope{TurnPhaseScope(int,const char*){}void Finish(){}};}
 namespace TacticalAIHelpers{int GetSimulatedDamageFromAttackOnCity(CvCity*,CvUnit*,CvPlot*,int&r,int&g){r=retaliation;g=0;return captureDamage;}void PerformRangedOpportunityAttack(CvUnit*){}pair<CvPlot*,int>FindSafestPlotInReach(CvUnit*u,bool){return make_pair(u->plot(),0);}}
 namespace CvStackingOffensiveAI{
  bool Enabled(int){return enabled;}bool HasCommitment(const CvUnit*,const CvPlot*p=NULL){return commitment&&(!p||sameCommitment);}bool ContinueSiege(int,CvCity*){return allowSiege;}

@@ -226,10 +226,30 @@ namespace
 		}
 	};
 	typedef std::map<const char*, int, SettingNameLess> SettingMap;
-	typedef std::map<std::pair<int, std::string>, int> RoleMap;
+	// XML keeps its public role names. Convert the four accepted names once
+	// while loading, so hot combat queries never construct role strings.
+	enum StackingRole
+	{
+		STACK_ROLE_NONE = -1,
+		STACK_ROLE_FLANK,
+		STACK_ROLE_ANTI_CAVALRY,
+		STACK_ROLE_FLANK_TARGET,
+		STACK_ROLE_COLLATERAL_LIMIT
+	};
+	StackingRole ParseRole(const char* name)
+	{
+		if (!name) return STACK_ROLE_NONE;
+		if (!strcmp(name, "FLANK")) return STACK_ROLE_FLANK;
+		if (!strcmp(name, "ANTI_CAVALRY")) return STACK_ROLE_ANTI_CAVALRY;
+		if (!strcmp(name, "FLANK_TARGET")) return STACK_ROLE_FLANK_TARGET;
+		if (!strcmp(name, "COLLATERAL_LIMIT")) return STACK_ROLE_COLLATERAL_LIMIT;
+		return STACK_ROLE_NONE;
+	}
+	typedef std::map<std::pair<int, StackingRole>, int> RoleMap;
 	struct RulesCache
 	{
 		bool loaded;
+		bool enabled;
 		SettingMap settings;
 		std::vector<std::pair<int, int> > technologies;
 		RoleMap combatRoles;
@@ -240,7 +260,7 @@ namespace
 		std::map<int, int> buildings;
 		std::map<int, int> effectiveBuildingProtection;
 		std::map<int, int> targetDomains;
-		RulesCache() : loaded(false) {}
+		RulesCache() : loaded(false), enabled(false) {}
 	};
 	RulesCache& Cache()
 	{
@@ -299,19 +319,19 @@ namespace
 				CUSTOMLOG("Stacking: unknown reference '%s' in %s; row ignored.", rows.GetText("ReferenceType"), table);
 				continue;
 			}
-			const bool collateral = strcmp(role, "COLLATERAL_LIMIT") == 0;
-			if (!collateral && strcmp(role, "FLANK") && strcmp(role, "ANTI_CAVALRY") && strcmp(role, "FLANK_TARGET"))
+			const StackingRole roleID = ParseRole(role);
+			if (roleID == STACK_ROLE_NONE)
 			{
 				CUSTOMLOG("Stacking: unknown role '%s' in %s; row ignored.", role, table);
 				continue;
 			}
 			// CvCombatInfo has 32 damage-member slots; resolution also checks space.
-			const int maximum = collateral ? 32 : 1;
+			const int maximum = roleID == STACK_ROLE_COLLATERAL_LIMIT ? 32 : 1;
 			const int raw = rows.GetInt("Value");
 			const int value = Clamp(raw, 0, maximum);
 			if (raw != value)
 				CUSTOMLOG("Stacking: %s role %s value %d outside 0..%d; clamped.", rows.GetText("ReferenceType"), role, raw, maximum);
-			values[std::make_pair(rows.GetInt("ReferenceID"), std::string(role))] = value;
+			values[std::make_pair(rows.GetInt("ReferenceID"), roleID)] = value;
 		}
 	}
 	void EnsureCache()
@@ -329,10 +349,14 @@ namespace
 		if (!db->Execute(exists, "SELECT name FROM sqlite_master WHERE type='table' AND name='Stacking_Settings'") || !exists.Step())
 		{
 			cache.settings["Enabled"] = 0;
+			cache.enabled = false;
 			return;
 		}
 		for (size_t i = 0; i < sizeof(SETTINGS) / sizeof(SETTINGS[0]); ++i)
+		{
 			cache.settings[SETTINGS[i].name] = SETTINGS[i].value;
+			if (!strcmp(SETTINGS[i].name, "Enabled")) cache.enabled = SETTINGS[i].value != 0;
+		}
 		Database::Results rows;
 		if (db->Execute(rows, "SELECT Name, Value FROM Stacking_Settings ORDER BY Name"))
 		{
@@ -350,6 +374,7 @@ namespace
 						CUSTOMLOG("Stacking: setting %s=%d outside %d..%d; using %d.", name, raw, SETTINGS[i].minimum, SETTINGS[i].maximum, value);
 					// SQLite row text may expire on Step(); retain the matching literal.
 					cache.settings[SETTINGS[i].name] = value;
+					if (!strcmp(SETTINGS[i].name, "Enabled")) cache.enabled = value != 0;
 					recognized = true;
 					break;
 				}
@@ -381,15 +406,15 @@ namespace
 		LoadValues(db, "Stacking_CollateralDomains", "DomainType", "Domains", "Enabled", cache.targetDomains, 1);
 		CUSTOMLOG("Stacking: loaded XML configuration, enabled=%d, base=%d, maximum=%d, technology rows=%d.", cache.settings["Enabled"], cache.settings["BaseCapacity"], cache.settings["MaximumCapacity"], (int)cache.technologies.size());
 	}
-	bool Lookup(const RoleMap& values, int id, const char* role, int& result)
+	bool Lookup(const RoleMap& values, int id, StackingRole role, int& result)
 	{
-		RoleMap::const_iterator found = values.find(std::make_pair(id, std::string(role)));
+		RoleMap::const_iterator found = values.find(std::make_pair(id, role));
 		if (found == values.end())
 			return false;
 		result = found->second;
 		return true;
 	}
-	int Role(const CvUnit* unit, const char* role)
+	int Role(const CvUnit* unit, StackingRole role)
 	{
 		if (!unit)
 			return 0;
@@ -427,7 +452,8 @@ namespace CvStacking
 	}
 	bool IsEnabled()
 	{
-		return GetInt("Enabled", 0) != 0;
+		EnsureCache();
+		return Cache().enabled;
 	}
 	bool CityRangedAttacksEnabled()
 	{
@@ -463,19 +489,19 @@ namespace CvStacking
 	bool CanFlank(const CvUnit* unit)
 	{
 		return IsEnabled() && GetInt("FlankingEnabled", 1) && unit && unit->IsCombatUnit()
-			&& unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && !unit->IsCanAttackRanged() && Role(unit, "FLANK") > 0;
+			&& unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && !unit->IsCanAttackRanged() && Role(unit, STACK_ROLE_FLANK) > 0;
 	}
 	bool IsAntiCavalry(const CvUnit* unit)
 	{
-		return IsEnabled() && unit && unit->IsCombatUnit() && unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && Role(unit, "ANTI_CAVALRY") > 0;
+		return IsEnabled() && unit && unit->IsCombatUnit() && unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && Role(unit, STACK_ROLE_ANTI_CAVALRY) > 0;
 	}
 	bool IsFlankTarget(const CvUnit* unit)
 	{
-		return IsEnabled() && unit && unit->IsCombatUnit() && unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && Role(unit, "FLANK_TARGET") > 0;
+		return IsEnabled() && unit && unit->IsCombatUnit() && unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && Role(unit, STACK_ROLE_FLANK_TARGET) > 0;
 	}
 	int GetCollateralTargetLimit(const CvUnit* unit)
 	{
-		return IsEnabled() && GetInt("CollateralEnabled", 1) && unit ? Role(unit, "COLLATERAL_LIMIT") : 0;
+		return IsEnabled() && GetInt("CollateralEnabled", 1) && unit ? Role(unit, STACK_ROLE_COLLATERAL_LIMIT) : 0;
 	}
 	bool IsCollateralTargetDomain(DomainTypes domain)
 	{

@@ -15,6 +15,7 @@ root = Path(__file__).resolve().parents[1]
 out = root / "work/stacking-setting-lookup-regression"
 out.mkdir(exist_ok=True)
 source = (root / "CvGameCoreDLL_Expansion2/CvStackingRules.cpp").read_text(encoding="utf-8-sig")
+original = subprocess.check_output(['git', 'show', '6c863259f:CvGameCoreDLL_Expansion2/CvStackingRules.cpp'], cwd=root).decode('utf-8-sig')
 
 
 def function(text, name):
@@ -31,7 +32,11 @@ def function(text, name):
 implementation = source[source.index("namespace\n{"):source.index("\tbool Lookup(")] + "}\n"
 implementation += "namespace CvStacking {\n"
 implementation += function(source, "void ResetCache()") + "\n"
-implementation += function(source, "int GetInt(") + "\n}\n"
+implementation += function(source, "int GetInt(") + "\n"
+implementation += function(source, "bool IsEnabled()") + "\n"
+implementation += function(original, "bool IsEnabled()").replace('IsEnabled', 'OriginalEnabled') + "\n}\n"
+# Counting comparison calls leaves loader/lookup decisions unchanged.
+implementation = implementation.replace('return strcmp(left, right) < 0;', '++settingComparisons; return strcmp(left, right) < 0;')
 
 prefix = r'''
 #include <windows.h>
@@ -54,7 +59,10 @@ void* operator new[](size_t size) {if(countAllocations)++allocations;void* p=mal
 void operator delete(void* p) {free(p);}
 void operator delete[](void* p) {free(p);}
 static int logCount=0, diagnosticsResets=0, aiResets=0;
-static void fixtureLog(const char*, ...) {++logCount;}
+static unsigned long settingComparisons=0,probeChecks=0,probeFailures=0;
+static bool probing=false;static void(*loadProbe)()=NULL;
+static void probe(){if(loadProbe&&!probing){probing=true;loadProbe();probing=false;}}
+static void fixtureLog(const char*, ...) {++logCount;probe();}
 #define CUSTOMLOG fixtureLog
 namespace CvStackingDiagnostics {void Reset(){++diagnosticsResets;}}
 namespace CvStackingAI {void Reset(){++aiResets;}}
@@ -66,15 +74,15 @@ namespace Database {
  struct Results {
   vector<Row> rows;size_t next;string rowText;int rowValue;
   Results():next(0),rowValue(0){}
-  bool Step(){rowText.assign(128,'!');if(next>=rows.size())return false;rowText=rows[next].name;rowValue=rows[next].value;++next;return true;}
+  bool Step(){probe();rowText.assign(128,'!');if(next>=rows.size())return false;rowText=rows[next].name;rowValue=rows[next].value;++next;return true;}
   const char* GetText(const char*){return rowText.c_str();}
   int GetInt(const char*){return rowValue;}
  };
  struct Connection {
-  bool schema,failSettings;int executes;vector<Row> settings;
-  Connection():schema(true),failSettings(false),executes(0){}
-  bool Execute(Results& result,const char* query){++executes;
-   if(strstr(query,"sqlite_master")){if(schema)result.rows.push_back(Row("Stacking_Settings"));return true;}
+  bool schema,failSettings,failSchema;int executes;vector<Row> settings;
+  Connection():schema(true),failSettings(false),failSchema(false),executes(0){}
+  bool Execute(Results& result,const char* query){++executes;probe();
+   if(strstr(query,"sqlite_master")){if(failSchema)return false;if(schema)result.rows.push_back(Row("Stacking_Settings"));return true;}
    if(strstr(query,"SELECT Name, Value FROM Stacking_Settings")){if(failSettings)return false;result.rows=settings;return true;}
    return true;
   }
@@ -86,6 +94,7 @@ struct Globals {Database::Connection* database;Globals():database(NULL){}Databas
 tests = r'''
 static int checks=0,failures=0;
 void expect(const char* name,bool okay){++checks;if(!okay){++failures;if(failures<25)printf("FAIL %s\n",name);}}
+static void probeEnabled(){++probeChecks;if(CvStacking::IsEnabled()!=CvStacking::OriginalEnabled())++probeFailures;}
 static const size_t settingCount=sizeof(SETTINGS)/sizeof(SETTINGS[0]);
 void checkLiteralOwnership(){
  expect("map holds one row per known setting",Cache().settings.size()==settingCount);
@@ -104,9 +113,11 @@ int main(){
  expect("native x86 VC9",sizeof(void*)==4);
  expect("no database yields fallback",CvStacking::GetInt("DefenderSelectionEnabled",-33)==-33);
  expect("no database stays retryable",!Cache().loaded);
+ expect("no database IsEnabled false and retryable",!CvStacking::IsEnabled()&&!CvStacking::OriginalEnabled()&&!Cache().loaded);
  expect("null name gives its fallback",CvStacking::GetInt(NULL,72)==72);
- Database::Connection db;GC.database=&db;
+ Database::Connection db;GC.database=&db;loadProbe=probeEnabled;
  checkAllValues(0);checkLiteralOwnership();
+ expect("default enabled mirrors original",CvStacking::IsEnabled()&&CvStacking::OriginalEnabled());
  expect("empty unknown fallback",CvStacking::GetInt("",10)==10);
  expect("case remains significant",CvStacking::GetInt("defenderselectionenabled",11)==11);
  expect("long unknown fallback",CvStacking::GetInt("NotAnExistingStackingSettingWithALongName",12)==12);
@@ -117,6 +128,7 @@ int main(){
   db.settings.clear();for(size_t i=0;i<settingCount;++i)db.settings.push_back(Database::Row(string(SETTINGS[i].name),mode<0?INT_MIN:INT_MAX));
   db.settings.push_back(Database::Row("UnknownDatabaseSetting",87));CvStacking::ResetCache();checkAllValues(mode);checkLiteralOwnership();
   expect("unknown DB setting ignored",CvStacking::GetInt("UnknownDatabaseSetting",-19)==-19);
+  expect("clamped enabled matches original",CvStacking::IsEnabled()==CvStacking::OriginalEnabled()&&CvStacking::IsEnabled()==(mode>0));
  }
  // New game/database reset must replace values and discard every retained node.
  db.settings.clear();db.settings.push_back(Database::Row("AITacticalStrengthCacheEntries",321));CvStacking::ResetCache();
@@ -125,14 +137,21 @@ int main(){
  expect("row buffers and DB rows no longer needed",CvStacking::GetInt("AITacticalStrengthCacheEntries",-1)==321);
  CvStacking::ResetCache();checkAllValues(0);checkLiteralOwnership();
  db.failSettings=true;CvStacking::ResetCache();checkAllValues(0);db.failSettings=false;
+ expect("settings query failure keeps default enabled",CvStacking::IsEnabled()&&CvStacking::OriginalEnabled());
+ db.failSchema=true;CvStacking::ResetCache();expect("schema query failure disables and matches original",!CvStacking::IsEnabled()&&!CvStacking::OriginalEnabled());db.failSchema=false;
  // Missing schema disables only Enabled; other queries retain caller fallbacks.
  db.schema=false;CvStacking::ResetCache();
  expect("missing schema disables feature",CvStacking::GetInt("Enabled",77)==0);
+ expect("missing schema IsEnabled mirrors disabled",!CvStacking::IsEnabled()&&!CvStacking::OriginalEnabled());
  expect("missing schema other caller fallback",CvStacking::GetInt("MaximumCapacity",78)==78);
  expect("missing schema null fallback",CvStacking::GetInt(NULL,79)==79);
  expect("missing schema holds one literal",Cache().settings.size()==1 && strcmp(Cache().settings.begin()->first,"Enabled")==0);
  db.schema=true;expect("schema appearance needs explicit reset",CvStacking::GetInt("MaximumCapacity",80)==80);
+ expect("enabled remains disabled before explicit reset",!CvStacking::IsEnabled()&&!CvStacking::OriginalEnabled());
  CvStacking::ResetCache();checkAllValues(0);checkLiteralOwnership();
+ db.settings.push_back(Database::Row("Enabled",0));db.settings.push_back(Database::Row("Enabled",INT_MAX));db.settings.push_back(Database::Row("Enabled",INT_MIN));CvStacking::ResetCache();expect("each Enabled row updates clamped mirror",!CvStacking::IsEnabled()&&!CvStacking::OriginalEnabled());
+ db.settings.clear();CvStacking::ResetCache();expect("reset restores default enabled",CvStacking::IsEnabled()&&CvStacking::OriginalEnabled());
+ expect("reentrant schema/row/log callbacks see exact original enabled",probeChecks>50&&probeFailures==0);loadProbe=NULL;
  expect("reset keeps related lifecycle hooks",diagnosticsResets==aiResets&&aiResets>=7);
  // A reference string-keyed map checks all lookup semantics and proves our
  // allocation counter detects the original temporary long-string lookup.
@@ -146,6 +165,11 @@ int main(){
  allocations=0;countAllocations=true;for(int repeat=0;repeat<100;++repeat)for(size_t i=0;i<settingCount;++i)checksum+=CvStacking::GetInt(SETTINGS[i].name,-1);countAllocations=false;
  expect("every known setting allocates no lookup storage",allocations==0);
  expect("lookups evaluated",checksum!=0);
+ settingComparisons=0;for(int i=0;i<100000;++i)checksum+=CvStacking::OriginalEnabled();const unsigned long originalComparisons=settingComparisons;
+ settingComparisons=0;allocations=0;countAllocations=true;for(int i=0;i<100000;++i)checksum+=CvStacking::IsEnabled();countAllocations=false;
+ expect("direct enabled mirror eliminates all setting name comparisons",originalComparisons>=100000&&settingComparisons==0);
+ expect("direct enabled mirror allocates no storage",allocations==0);
+ printf("Enabled lookup control: 100000calls %lu comparisons original vs %lu current; reentrant probes %lu failures %lu\n",originalComparisons,settingComparisons,probeChecks,probeFailures);
  printf("stacking settings actual-source checks: %d checks, %d failures; lookup allocations %lu vs %lu reference; %u known settings; database services substituted\n",checks,failures,lookupAllocations,referenceAllocations,(unsigned int)settingCount);
  return failures?1:0;
 }
@@ -178,6 +202,7 @@ print(run.stdout + run.stderr, end="")
     "test_returncode": run.returncode,
     "output": run.stdout + run.stderr,
     "implementation_sha256": hashlib.sha256(implementation.encode()).hexdigest(),
-    "scope": "Actual native x86 VC9 settings data, loader, reset and lookup with deterministic database services; lookup heap-allocation regression, not DLL/game timing",
+    "control_commit": "6c863259f",
+    "scope": "Actual native x86 VC9 settings data, loader, reset, GetInt and IsEnabled vs DLL47 exact IsEnabled body with deterministic database services/reentrant schema-row-log reads; lookup heap/comparison regression, not DLL/game timing",
 }, indent=2), encoding="utf-8")
 sys.exit(run.returncode)

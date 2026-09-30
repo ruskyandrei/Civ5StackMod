@@ -17,6 +17,24 @@ namespace CvStackingDiagnostics
     void Record(int level, PlayerTypes player, const char* category, const char* format, ...);
     void OnPlayerTurn(CvPlayer& player);
     void AfterPlayerUnitAI(CvPlayer& player);
+    // Top-level wall-clock phases only. Inclusive intervals can overlap nested
+    // phases and PLAN; use their tick bounds, never sum all rows as a round.
+    // Call Finish at a boundary, or let destruction finish on an early return.
+    class TurnPhaseScope
+    {
+    public:
+        TurnPhaseScope(PlayerTypes player, const char* phase);
+        ~TurnPhaseScope();
+        void Finish();
+    private:
+        TurnPhaseScope(const TurnPhaseScope&);
+        TurnPhaseScope& operator=(const TurnPhaseScope&);
+        bool active;
+        PlayerTypes actor;
+        const char* name;
+        int turn;
+        unsigned long started, thread, generation;
+    };
     class CombatScope
     {
     public:
