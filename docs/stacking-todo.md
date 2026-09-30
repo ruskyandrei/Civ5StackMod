@@ -7,7 +7,10 @@
 - [x] Separate land/naval gathering readiness during positioning so input order cannot hold a ready force or bypass another domain's assembly.
 - [x] Stop unchanged stalled production queues from repeatedly reconstructing a support claim and renewing an inactive offensive's progress clock.
 - [x] Correct both assault forecasts to give fully blockaded cities zero healing. Ordinary healing remains an approximation.
-- [ ] Build/deploy and replay preserved campaign01 turn 215 through 230, checking actual capture conversion, siege continuity, survivors and turn cost. Source save and existing autosaves must be preserved.
+- [x] Build/deploy DLL42 and replay preserved campaign01 turn 215 through 230 without crashes. Source save and existing autosaves preserved; support production/arrivals observed. Abernethy healed to full HP and did not fall, so capture conversion is not validated by this run.
+- [x] Recheck an executable capture after safe gathering fire; cover the 21 HP to 1 HP softening opportunity in actual-source fixtures.
+- [x] Permit immediate fire from a protected existing stack before requiring a new stage; retain conservative singleton movement safety and the existing XML danger threshold.
+- [ ] Native-check the stationary-fire/capture follow-ups and rerun the saved late-game performance regression. Inspect whether Tombouctu's defenders fired at the Moroccan battery and which stack member received damage.
 - [ ] Review adjacent executable capture alternatives when the preferred cached capturer has spent its attacks or is unavailable; preserve deliberate processing and other commitments.
 - [ ] Track verified route progress toward a stable safe stage through detours around water/borders. Reuse existing path-query results, keep route progress separate from capture/assault progress, and do not renew on a changed stage or a repeated no-op. Avoid adding per-unit pathfinding to the turn refresh.
 - [ ] Validate the larger siege/reinforcement and ranged-defense policy in fresh campaigns after targeted replay checks. Historical unchecked design bullets below include requirements already partially implemented; use the current implementation record to distinguish remaining work.

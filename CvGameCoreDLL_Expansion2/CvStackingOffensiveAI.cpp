@@ -725,12 +725,12 @@ namespace CvStackingOffensiveAI
         if(!Usable(unit) || !unit->canUseNow() || !cityTarget || !cityTarget->isCity()) return false;
         const PlayerTypes owner=unit->getOwner();CvPlayer& player=GET_PLAYER(owner);
         const AssaultPlan plan=AssessAssault(owner,cityTarget->getPlotCity(),unit->getDomainType());
-        if(plan.ready || plan.staging<0) return false;
-        CvPlot* stage=GC.getMap().plotByIndexUnchecked(plan.staging);
-        const std::vector<const CvUnit*> alone(1,unit);const SUnitIDValueContainer noDamage;
-        const int currentDanger=player.GetDangerPlots()->GetStackDanger(*unit->plot(),unit,alone,noDamage,noDamage);
+        if(plan.ready) return false;
         const int dangerLimit=unit->GetCurrHitPoints()*Setting("AIAssaultStageDangerPercent",0)/100;
-        if(currentDanger==0 && unit->IsCanAttackRanged() && unit->canRangeStrikeAt(cityTarget->getX(),cityTarget->getY()) &&
+        // Shooting from the current plot adds no exposure. Its real stack may
+        // protect the battery even when a singleton could not stage here.
+        if(unit->IsCanAttackRanged() && unit->canRangeStrikeAt(cityTarget->getX(),cityTarget->getY()) &&
+            unit->GetDanger()<=dangerLimit &&
             ContinueSiege(owner,cityTarget->getPlotCity()))
         {
             const int id=unit->GetID();
@@ -739,6 +739,10 @@ namespace CvStackingOffensiveAI
             if(unit && !unit->isDelayedDeath() && !unit->canUseNow()) unit->SetTurnProcessed(true);
             return true;
         }
+        if(plan.staging<0) return false;
+        CvPlot* stage=GC.getMap().plotByIndexUnchecked(plan.staging);
+        const std::vector<const CvUnit*> alone(1,unit);const SUnitIDValueContainer noDamage;
+        const int currentDanger=player.GetDangerPlots()->GetStackDanger(*unit->plot(),unit,alone,noDamage,noDamage);
         const int radius=Setting("AIAssaultStageCohesionRadius",2);
         if(currentDanger<=dangerLimit && plotDistance(*unit->plot(),*stage)<=radius)
         {

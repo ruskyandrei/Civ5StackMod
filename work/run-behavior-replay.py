@@ -57,7 +57,9 @@ EXPECTED_MODS = {"d1b6328c-ff44-4b0d-aad7-c657f83610cd": 151, "8411a7a8-dad3-462
 
 def prepared(status, start, count):
     return (status.get("turn") == start and status.get("autoplay") == count
-            and status.get("observer") is True and status.get("human") is False
+            # VP observer slots can report IsHuman()==true or false. The
+            # observer/pause/counter checks establish paused preparation.
+            and status.get("observer") is True
             and status.get("pausePlayer") == status.get("activePlayer")
             and isinstance(status.get("activePlayer"), int) and status["activePlayer"] >= 0
             and status.get("diagnostics") == 1 and status.get("quickCombat") is True
@@ -333,9 +335,11 @@ def self_test():
     args = argparse.Namespace(start_turn=215, stop_turn=230, return_player=0, watch_city="Abernethy")
     status, preparation, continuation = lua_sources(args)
     ready = {"turn": 215, "autoplay": 15, "activePlayer": 8, "pausePlayer": 8, "observer": True,
-             "human": False, "diagnostics": 1, "quickCombat": True, "quickMovement": True, "multiplayer": False}
+             "human": True, "diagnostics": 1, "quickCombat": True, "quickMovement": True, "multiplayer": False}
     assert prepared(ready, 215, 15)
-    for change in ({"turn": 216}, {"autoplay": 14}, {"human": True}, {"pausePlayer": -1}, {"observer": False}, {"diagnostics": 2}):
+    assert prepared({**ready, "human": False}, 215, 15)
+    for change in ({"turn": 216}, {"autoplay": 14}, {"pausePlayer": -1}, {"observer": False},
+                   {"diagnostics": 2}, {"quickCombat": False}):
         assert not prepared({**ready, **change}, 215, 15)
     end = {"turn": 230, "autoplay": 0, "activePlayer": 0, "human": True, "observer": False, "returnPlayerAlive": True}
     assert stopped(end, 230, 0)
@@ -357,7 +361,7 @@ state={turn=215,auto=785,active=8,pause=8,diag=0,quickCombat=false,quickMovement
 print=function() end
 local yes=function() return true end;local no=function() return false end
 local p0={IsAlive=yes,IsObserver=no,IsMinorCiv=no,IsBarbarian=no,IsHuman=no,Cities=function() return function() end end}
-local p8={IsAlive=no,IsObserver=yes,IsHuman=no,Cities=function() return function() end end}
+local p8={IsAlive=no,IsObserver=yes,IsHuman=yes,Cities=function() return function() end end}
 Players={[0]=p0,[8]=p8}
 PreGame={IsMultiplayerGame=no,GetQuickCombat=function() return state.quickCombat end,GetQuickMovement=function() return state.quickMovement end}
 Game={GetGameTurn=function() return state.turn end,GetActivePlayer=function() return state.active end,
@@ -368,6 +372,8 @@ Game={GetGameTurn=function() return state.turn end,GetActivePlayer=function() re
 """)
         observed = lua.execute(preparation)
         assert prepared(dict(observed.items()), 215, 15)
+        assert observed["observer"] is True and observed["human"] is True
+        assert prepared({**dict(observed.items()), "human": False}, 215, 15)
         assert observed["restoredAutoplay"] == 785 and observed["returnPlayerAlive"] is True
         assert len(lua.globals().calls) == 2
         assert tuple(lua.globals().calls[1].values()) == (0, -1) and tuple(lua.globals().calls[2].values()) == (15, 0)
@@ -402,7 +408,7 @@ Game.SetPausePlayer=function(n) state.pause=n end
         paused = lua.execute(PAUSE_UNEXPECTED)
         assert paused["pausePlayer"] == paused["activePlayer"] == 8 and paused["turn"] == 215
         # A human source must fail before any autoplay/options mutation.
-        lua.execute("state.active=0;state.pause=0")
+        lua.execute("state.active=0;state.pause=0;Players[0].IsHuman=function() return true end")
         try:
             lua.execute(preparation)
         except Exception as exc:

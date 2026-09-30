@@ -959,6 +959,10 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 						for(size_t i=0;i<m_CurrentMoveUnits.size();++i)
 						{ CvUnit* unit=m_pPlayer->getUnit(m_CurrentMoveUnits[i].GetID()); if(unit) gathering.push_back(unit); }
 						PositionUnitsAroundTarget(gathering,pPlot);
+						// Safe fire during staging may open a capture while this
+						// turn's assembly forecast still says the wave is incomplete.
+						if(TryReservedCityCapture(pPlot) && pPlot->getOwner()==m_pPlayer->GetID())
+							DeleteFocusArea(pPlot);
 						continue;
 					}
 				}
