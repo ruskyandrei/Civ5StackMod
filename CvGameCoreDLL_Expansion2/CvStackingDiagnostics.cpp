@@ -74,10 +74,14 @@ namespace
         unsigned long started, thread, generation, serial, lastExitTick, maximumDispatchMs;
         unsigned __int64 cpuStarted, lastExitCPU, dispatchMs, dispatchCPU100ns;
         unsigned int dispatchCalls, dispatchCPUMeasured, nestedScopes;
+        unsigned int coreLockAttempts, coreLockCompleted, coreLockCPUMeasured;
+        unsigned long maximumCoreLockMs;
+        unsigned __int64 coreLockMs, coreLockCPU100ns;
         GapCost part[GAP_PARTS];
         PendingUpdateGap():active(false),cpuAvailable(false),lastExit(false),lastExitCPUAvailable(false),clippedWrapperStart(false),
             actor(NO_PLAYER),turn(-1),started(0),thread(0),generation(0),serial(0),lastExitTick(0),maximumDispatchMs(0),
-            cpuStarted(0),lastExitCPU(0),dispatchMs(0),dispatchCPU100ns(0),dispatchCalls(0),dispatchCPUMeasured(0),nestedScopes(0){}
+            cpuStarted(0),lastExitCPU(0),dispatchMs(0),dispatchCPU100ns(0),dispatchCalls(0),dispatchCPUMeasured(0),nestedScopes(0),
+            coreLockAttempts(0),coreLockCompleted(0),coreLockCPUMeasured(0),maximumCoreLockMs(0),coreLockMs(0),coreLockCPU100ns(0){}
     } updateGap;
     unsigned int updateDepth[4]={0,0,0,0};
     unsigned long updateThread=0, updateSerial=0;
@@ -235,7 +239,8 @@ namespace
             "beginHookCalls=%u beginHookMs=%I64u beginHookCPU100ns=%I64u beginHookCPUMeasured=%u "
             "endHookCalls=%u endHookMs=%I64u endHookCPU100ns=%I64u endHookCPUMeasured=%u "
             "preMovesHeadCalls=%u preMovesHeadMs=%I64u preMovesHeadCPU100ns=%I64u preMovesHeadCPUMeasured=%u "
-            "dispatchCalls=%u dispatchMs=%I64u dispatchCPU100ns=%I64u dispatchCPUMeasured=%u maximumDispatchMs=%lu nestedScopes=%u; wrapper and game totals include their child hooks/tails; dispatch is between measured wrapper calls, not proof of a particular engine wait",
+            "dispatchCalls=%u dispatchMs=%I64u dispatchCPU100ns=%I64u dispatchCPUMeasured=%u maximumDispatchMs=%lu nestedScopes=%u "
+            "coreLockAttempts=%u coreLockCompleted=%u coreLockMs=%I64u coreLockCPU100ns=%I64u coreLockCPUMeasured=%u maximumCoreLockMs=%lu; wrapper and game totals include their child hooks/tails; dispatch is between measured wrapper calls, not proof of a particular engine wait; coreLock is a completed constructor acquisition envelope including diagnostic overhead and can overlap dispatch/body totals",
             gap.started,ended,ended-gap.started,gap.thread,available?1:0,available?gap.cpuStarted:0,available?cpuEnded:0,available?cpuEnded-gap.cpuStarted:0,
             gap.part[0].calls,gap.part[0].milliseconds,gap.part[0].cpu100ns,gap.part[0].cpuMeasured,gap.clippedWrapperStart?1:0,
             gap.part[1].calls,gap.part[1].milliseconds,gap.part[1].cpu100ns,gap.part[1].cpuMeasured,
@@ -243,7 +248,8 @@ namespace
             gap.part[2].calls,gap.part[2].milliseconds,gap.part[2].cpu100ns,gap.part[2].cpuMeasured,
             gap.part[3].calls,gap.part[3].milliseconds,gap.part[3].cpu100ns,gap.part[3].cpuMeasured,
             gap.part[GAP_HEAD].calls,gap.part[GAP_HEAD].milliseconds,gap.part[GAP_HEAD].cpu100ns,gap.part[GAP_HEAD].cpuMeasured,
-            gap.dispatchCalls,gap.dispatchMs,gap.dispatchCPU100ns,gap.dispatchCPUMeasured,gap.maximumDispatchMs,gap.nestedScopes);
+            gap.dispatchCalls,gap.dispatchMs,gap.dispatchCPU100ns,gap.dispatchCPUMeasured,gap.maximumDispatchMs,gap.nestedScopes,
+            gap.coreLockAttempts,gap.coreLockCompleted,gap.coreLockMs,gap.coreLockCPU100ns,gap.coreLockCPUMeasured,gap.maximumCoreLockMs);
     }
     bool openSegment()
     {
@@ -515,6 +521,34 @@ namespace CvStackingDiagnostics
         if(!validUpdateGap() || !updateGap.part[GAP_HEAD].open) return;
         unsigned long tick=0;unsigned __int64 cpu=0;bool available=false;
         updateGapSample(tick,cpu,available);finishGapPart(GAP_HEAD,tick,cpu,available);
+    }
+    CoreLockAcquireScope::CoreLockAcquireScope():active(false),cpuAvailable(false),serial(0),thread(0),generation(0),started(0),cpuStarted(0)
+    {
+        // No GC, category, setting, database or engine calls before acquisition.
+        // The pending marker already established the diagnostic sampling policy.
+        Lock lock;
+        if(!updateGap.active || failed || updateGap.generation!=phaseGeneration) return;
+        thread=GetCurrentThreadId();
+        if(updateGap.thread!=thread) return;
+        serial=updateGap.serial;generation=phaseGeneration;
+        ++updateGap.coreLockAttempts;
+        started=GetTickCount();cpuAvailable=updateGap.cpuAvailable && threadCPU100ns(cpuStarted);
+        active=true;
+        // This diagnostic lock is released before the caller acquires GameCore.
+    }
+    void CoreLockAcquireScope::Complete()
+    {
+        if(!active) return;
+        active=false;
+        Lock lock;
+        if(generation!=phaseGeneration || serial!=updateGap.serial || thread!=GetCurrentThreadId() || !validUpdateGap()) return;
+        // Called only after the unchanged engine acquisition returned successfully.
+        const unsigned long ended=GetTickCount(),elapsed=ended-started;
+        unsigned __int64 cpuEnded=0;
+        const bool available=cpuAvailable && threadCPU100ns(cpuEnded) && cpuEnded>=cpuStarted;
+        ++updateGap.coreLockCompleted;updateGap.coreLockMs+=elapsed;
+        updateGap.maximumCoreLockMs=max(updateGap.maximumCoreLockMs,elapsed);
+        if(available) { ++updateGap.coreLockCPUMeasured;updateGap.coreLockCPU100ns+=cpuEnded-cpuStarted; }
     }
     ActivationTailScope::ActivationTailScope():active(false),serial(0),thread(0),generation(0){}
     void ActivationTailScope::Start(PlayerTypes player,bool eligible)

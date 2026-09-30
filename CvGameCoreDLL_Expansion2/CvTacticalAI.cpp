@@ -9121,6 +9121,10 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 
 	result->iSelfDamage = iDamageReceived;
 	result->unitDamage = unitDamageDealt;
+    // Primary identity belongs to this projected attack, not to the savegame.
+    // City garrison selection and stack defense can choose different units.
+    result->iPrimaryUnitID = pEnemyUnit ? pEnemyUnit->GetID() : -1;
+    result->ePrimaryUnitOwner = pEnemyUnit ? pEnemyUnit->getOwner() : (pEnemyCity ? pEnemyCity->getOwner() : NO_PLAYER);
 	result->iCityDamage = iCityDamageDealt;
 
 	//for melee units we check if the damage received is worth it ...
@@ -12418,6 +12422,7 @@ bool STacticalAssignment::operator==(const STacticalAssignment& rhs) const
  return iTotalScore == rhs.iTotalScore &&
   iUnitID == rhs.iUnitID && iFromPlotIndex == rhs.iFromPlotIndex && iToPlotIndex == rhs.iToPlotIndex &&
   iRemainingMoves == rhs.iRemainingMoves && eMoveType == rhs.eMoveType && eAssignmentType == rhs.eAssignmentType &&
+  iPrimaryUnitID == rhs.iPrimaryUnitID && ePrimaryUnitOwner == rhs.ePrimaryUnitOwner &&
   iSelfDamage == rhs.iSelfDamage && iCityDamage == rhs.iCityDamage && iDamagedCityId == rhs.iDamagedCityId &&
   EqualAssignedUnitValues(unitDamage, rhs.unitDamage) && EqualAssignedUnitValues(unitHealing, rhs.unitHealing);
 }
@@ -13940,13 +13945,15 @@ private:
 };
 
 static void RecordStackPlanExecutionFailure(PlayerTypes owner,const STacticalAssignment& assignment,size_t index,const char* reason,
-	bool precondition,bool postcondition,unsigned int missionOrders,unsigned int ordersBefore,const StackPlanDiagnosticUnitState& before)
+	bool precondition,bool postcondition,unsigned int missionOrders,unsigned int ordersBefore,const StackPlanDiagnosticUnitState& before,
+	PlayerTypes nativePrimaryOwner=NO_PLAYER,int nativePrimaryID=-1)
 {
 	// Missions/combat may remove or replace the actor. Never inspect the old
 	// execution pointer to collect its diagnostic after-state.
 	const StackPlanDiagnosticUnitState after=ReadStackPlanDiagnosticUnitState(GET_PLAYER(owner).getUnit(assignment.iUnitID));
-	CvStackingDiagnostics::Record(1,owner,"PLAN_EXEC_FAIL","index=%u unit=%d type=%d from=%d to=%d reason=%s pre=%d post=%d issuedOrders=%u currentOrderIssued=%d beforePresent=%d afterPresent=%d beforePlot=%d afterPlot=%d beforeMoves=%d afterMoves=%d beforeHP=%d afterHP=%d beforeAttacksMade=%d afterAttacksMade=%d beforeProcessed=%d afterProcessed=%d beforeActivity=%d afterActivity=%d beforeMissionTimer=%d afterMissionTimer=%d beforeMissionCount=%d afterMissionCount=%d beforeMissionAI=%d afterMissionAI=%d beforeHeadMission=%d afterHeadMission=%d beforeHeadData1=%d afterHeadData1=%d beforeHeadData2=%d afterHeadData2=%d beforeHeadFlags=%d afterHeadFlags=%d beforeHeadTurn=%d afterHeadTurn=%d",
+	CvStackingDiagnostics::Record(1,owner,"PLAN_EXEC_FAIL","index=%u unit=%d type=%d from=%d to=%d reason=%s pre=%d post=%d issuedOrders=%u currentOrderIssued=%d expectedPrimaryOwner=%d expectedPrimaryUnit=%d nativePrimaryOwner=%d nativePrimaryUnit=%d beforePresent=%d afterPresent=%d beforePlot=%d afterPlot=%d beforeMoves=%d afterMoves=%d beforeHP=%d afterHP=%d beforeAttacksMade=%d afterAttacksMade=%d beforeProcessed=%d afterProcessed=%d beforeActivity=%d afterActivity=%d beforeMissionTimer=%d afterMissionTimer=%d beforeMissionCount=%d afterMissionCount=%d beforeMissionAI=%d afterMissionAI=%d beforeHeadMission=%d afterHeadMission=%d beforeHeadData1=%d afterHeadData1=%d beforeHeadData2=%d afterHeadData2=%d beforeHeadFlags=%d afterHeadFlags=%d beforeHeadTurn=%d afterHeadTurn=%d",
 		(unsigned int)index,assignment.iUnitID,(int)assignment.eAssignmentType,assignment.iFromPlotIndex,assignment.iToPlotIndex,reason,precondition?1:0,postcondition?1:0,missionOrders,missionOrders>ordersBefore?1:0,
+		(int)assignment.ePrimaryUnitOwner,assignment.iPrimaryUnitID,(int)nativePrimaryOwner,nativePrimaryID,
 		before.values[0],after.values[0],before.values[3],after.values[3],before.values[4],after.values[4],before.values[5],after.values[5],before.values[7],after.values[7],before.values[9],after.values[9],
 		before.values[10],after.values[10],before.values[11],after.values[11],before.values[12],after.values[12],before.values[13],after.values[13],before.values[14],after.values[14],
 		before.values[15],after.values[15],before.values[16],after.values[16],before.values[17],after.values[17],before.values[18],after.values[18]);
@@ -14382,11 +14389,44 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		for (size_t i = 0; i < result.size(); ++i)
 		{
 			const STacticalAssignment& a = result[i];
-			CvStackingDiagnostics::Record(2, ePlayer, "PLAN_ASSIGN", "target=%d:%d index=%u unit=%d from=%d to=%d type=%d moves=%d score=%d plotScore=%d bonus=%d damageDelta=%d selfDamage=%d cityDamage=%d",
+			CvStackingDiagnostics::Record(2, ePlayer, "PLAN_ASSIGN", "target=%d:%d index=%u unit=%d from=%d to=%d type=%d moves=%d score=%d plotScore=%d bonus=%d damageDelta=%d selfDamage=%d cityDamage=%d primaryOwner=%d primaryUnit=%d",
 				pTarget->getX(), pTarget->getY(), (unsigned int)i, a.iUnitID, a.iFromPlotIndex, a.iToPlotIndex, (int)a.eAssignmentType,
-				(int)a.iRemainingMoves, a.Score(), a.GetPlotScore(), a.GetBonusScore(), a.GetDamageDelta(), (int)a.iSelfDamage, (int)a.iCityDamage);
+				(int)a.iRemainingMoves, a.Score(), a.GetPlotScore(), a.GetBonusScore(), a.GetDamageDelta(), (int)a.iSelfDamage, (int)a.iCityDamage,(int)a.ePrimaryUnitOwner,a.iPrimaryUnitID);
 		}
 	return result;
+}
+
+// Execution identities are ephemeral tactical evidence, never save data.
+// Native combat can delete a victim (or capturing actor); do not retain a
+// dereferenceable pointer across a mission and mistake another stack member
+// for the victim selected by the forecast.
+struct StackPlanVictim
+{
+    PlayerTypes owner;
+    int id;
+    bool present;
+    StackPlanVictim() : owner(NO_PLAYER), id(-1), present(false) {}
+    explicit StackPlanVictim(const CvUnit* unit)
+        : owner(unit ? unit->getOwner() : NO_PLAYER), id(unit ? unit->GetID() : -1), present(unit != NULL) {}
+};
+static CvUnit* StackPlanNativeVictim(CvPlot* target, CvUnit* actor, PlayerTypes owner)
+{
+    return target->isEnemyCity(*actor) ? target->getPlotCity()->GetGarrisonedUnit()
+        : target->getBestDefender(NO_PLAYER,owner,actor);
+}
+static bool StackPlanVictimDefeated(const StackPlanVictim& victim)
+{
+    if (!victim.present) return false;
+    CvUnit* live = GET_PLAYER(victim.owner).getUnit(victim.id);
+    return !live || live->IsDead() || live->isDelayedDeath();
+}
+static bool StackPlanPrimaryMatches(const STacticalAssignment& assignment, const StackPlanVictim& victim)
+{
+    // NO_PLAYER marks an assignment not produced by the combat scorer.
+    // A scored no-garrison city has its owner and ID -1, so absence is known.
+    if (assignment.ePrimaryUnitOwner == NO_PLAYER) return true;
+    return assignment.iPrimaryUnitID < 0 ? !victim.present
+        : victim.present && assignment.iPrimaryUnitID == victim.id && assignment.ePrimaryUnitOwner == victim.owner;
 }
 
 bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::vector<STacticalAssignment>& vAssignments)
@@ -14407,7 +14447,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		CvUnit* pUnit = GET_PLAYER(ePlayer).getUnit(vAssignments[i].iUnitID);
 		//be extra careful with the unit here, if we capture cities and liberate them strange instakills can happen
 		//so we need to guess whether the pointer is still valid
-		if (!pUnit || pUnit->isDelayedDeath() || pUnit->plot()==NULL)
+		if (!pUnit || pUnit->IsDead() || pUnit->isDelayedDeath() || pUnit->plot()==NULL)
 			continue;
 
 		CvPlot* pFromPlot = GC.getMap().plotByIndexUnchecked(vAssignments[i].iFromPlotIndex);
@@ -14422,6 +14462,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		if (diagnose) diagnosticBefore=ReadStackPlanDiagnosticUnitState(pUnit);
 
 		CvUnit* pEnemy = NULL;
+		StackPlanVictim expectedVictim;
+		const int actorID=pUnit->GetID();
+		const PlayerTypes actorOwner=pUnit->getOwner();
 
 		switch (vAssignments[i].eAssignmentType)
 		{
@@ -14485,47 +14528,100 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			}
 			bool bUnitBefore = pToPlot->isEnemyUnit(ePlayer, true, true);
 			bPrecondition = (pUnit->plot() == pFromPlot) && (bCityBefore || bUnitBefore); //enemy present
-			pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
+			pEnemy = StackPlanNativeVictim(pToPlot,pUnit,ePlayer);
+			expectedVictim=StackPlanVictim(pEnemy);
+			bPrecondition=bPrecondition && StackPlanPrimaryMatches(vAssignments[i],expectedVictim);
 			if (bPrecondition)
 			{
 				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_RANGE_ATTACK(), pToPlot->getX(), pToPlot->getY());
+                pUnit = GET_PLAYER(actorOwner).getUnit(actorID);
+                if (!pUnit || pUnit->IsDead() || pUnit->isDelayedDeath() || !pUnit->plot())
+                {
+                    if (diagnose)
+                        RecordStackPlanExecutionFailure(actorOwner,vAssignments[i],i,
+                            !pUnit ? "actor_removed" : "actor_unavailable",bPrecondition,false,
+                            missionOrders,ordersBefore,diagnosticBefore,expectedVictim.owner,expectedVictim.id);
+                    return false;
+                }
 			}
-			bPostcondition = (!bCityBefore || pToPlot->isEnemyCity(*pUnit)) && (!bUnitBefore || (pEnemy && !pEnemy->IsDead())); //enemy should survive
+			bPostcondition = (!bCityBefore || pToPlot->isEnemyCity(*pUnit)) && (!expectedVictim.present || !StackPlanVictimDefeated(expectedVictim)); //enemy should survive
 			break;
 		}
 		case A_RANGEKILL:
-			bPrecondition = (pUnit->plot() == pFromPlot) && pToPlot->isEnemyUnit(ePlayer,true,true); //defending unit present. does not apply to cities
-			pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
+		{
+			const bool bCityBefore=pToPlot->isEnemyCity(*pUnit);
+			if (bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+			{
+				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",false,false,missionOrders,ordersBefore,diagnosticBefore);
+				return false;
+			}
+			bPrecondition = (pUnit->plot() == pFromPlot) && (bCityBefore || pToPlot->isEnemyUnit(ePlayer,true,true));
+			pEnemy = StackPlanNativeVictim(pToPlot,pUnit,ePlayer);
+			expectedVictim=StackPlanVictim(pEnemy);
+			bPrecondition=bPrecondition && StackPlanPrimaryMatches(vAssignments[i],expectedVictim);
 			if (bPrecondition)
 			{
 				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_RANGE_ATTACK(), pToPlot->getX(), pToPlot->getY());
+                pUnit = GET_PLAYER(actorOwner).getUnit(actorID);
+                if (!pUnit || pUnit->IsDead() || pUnit->isDelayedDeath() || !pUnit->plot())
+                {
+                    if (diagnose)
+                        RecordStackPlanExecutionFailure(actorOwner,vAssignments[i],i,
+                            !pUnit ? "actor_removed" : "actor_unavailable",bPrecondition,false,
+                            missionOrders,ordersBefore,diagnosticBefore,expectedVictim.owner,expectedVictim.id);
+                    return false;
+                }
 			}
-			bPostcondition = pEnemy && pEnemy->IsDead(); //defending unit is gone
+			bPostcondition = StackPlanVictimDefeated(expectedVictim) && (!bCityBefore || pToPlot->isEnemyCity(*pUnit));
 			break;
+		}
 		case A_MELEEATTACK:
 			if(pToPlot->isEnemyCity(*pUnit) && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
 			{
 				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
 				return false;
 			}
+			pEnemy=StackPlanNativeVictim(pToPlot,pUnit,ePlayer);
+			expectedVictim=StackPlanVictim(pEnemy);
 			bPrecondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //enemy present
+			bPrecondition=bPrecondition && StackPlanPrimaryMatches(vAssignments[i],expectedVictim);
 			if (bPrecondition)
 			{
 				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pToPlot->getX(), pToPlot->getY());
+                pUnit = GET_PLAYER(actorOwner).getUnit(actorID);
+                if (!pUnit || pUnit->IsDead() || pUnit->isDelayedDeath() || !pUnit->plot())
+                {
+                    if (diagnose)
+                        RecordStackPlanExecutionFailure(actorOwner,vAssignments[i],i,
+                            !pUnit ? "actor_removed" : "actor_unavailable",bPrecondition,false,
+                            missionOrders,ordersBefore,diagnosticBefore,expectedVictim.owner,expectedVictim.id);
+                    return false;
+                }
 			}
-			bPostcondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //enemy still present
+			bPostcondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)) && (!expectedVictim.present || !StackPlanVictimDefeated(expectedVictim)); //expected enemy still present
 			break;
 		case A_MELEEKILL:
 		case A_MELEEKILL_NO_ADVANCE:
 		{
 			bPrecondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer, true, true) || pToPlot->isEnemyCity(*pUnit)); //enemy present
 			CvCity* pCity = pToPlot->getPlotCity();
-			CvUnit* pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
+			CvUnit* pEnemy = StackPlanNativeVictim(pToPlot,pUnit,ePlayer);
+			expectedVictim=StackPlanVictim(pEnemy);
+			bPrecondition=bPrecondition && StackPlanPrimaryMatches(vAssignments[i],expectedVictim);
 			bool bCityKill = false;
 			bool bUnitKill = false;
+			const bool bCityBefore=pToPlot->isEnemyCity(*pUnit);
+			if (vAssignments[i].eAssignmentType==A_MELEEKILL_NO_ADVANCE)
+			{
+				if (bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+                {
+                    if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,false,missionOrders,ordersBefore,diagnosticBefore);
+                    return false;
+                }
+			}
 			//because of randomness in previous combat results, it may happen that we cannot actually kill the enemy
 			if (bPrecondition)
 			{
@@ -14552,6 +14648,15 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			{
 				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pToPlot->getX(), pToPlot->getY());
+                pUnit = GET_PLAYER(actorOwner).getUnit(actorID);
+                if (!pUnit || pUnit->IsDead() || pUnit->isDelayedDeath() || !pUnit->plot())
+                {
+                    if (diagnose)
+                        RecordStackPlanExecutionFailure(actorOwner,vAssignments[i],i,
+                            !pUnit ? "actor_removed" : "actor_unavailable",bPrecondition,false,
+                            missionOrders,ordersBefore,diagnosticBefore,expectedVictim.owner,expectedVictim.id);
+                    return false;
+                }
 			}
 
 			//because of randomness in previous combat results, it may happen that we cannot actually kill the enemy
@@ -14563,10 +14668,10 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			{
 				bPostcondition = pUnit->plot() == pFromPlot;
 			}
-			if (bPostcondition && bUnitKill)
-			{
-				bPostcondition = pEnemy->IsDead(); //defending unit is dead
-			}
+			if (bPostcondition && bCityBefore && vAssignments[i].eAssignmentType==A_MELEEKILL)
+				bPostcondition = pToPlot->isCity() && pToPlot->getOwner()==ePlayer && !pToPlot->isEnemyCity(*pUnit) && !pToPlot->isEnemyUnit(ePlayer,true,true) && (!expectedVictim.present || StackPlanVictimDefeated(expectedVictim));
+			else if (bPostcondition)
+				bPostcondition = StackPlanVictimDefeated(expectedVictim) && (!bCityBefore || pToPlot->isEnemyCity(*pUnit));
 			break;
 		}
 		case A_PILLAGE:
@@ -14623,7 +14728,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			break;
 		}
 		if (diagnose && (!bPrecondition || !bPostcondition))
-			RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,!bPrecondition?"precondition":"postcondition",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
+			RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,!bPrecondition?
+				(!StackPlanPrimaryMatches(vAssignments[i],expectedVictim)?"primary_changed":"precondition"):"postcondition",
+				bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore,expectedVictim.owner,expectedVictim.id);
 
 #ifdef TACTDEBUG
 		//this can happen sometimes because of randomness or splash damage etc

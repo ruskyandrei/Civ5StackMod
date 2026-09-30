@@ -50,6 +50,8 @@ head = r'''
 #include <cstdio>
 #include <cassert>
 using namespace std;
+typedef int PlayerTypes;
+const PlayerTypes NO_PLAYER=-1;
 #define VALIDATE_OBJECT()
 #define ASSERT(x) assert(x)
 const short TACTICAL_COMBAT_IMPOSSIBLE_SCORE=-1000;

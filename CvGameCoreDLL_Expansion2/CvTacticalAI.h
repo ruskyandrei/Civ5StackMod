@@ -550,10 +550,13 @@ public:
 	int iCityDamage; //potential damage dealt to garrisoned unit
 	int iSelfDamage; //only relevant for melee ...
 	int iDamagedCityId; //city we damaged
+	// Ephemeral forecast/execution identity; these fields are not serialized.
+	int iPrimaryUnitID;
+	PlayerTypes ePrimaryUnitOwner;
 
 	STacticalAssignment() : eAssignmentType(A_BLOCKED), iUnitID(-1), iTotalScore(0), iFromPlotIndex(0), iToPlotIndex(0),
 		iRemainingMoves(0), eMoveType(MS_NONE), unitDamage(SUnitIDValueContainer()), unitHealing(SUnitIDValueContainer()),
-		iCityDamage(0), iSelfDamage(0), iDamagedCityId(0), iPlotScore(0), iBonusScore(0), iDamageDelta(0), iOldPlotScore(0) {}
+		iCityDamage(0), iSelfDamage(0), iDamagedCityId(0), iPrimaryUnitID(-1), ePrimaryUnitOwner(NO_PLAYER), iPlotScore(0), iBonusScore(0), iDamageDelta(0), iOldPlotScore(0) {}
 
 	STacticalAssignment(int iFromPlot, int iToPlot, int iUnitID_, int iRemainingMoves_, eUnitMovementStrategy eMoveType_, eUnitAssignmentType eType_, int iOldPlotScore_)
 	{
@@ -568,6 +571,8 @@ public:
 		iCityDamage = 0;
 		iSelfDamage = 0;
 		iDamagedCityId = -1;
+		iPrimaryUnitID = -1;
+		ePrimaryUnitOwner = NO_PLAYER;
 
 		unitDamage = SUnitIDValueContainer();
 		unitHealing = SUnitIDValueContainer();
@@ -589,6 +594,8 @@ public:
 		iCityDamage = 0;
 		iSelfDamage = 0;
 		iDamagedCityId = -1;
+		iPrimaryUnitID = -1;
+		ePrimaryUnitOwner = NO_PLAYER;
 
 		unitDamage.clear();
 		unitHealing.clear();
@@ -644,6 +651,8 @@ public:
 	int GetOldPlotScore() const { return iOldPlotScore; }
 	void wipe()
 	{
+		iPrimaryUnitID = -1;
+		ePrimaryUnitOwner = NO_PLAYER;
 		SUnitIDValueContainer().swap(unitDamage);
 		SUnitIDValueContainer().swap(unitHealing);
 	}

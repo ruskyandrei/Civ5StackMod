@@ -24,7 +24,11 @@ CvDllGame::CvDllGame(CvGame* pGame)
 	, m_pGame(pGame)
 {
 	if(gDLL)
+	{
+		CvStackingDiagnostics::CoreLockAcquireScope acquire;
 		gDLL->GetGameCoreLock();
+		acquire.Complete();
+	}
 }
 //------------------------------------------------------------------------------
 CvDllGame::~CvDllGame()

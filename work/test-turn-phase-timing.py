@@ -20,6 +20,9 @@ source = (core / "CvStackingDiagnostics.cpp").read_text(encoding="utf-8-sig")
 # Fixed DLL54 source control: removing only these diagnostic statements must
 # preserve the complete original update/activation functions and callback order.
 for name, signature, added in (
+    ("CvDllGame.cpp", "CvDllGame::CvDllGame(CvGame* pGame)", (
+        "\t\tCvStackingDiagnostics::CoreLockAcquireScope acquire;\n",
+        "\t\tacquire.Complete();\n")),
     ("CvDllGame.cpp", "void CvDllGame::Update()", (
         "\tCvStackingDiagnostics::UpdateBoundaryScope boundary(CvStackingDiagnostics::UPDATE_WRAPPER);\n",)),
     ("CvGame.cpp", "void CvGame::update()", (
@@ -40,6 +43,9 @@ for name, signature, added in (
     for line in added:
         assert actual_body.count(line) == 1, (name, "missing/duplicate diagnostic boundary")
         actual_body = actual_body.replace(line, "")
+    if signature.startswith("CvDllGame::CvDllGame"):
+        actual_body = actual_body.replace("\tif(gDLL)\n\t{\n\t\tgDLL->GetGameCoreLock();\n\t}",
+                                          "\tif(gDLL)\n\t\tgDLL->GetGameCoreLock();")
     assert actual_body == body(baseline), (name, "original callback/control-flow changed")
 actual = source[source.index("namespace\n"):source.index("    void OnPlayerTurn(")] + "}\n"
 header = (core / "CvStackingDiagnostics.h").read_text(encoding="utf-8-sig")
@@ -47,6 +53,9 @@ declaration = header[header.index("    class TurnPhaseScope"):header.index("    
 fixture = ast.parse((root / "work/test-diagnostics-core.py").read_text(encoding="utf-8-sig"))
 head = next(ast.literal_eval(n.value) for n in fixture.body if isinstance(n, ast.Assign)
             and any(isinstance(t, ast.Name) and t.id == "head" for t in n.targets))
+head = head.replace("struct Game{int turn;Game():turn(1){}int getGameTurn(){return turn;}};",
+    "static bool forbiddenGC=false;static unsigned int phaseGCReads=0;struct Game{int turn;Game():turn(1){}int getGameTurn(){++phaseGCReads;if(forbiddenGC)throw 991;return turn;}};")
+head = head.replace("Game&getGame(){return game;}","Game&getGame(){++phaseGCReads;if(forbiddenGC)throw 992;return game;}")
 head += "\nnamespace CvStackingDiagnostics {\n" + declaration + "}\n"
 head += r'''
 static DWORD phaseClock=0;
@@ -106,6 +115,7 @@ string logs(){
  }return text;
 }
 void fresh(){
+ forbiddenGC=false;phaseGCReads=0;
  CvStackingDiagnostics::Reset();cfg.clear();cfg["DiagnosticsMemoryInterval"]=0;cfg["DiagnosticsMaxFileKB"]=64;cfg["DiagnosticsMaxFiles"]=2;
  cfg["DiagnosticsMaxRowsPerTurn"]=128;settingsReads=dbReads=opens=writes=0;openFailure=writeFailure=flushFailure=false;
  GC.game.turn=10;phaseClock=0;phaseTickCalls=0;phaseThread=17;phaseCPU=0;phaseCPUReads=0;phaseCPUAvailable=true;
@@ -305,7 +315,41 @@ void gapLifecycleTests(){
  expect(updateDepth[UPDATE_WRAPPER]==0&&!updateGap.part[GAP_ACTIVATION].open&&!updateGap.part[UPDATE_WRAPPER].open,"exception/early unwind balances pending boundary depths");
  entry(1,10,11,12,false,0,0,0);expect(countText(logs(),"|TURN_UPDATE_GAP|")==1,"completed unwind still yields bounded pending-to-entry diagnostic");
 }
-int main(){expect(sizeof(void*)==4,"native x86 VC9");disabledTests();intervalAndNestedTests();lifecycleAndErrorTests();cpuTests();entryDisabledTests();entryAggregationTests();entryLifecycleTests();entryFlowTests();gapDisabledTests();gapTimelineTests();gapLifecycleTests();CvStackingDiagnostics::Reset();printf("turn phase timing: %d checks, %d failures\n",checks,failures);return failures?1:0;}
+static DWORD WINAPI tryDiagnosticLock(LPVOID){if(!TryEnterCriticalSection(&sync.value))return 1;LeaveCriticalSection(&sync.value);return 0;}
+void coreLockTests(){
+ using namespace CvStackingDiagnostics;
+ fresh();phaseTickCalls=phaseCPUReads=phaseGCReads=0;const int readSettings=settingsReads;
+ {CoreLockAcquireScope probe;probe.Complete();}
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&phaseGCReads==0&&settingsReads==readSettings,"off/no-pending acquire probe reads no clock, CPU, GC or settings");
+ fresh();SetLevel(1);phaseClock=10;phaseCPU=1000;{ActivationTailScope tail;tail.Start(1,true);}
+ phaseClock=20;phaseCPU=1100;const unsigned int gc=phaseGCReads;const int db=dbReads,settings=settingsReads;
+ {forbiddenGC=true;CoreLockAcquireScope probe;forbiddenGC=false;
+  expect(phaseGCReads==gc&&dbReads==db&&settingsReads==settings,"before-engine-acquire scope uses only pending metadata, never GC/category/database");
+  HANDLE worker=CreateThread(NULL,0,tryDiagnosticLock,NULL,0,NULL);DWORD code=1;
+  expect(worker!=NULL&&WaitForSingleObject(worker,1000)==WAIT_OBJECT_0&&GetExitCodeThread(worker,&code)&&code==0,"diagnostic lock is released before original engine acquisition");if(worker)CloseHandle(worker);
+  phaseClock=220;phaseCPU=1100;probe.Complete();const unsigned long clocks=phaseTickCalls;probe.Complete();
+  expect(phaseTickCalls==clocks,"repeated completed acquisition cannot duplicate clocks or counters");}
+ entry(1,230,231,232,false,1200,1200,1200);string text=logs();
+ expect(text.find("coreLockAttempts=1 coreLockCompleted=1 coreLockMs=200 coreLockCPU100ns=0 coreLockCPUMeasured=1 maximumCoreLockMs=200")!=string::npos,"completed acquisition measures wait and same-thread CPU separately");
+ fresh();SetLevel(1);{ActivationTailScope tail;tail.Start(1,true);}try{CoreLockAcquireScope probe;phaseClock=900;throw 41;}catch(int){}
+ entry(1,1000,1001,1002,false,0,0,0);text=logs();
+ expect(text.find("coreLockAttempts=1 coreLockCompleted=0 coreLockMs=0 coreLockCPU100ns=0 coreLockCPUMeasured=0")!=string::npos,"throwing/unfinished acquire never fabricates completed elapsed time");
+ for(int mode=0;mode<5;++mode){fresh();SetLevel(1);{ActivationTailScope tail;tail.Start(1,true);}CoreLockAcquireScope probe;
+  if(mode==0)Reset();if(mode==1)SetLevel(2);if(mode==2)++GC.game.turn;if(mode==3)phaseThread=18;if(mode==4){ActivationTailScope replacement;replacement.Start(2,true);}
+  phaseTickCalls=phaseCPUReads=0;probe.Complete();
+  expect(phaseTickCalls==0&&phaseCPUReads==0,"reset/level/turn/thread/replaced-mark acquire completion does not sample or accumulate");}
+ fresh();SetLevel(1);{ActivationTailScope tail;tail.Start(1,true);}phaseThread=18;phaseTickCalls=phaseCPUReads=phaseGCReads=0;
+ {CoreLockAcquireScope wrong;wrong.Complete();}
+ expect(phaseTickCalls==0&&phaseCPUReads==0&&phaseGCReads==0&&updateGap.coreLockAttempts==0,"foreign-thread pre-acquire has no GC/timer work or counter attribution");
+ phaseThread=17;
+ fresh();SetLevel(1);{ActivationTailScope tail;tail.Start(1,true);}phaseCPUAvailable=false;
+ {CoreLockAcquireScope unavailable;phaseClock=10;unavailable.Complete();}entry(1,20,21,22,false,0,0,0);text=logs();
+ expect(text.find("coreLockAttempts=1 coreLockCompleted=1 coreLockMs=10 coreLockCPU100ns=0 coreLockCPUMeasured=0")!=string::npos,"unavailable acquire CPU preserves completed wall measurement and explicit partial count");
+ fresh();SetLevel(1);phaseClock=0xffffffe0UL;{ActivationTailScope tail;tail.Start(1,true);}phaseClock=0xfffffff0UL;
+ {CoreLockAcquireScope probe;phaseClock=10;probe.Complete();}entry(1,20,21,22,false,0,0,0);
+ expect(logs().find("coreLockAttempts=1 coreLockCompleted=1 coreLockMs=26")!=string::npos,"constructor acquisition duration survives unsigned clock wrap");
+}
+int main(){expect(sizeof(void*)==4,"native x86 VC9");disabledTests();intervalAndNestedTests();lifecycleAndErrorTests();cpuTests();entryDisabledTests();entryAggregationTests();entryLifecycleTests();entryFlowTests();gapDisabledTests();gapTimelineTests();gapLifecycleTests();coreLockTests();CvStackingDiagnostics::Reset();printf("turn phase timing: %d checks, %d failures\n",checks,failures);return failures?1:0;}
 '''
 
 cpp = out / "turn-phase-source-test.cpp"

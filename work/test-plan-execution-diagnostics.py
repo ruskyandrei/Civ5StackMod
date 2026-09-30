@@ -27,6 +27,7 @@ def method(text, name):
 
 
 helpers = source[source.index('// Summary-only execution evidence.'):source.index('bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(')]
+victim_helpers = source[source.index('// Execution identities are ephemeral tactical evidence, never save data.'):source.index('bool TacticalAIHelpers::ExecuteUnitAssignments(')]
 actual = method(source, 'ExecuteUnitAssignments')
 wrapper = method(source, 'FindAndExecuteBestUnitAssignments')
 control = method(control_source, 'ExecuteUnitAssignments').replace('TacticalAIHelpers::ExecuteUnitAssignments(', 'TacticalAIHelpers::ExecuteUnitAssignmentsControl(', 1)
@@ -53,7 +54,7 @@ struct CvUnit;struct CvCity;struct CvPlot{int id,x,y;bool enemyCity,enemyUnit;Cv
  int GetPlotIndex()const{return id;}int getX()const{return x;}int getY()const{return y;}bool isCity()const{return city!=NULL;}int getOwner()const{return enemyCity?1:0;}
  bool isEnemyUnit(int,bool,bool)const;bool isEnemyCity(const CvUnit&)const{return enemyCity;}CvCity*getPlotCity()const{return city;}
  CvUnit*getBestDefender(int,int,const CvUnit*)const{return defender;}};
-struct CvCity{int hp,damage;CvCity():hp(100),damage(0){}int GetMaxHitPoints()const{return hp;}int getDamage()const{return damage;}};
+struct CvCity{int hp,damage;CvCity():hp(100),damage(0){}int GetMaxHitPoints()const{return hp;}int getDamage()const{return damage;}CvUnit*GetGarrisonedUnit()const{return NULL;}};
 int diagnosticReads=0,lookupReads=0,pathClears=0,searchCalls=0,planScenario=0;bool diagnostics=false,allowCity=true,blockMove=false,removeOnOrder=false,replaceOnOrder=false,buildAllowed=false,repairAllowed=false,surpriseKill=false;
 vector<string> missionLog;vector<CvUnit*> allocated;vector<CvPlot> plots;CvCity city;
 namespace CvTypes{int getMISSION_MOVE_TO(){return 1;}int getMISSION_SWAP_UNITS(){return 2;}int getMISSION_RANGE_ATTACK(){return 3;}int getMISSION_PILLAGE(){return 4;}int getMISSION_BUILD(){return 5;}int getMISSION_REPAIR_FLEET(){return 6;}int getMISSION_SKIP(){return 7;}}
@@ -83,8 +84,8 @@ void CvUnit::PushMission(int type,int a,int b,int flags,bool,bool,int ai){ostrin
  if(replaceOnOrder){CvUnit*r=new CvUnit(id);allocated.push_back(r);r->hp=37;r->p=&plots[3];player.units[id]=r;replaceOnOrder=false;}}
 struct MapStub{CvPlot*plotByIndexUnchecked(int id){return id>=0&&id<(int)plots.size()?&plots[id]:NULL;}};
 struct GCStub{MapStub map;MapStub&getMap(){return map;}int getInfoTypeForString(const char*){return 1;}}GC;
-struct STacticalAssignment{int iUnitID,iFromPlotIndex,iToPlotIndex,iRemainingMoves;eUnitAssignmentType eAssignmentType;
- STacticalAssignment(int unit=1,int from=0,int to=1,eUnitAssignmentType type=A_MOVE):iUnitID(unit),iFromPlotIndex(from),iToPlotIndex(to),iRemainingMoves(0),eAssignmentType(type){}};
+struct STacticalAssignment{int iUnitID,iFromPlotIndex,iToPlotIndex,iRemainingMoves;eUnitAssignmentType eAssignmentType;int iPrimaryUnitID;PlayerTypes ePrimaryUnitOwner;
+ STacticalAssignment(int unit=1,int from=0,int to=1,eUnitAssignmentType type=A_MOVE):iUnitID(unit),iFromPlotIndex(from),iToPlotIndex(to),iRemainingMoves(0),eAssignmentType(type),iPrimaryUnitID(-1),ePrimaryUnitOwner(NO_PLAYER){}};
 struct Row{string category,message;};vector<Row>rows;
 namespace CvStackingDiagnostics{bool EnabledCategory(int,int,const char*){return diagnostics;}void Record(int,int,const char*category,const char*format,...){if(!diagnostics)return;char message[3072];va_list args;va_start(args,format);_vsnprintf_s(message,sizeof(message),_TRUNCATE,format,args);va_end(args);Row row;row.category=category;row.message=message;rows.push_back(row);}}
 namespace CvStacking{int GetInt(const char*,int fallback){return fallback;}}
@@ -120,7 +121,7 @@ vector<STacticalAssignment> scenario(int n){CvUnit*u=unit(1);vector<STacticalAss
 tests = r'''
 int main(){
  for(int s=0;s<=16;++s){reset();vector<STacticalAssignment>a=scenario(s);string expected=outcome(TacticalAIHelpers::ExecuteUnitAssignmentsControl(0,a));int oldLookup=lookupReads;
-  reset();a=scenario(s);string disabled=outcome(TacticalAIHelpers::ExecuteUnitAssignments(0,a));check(disabled==expected,"disabled diagnostic preserves actual control result/orders/state");check(rows.empty()&&diagnosticReads==0&&lookupReads==oldLookup,"disabled execution performs no snapshot reads/extra lookups/records");
+  reset();a=scenario(s);string disabled=outcome(TacticalAIHelpers::ExecuteUnitAssignments(0,a));check(disabled==expected,"disabled diagnostic preserves actual control result/orders/state");check(rows.empty()&&diagnosticReads==0,"disabled diagnostics perform no snapshot reads or records; core identity lookups are gameplay work");
   reset();a=scenario(s);diagnostics=true;string enabled=outcome(TacticalAIHelpers::ExecuteUnitAssignments(0,a));check(enabled==expected,"enabled diagnostic preserves actual control result/orders/state");
   bool succeeds=s==0||s==2||s==3||s==14||s==15||s==16;check(rows.size()==(succeeds?0:1),"exactly one compact row per failed execution");
   if(s==1)check(contains(rows[0].message,"pre=1 post=0")&&contains(rows[0].message,"currentOrderIssued=1")&&contains(rows[0].message,"beforePlot=0 afterPlot=0"),"blocked mission distinguished from no issued order");
@@ -138,12 +139,17 @@ int main(){
  reset();diagnostics=true;unit(1);unit(2);vector<int>ids;ids.push_back(1);ids.push_back(2);unsigned __int64 a=StackPlanDiagnosticInputHash(0,ids);reverse(ids.begin(),ids.end());check(a!=StackPlanDiagnosticInputHash(0,ids),"signature preserves input order");reverse(ids.begin(),ids.end());player.units[1]->moves--;check(a!=StackPlanDiagnosticInputHash(0,ids),"signature observes basic movement change");player.units.erase(1);check(a!=StackPlanDiagnosticInputHash(0,ids),"signature includes missing input identity");
  reset();diagnostics=true;for(int i=1;i<=54;++i)units.push_back(unit(i));units.erase(units.begin());StackPlanRetryDiagnostic probe(0,&plots[1],2,3,units);player.units[54]->hp--;probe.Failed(57);
  check(rows.size()==1&&contains(rows[0].message,"input=54")&&contains(rows[0].message,"idsShown=40 idsTruncated=1")&&contains(rows[0].message,"sameBasicSignature=0"),"bounded ID list hashes changes beyond the displayed forty");
+ reset();vector<STacticalAssignment>mismatch=scenario(3);diagnostics=true;mismatch[0].ePrimaryUnitOwner=0;mismatch[0].iPrimaryUnitID=99;
+ check(!TacticalAIHelpers::ExecuteUnitAssignments(0,mismatch)&&missionLog.empty()&&rows.size()==1,"primary mismatch records one failure without issuing a mission");
+ check(contains(rows[0].message,"reason=primary_changed")&&contains(rows[0].message,"expectedPrimaryOwner=0 expectedPrimaryUnit=99 nativePrimaryOwner=0 nativePrimaryUnit=2"),"compact primary mismatch preserves forecast and native identities");
+ reset();mismatch=scenario(3);mismatch[0].ePrimaryUnitOwner=0;mismatch[0].iPrimaryUnitID=99;
+ check(!TacticalAIHelpers::ExecuteUnitAssignments(0,mismatch)&&rows.empty()&&diagnosticReads==0,"disabled mismatch diagnostics perform no snapshot work or output");
  printf("plan execution diagnostics: %d checks, %d failures\n",checks,failures);reset();return failures?1:0;
 }
 '''
 
 cpp = out / 'test.cpp'
-cpp.write_text(fixture + helpers + control + wrapper_control + actual + wrapper + tests, encoding='utf-8')
+cpp.write_text(fixture + helpers + victim_helpers + control + wrapper_control + actual + wrapper + tests, encoding='utf-8')
 vc = root / 'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0'
 sdk = root / 'work/toolchain/sdk/windows'
 env = os.environ.copy()

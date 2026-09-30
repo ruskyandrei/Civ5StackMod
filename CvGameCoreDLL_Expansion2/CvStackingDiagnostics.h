@@ -71,6 +71,21 @@ namespace CvStackingDiagnostics
         unsigned long thread, generation;
     };
     void BeforeUpdateMoves();
+    // Start before the original engine acquire without consulting game state.
+    // Complete only after it returns successfully; destruction never fabricates
+    // a completed acquisition for an unfinished/throwing call.
+    class CoreLockAcquireScope
+    {
+    public:
+        CoreLockAcquireScope();
+        void Complete();
+    private:
+        CoreLockAcquireScope(const CoreLockAcquireScope&);
+        CoreLockAcquireScope& operator=(const CoreLockAcquireScope&);
+        bool active, cpuAvailable;
+        unsigned long serial, thread, generation, started;
+        unsigned __int64 cpuStarted;
+    };
     class ActivationTailScope
     {
     public:

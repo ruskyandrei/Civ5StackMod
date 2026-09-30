@@ -258,3 +258,37 @@ A separate explicit primary victim owner/ID tactical fix is prepared under
 `work/primary-identity-production.patch`, deliberately held until after the cache
 comparison. It avoids the more intrusive discarded projected-damage HP gate.
 Do not claim these pending changes are installed or native-validated yet.
+
+## DLL56 exact cache result and dispatch localization
+
+Workflow controls were saved separately in4bfc9812d. Source commitf412182f4
+built `Release-5.4.6-56-gf412182f4 Clean` in
+`work/msvc-output/Release/20260930-231318` (80.875s,179TUs).
+DLL SHA30060AE35E0A90BC7533205CB15D733C4A92F5821F851DC4E8AE3D0901AC7F94;
+PDB050F3D75CAADA12025FC9DCAE96C0B859C2EBF77F9BA30CD9D37006B5CB40F9B.
+
+`perf-d56-standard-full-logging`, native
+`Stacking-20260930T221954-848-p32136-r1`, completed and quit normally.
+All506 semantic events and before/after census rows match recorded54 standard
+control, including Utrecht capture. T25246.250s/PLAN14.013s; T253126.328s/
+PLAN91.064s. This is a modest search improvement; the30-second target is unmet.
+T253 strength evictions declined8,393,930 to5,743,198 compared with the earlier
+54 candidate with the same event sequence. Full defense misses2,461,680 to828,749;
+full attack misses767,667 to565,897. Remaining ranged misses5,685,222 motivate
+separate proof work, not changing the cache budget.
+
+The new bounded update markers localize23 T252 activation windows totaling14.405s:
+all14.405s occurs between consecutive CvDllGame::Update calls, with unchanged
+GameCore CPU counters. Each has two wrapper spans and one dispatch interval;
+activation tail, update body/head and begin/end Lua hooks round to0ms. No nested
+scopes or reconciliation remainder. This does not identify a particular external
+wait: wrapper-constructor GameCoreLock acquisition occurs before Update itself.
+A narrowly scoped constructor acquisition counter is prepared for the next build.
+
+The next build also applies the separately reviewed explicit-primary-victim
+executor fix. That intentionally changes some actions, so do not require its
+native sequence to match56 blindly. Validate the corrected victim/capture checks,
+legitimate roll/visibility restarts, source/preparation proof and actual timing.
+The tactical patch adds8 bytes per ephemeral assignment and changes no save
+format, combat math, search limits or army requirements. The original projected
+HP-consistency-gate prototype remains excluded.
