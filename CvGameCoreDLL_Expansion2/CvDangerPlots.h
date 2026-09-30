@@ -50,11 +50,15 @@ struct CvDangerPlotContents
 		m_apUnits.clear(); if (m_apUnits.capacity() > 5) { DangerUnitVector().swap(m_apUnits); m_apUnits.reserve(5); }
 		m_apCities.clear(); //cities are fairly static so don't care to prune
 		m_apCaptureUnits.clear(); if (m_apCaptureUnits.capacity() > 5) { DangerUnitVector().swap(m_apCaptureUnits); }
+		m_stackDangerDamageIDs.clear();
+		m_stackDangerDamageIDsValid = false;
 	};
 
 	int GetDanger(const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction);
 	int GetStackDanger(const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
 	bool TryGetFixedStackDanger(const CvUnit* pUnit, int& result) const;
+	const std::vector<int>& GetStackDangerDamageIDs() const;
+	void InvalidateStackDangerDamageIDs() { m_stackDangerDamageIDsValid = false; }
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison, const SUnitIDValueContainer& extraUnitDamage, int iExtraSelfDamage = 0);
 	std::vector<CvUnit*> GetPossibleAttackers(TeamTypes eTeamForVisibilityCheck) const;
 
@@ -71,6 +75,11 @@ struct CvDangerPlotContents
 	DangerCityVector m_apCities;
 	DangerUnitVector m_apCaptureUnits; //for civilians
 	int m_iFogCount;
+private:
+	// Only projected enemy wounds at these raw IDs can affect stack danger.
+	// Unit IDs remain player-local, and city IDs use the existing negative key.
+	mutable std::vector<int> m_stackDangerDamageIDs;
+	mutable bool m_stackDangerDamageIDsValid;
 };
 
 //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -95,6 +104,9 @@ public:
 	int GetDanger(const CvPlot& pPlot, bool bFixedDamageOnly);
 	int GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
 	bool TryGetFixedStackDanger(const CvPlot& plot, const CvUnit* pUnit, int& result);
+	// Borrow only while building a key: rebuilding danger/resetting the map can
+	// invalidate the vector. Null means the caller must retain its full key.
+	const std::vector<int>* GetStackDangerDamageIDs(const CvPlot& plot);
 
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck) const;
 	bool IsKnownAttacker(const CvUnit* pUnit) const;

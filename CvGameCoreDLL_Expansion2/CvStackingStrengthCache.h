@@ -32,5 +32,7 @@ namespace CvStackingStrengthCache
 	// Thread-safe invalidation only changes an epoch. Foreign UI threads never
 	// touch the map. Call before releasing GameCore and on dirty danger state.
 	void Invalidate();
+	// Shared live-scene revision; valid even when strength caching is disabled.
+	long SceneEpoch();
 	Stats GetStats();
 }

@@ -11,6 +11,8 @@ reference=reference[reference.index('static void AppendStackCandidates('):refere
 prefix=r'''
 #define _SECURE_SCL 0
 #define _HAS_ITERATOR_DEBUGGING 0
+#define NOMINMAX
+#include <windows.h>
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -30,7 +32,12 @@ template<class T> struct CountingAllocator:std::allocator<T>{
 template<class T,class U>bool operator==(const CountingAllocator<T>&,const CountingAllocator<U>&){return true;}
 template<class T,class U>bool operator!=(const CountingAllocator<T>&,const CountingAllocator<U>&){return false;}
 using namespace std;
-struct CvUnit { int id; CvUnit(int v=0):id(v){} int GetID()const{return id;} };
+namespace CvStackingStrengthCache {volatile LONG fixtureEpoch=1;long SceneEpoch(){return InterlockedCompareExchange(&fixtureEpoch,0,0);}void Invalidate(){InterlockedIncrement(&fixtureEpoch);}}
+struct CvUnit { int id; CvUnit(int v=0):id(v){} int GetID()const{return id;}int getOwner()const{return 0;} };
+struct CvPlot {};
+struct CvDangerPlots {vector<int> ids;bool project;CvDangerPlots():project(false){}const vector<int>*GetStackDangerDamageIDs(const CvPlot&){return project?&ids:NULL;}};
+struct Player {CvDangerPlots danger;CvDangerPlots*GetDangerPlots(){return &danger;}}player;
+#define GET_PLAYER(id) player
 struct SUnitIDValueContainer {
  typedef pair<int,int> value_type;typedef vector<value_type>::const_iterator const_iterator;
  vector<value_type> entries;
@@ -48,7 +55,7 @@ static void expect(const char*name,bool ok){++checks;if(!ok){++failures;if(failu
 static StackForecastKey key(int a,int b=0){StackForecastKey k;k.state.push_back(a);k.state.push_back(b);return k;}
 static StackForecastKey wideKey(int a,int n){StackForecastKey k;k.state.assign(n,a);return k;}
 static int value(const StackForecastKey&k){unsigned int v=2166136261u;for(size_t i=0;i<k.state.size();++i)v=(v*16777619u)^(unsigned int)k.state[i];return (int)(v&0x7fffffffu);}
-static int danger(const StackForecastKey&k,int&calls){if(gStackForecastsActive){StackDangerForecasts::const_iterator it=gStackDangerForecasts.find(k);if(it!=gStackDangerForecasts.end())return it->second;}++calls;int result=value(k);StoreStackDangerForecast(k,result);return result;}
+static int danger(const StackForecastKey&k,int&calls){if(StackForecastContext()){StackDangerForecasts::const_iterator it=gStackDangerForecasts.find(k);if(it!=gStackDangerForecasts.end())return it->second;}++calls;int result=value(k);StoreStackDangerForecast(k,result);return result;}
 static void invariant(const char*name){
  size_t bytes=0;bool ok=gStackDangerOrder.size()==gStackDangerForecasts.size()&&gStackDefenderOrder.size()==gStackDefenderForecasts.size();
  for(StackDangerForecasts::const_iterator i=gStackDangerForecasts.begin();i!=gStackDangerForecasts.end();++i)bytes+=i->first.state.capacity()*sizeof(int);
@@ -57,6 +64,15 @@ static void invariant(const char*name){
  for(size_t i=0;i<gStackDangerOrder.size();++i){StackDangerForecasts::const_iterator it=gStackDangerForecasts.find(*gStackDangerOrder[i]);ok=ok&&it!=gStackDangerForecasts.end()&& &it->first==gStackDangerOrder[i];}
  for(size_t i=0;i<gStackDefenderOrder.size();++i){StackDefenderForecasts::const_iterator it=gStackDefenderForecasts.find(*gStackDefenderOrder[i]);ok=ok&&it!=gStackDefenderForecasts.end()&& &it->first==gStackDefenderOrder[i];}
  expect(name,ok);
+}
+static DWORD WINAPI foreignCache(void*){
+ StackForecastScope foreign;DWORD result=0;
+ if(foreign.owned||StackForecastContext())result|=1;
+ StackForecastQuery query(gStackDangerScratch,gStackDangerScratchBusy);
+ StackForecastPairQuery pairs;VirtualFriendlyStackQuery stack;
+ if(query.scratch||pairs.borrowed||stack.borrowed)result|=2;
+ StoreStackDangerForecast(key(999),17);StoreStackDefenderForecast(key(999),NULL);
+ CvStackingStrengthCache::Invalidate();return result;
 }
 int main(){
  expect("native32bit",sizeof(void*)==4&&sizeof(size_t)==4);
@@ -87,13 +103,24 @@ int main(){
   StoreStackDefenderForecast(key(200),NULL);expect("null defender is a cached result",gStackDefenderForecasts.find(key(200))!=gStackDefenderForecasts.end()&&gStackDefenderForecasts.find(key(200))->second==NULL);
  }
  {StackForecastScope s;gStackEntryLimit=4;gStackKeyPayloadLimit=512;StoreStackDangerForecast(key(1),99);size_t count=gStackDangerForecasts.size();
-  {StackForecastScope inner;expect("nested memoization disabled",!gStackForecastsActive);StoreStackDangerForecast(key(2),2);expect("nested leaves outer table",gStackDangerForecasts.size()==count);
+  {StackForecastScope inner;expect("nested memoization disabled",!gStackForecastsActive);StoreStackDangerForecast(key(2),2);expect("nested invalidates outer table",gStackDangerForecasts.empty()&&count==1);
    {StackForecastScope third;StoreStackDefenderForecast(key(3),NULL);expect("third depth still bypassed",!gStackForecastsActive&&gStackDefenderForecasts.empty());}
    expect("nested exit not prematurely active",!gStackForecastsActive);
   }
-  expect("outer memoization restored",gStackForecastsActive&&gStackDangerForecasts.find(key(1))->second==99&&gStackNestedBypasses==2);invariant("nested accounting");
+  expect("outer memoization restored without stale data",gStackForecastsActive&&gStackDangerForecasts.empty()&&gStackNestedBypasses==2);invariant("nested accounting");
  }
  expect("outer scope clears maps and queues",!gStackForecastsActive&&gStackForecastDepth==0&&gStackDangerForecasts.empty()&&gStackDefenderForecasts.empty()&&gStackDangerOrder.empty()&&gStackDefenderOrder.empty()&&gStackKeyPayloadBytes==0);
+ {StackForecastScope s;StoreStackDangerForecast(key(1),37);StoreStackDefenderForecast(key(2),NULL);gStackThreatFlags[make_pair(0,9)]=3;
+  const unsigned long revision=gStackForecastRevision;const size_t entries=gStackDangerForecasts.size();const unsigned long misses=gStackDangerMisses;
+  HANDLE thread=CreateThread(NULL,0,foreignCache,NULL,0,NULL);expect("foreign cache fixture thread created",thread!=NULL);
+  if(thread){expect("foreign thread completes",WaitForSingleObject(thread,10000)==WAIT_OBJECT_0);DWORD result=~0u;GetExitCodeThread(thread,&result);expect("foreign thread bypasses all shared cache/scratch",result==0);CloseHandle(thread);}
+  expect("foreign invalidation leaves maps until owner observes",gStackDangerForecasts.size()==entries&&gStackForecastRevision==revision);
+  expect("owner observes changed epoch",StackForecastContext()&&gStackForecastRevision!=revision);
+  expect("epoch clears all forecasts/memo and payload",gStackDangerForecasts.empty()&&gStackDefenderForecasts.empty()&&gStackThreatFlags.empty()&&gStackKeyPayloadBytes==0);
+  expect("epoch retains cumulative counters",gStackDangerMisses==misses);invariant("epoch accounting");
+  StoreStackDangerForecast(key(3),19);gStackThreatFlags[make_pair(0,8)]=1;InvalidateStackForecastScene();
+  expect("actual yield invalidates forecasts and threats",gStackDangerForecasts.empty()&&gStackThreatFlags.empty());invariant("yield accounting");
+ }
  {StackForecastScope s;gStackEntryLimit=2000;gStackKeyPayloadLimit=100000;
   for(int i=0;i<1000;++i){StackForecastKey k;size_t h=(size_t)i+0x9e3779b9;k.state.push_back(i);k.state.push_back((int)(h-0x9e3779b9-(h<<6)-(h>>2)));expect("forced hash collision",StackForecastKeyHash()(k)==0);StoreStackDangerForecast(k,i);}
   for(int i=0;i<1000;++i){StackForecastKey k;size_t h=(size_t)i+0x9e3779b9;k.state.push_back(i);k.state.push_back((int)(h-0x9e3779b9-(h<<6)-(h>>2)));expect("collision exact equality",gStackDangerForecasts.find(k)->second==i);}
@@ -115,6 +142,19 @@ int main(){
   x.state.clear();y.state.clear();AppendStackCandidates(x,left,d,false);AppendStackCandidates(y,right,d,false);expect("city/legacy order retained",!(x==y));
   SUnitIDValueContainer changed=d;changed.entries[0].second=10;x.state.clear();y.state.clear();AppendStackCandidates(x,left,d,true);AppendStackCandidates(y,left,changed,true);expect("exact1HP difference retained",!(x==y));
   SUnitIDValueContainer perm=d;reverse(perm.entries.begin(),perm.entries.end());x.state.clear();y.state.clear();AppendStackDamage(x,d);AppendStackDamage(y,perm);expect("damage state canonical",x==y);
+ }
+ {StackForecastScope scope;CvUnit unit(1);CvPlot plot;player.danger.project=true;
+  player.danger.ids.push_back(-4);player.danger.ids.push_back(0);player.danger.ids.push_back(2);player.danger.ids.push_back(7);
+  for(int trial=0;trial<16000;++trial){SUnitIDValueContainer damage,expected;for(int id=-7;id<15;++id){int value=(trial*17+id*13)%101;if((trial+id)%9==0)value=0;damage.entries.push_back(make_pair(id,value));if(binary_search(player.danger.ids.begin(),player.danger.ids.end(),id))expected.entries.push_back(make_pair(id,value));}
+   if(trial%3==0)reverse(damage.entries.begin(),damage.entries.end());
+   StackForecastKey projected,original;AppendStackDamageProjected(projected,damage,&unit,&plot);OriginalDamage(original,expected);expect("projection retains every exact relevant unit/city/zero-ID value",projected==original);
+   SUnitIDValueContainer changed=damage;for(size_t i=0;i<changed.entries.size();++i)if(changed.entries[i].first==14)++changed.entries[i].second;
+   StackForecastKey irrelevant;AppendStackDamageProjected(irrelevant,changed,&unit,&plot);expect("irrelevant projected damage cannot change key",projected==irrelevant);
+   for(size_t i=0;i<changed.entries.size();++i)if(changed.entries[i].first==2)++changed.entries[i].second;
+   StackForecastKey relevant;AppendStackDamageProjected(relevant,changed,&unit,&plot);expect("relevant one HP difference always changes key",!(projected==relevant));
+  }
+  player.danger.project=false;SUnitIDValueContainer damage;damage.entries.push_back(make_pair(-99,73));StackForecastKey fallback,original;AppendStackDamageProjected(fallback,damage,&unit,&plot);OriginalDamage(original,damage);expect("unavailable metadata preserves entire damage key",fallback==original);
+  player.danger.ids.clear();player.danger.project=true;StackForecastKey empty;AppendStackDamageProjected(empty,damage,&unit,&plot);expect("empty dependency metadata yields exact empty damage component",empty.state.size()==1&&empty.state[0]==0);player.danger.project=false;
  }
 
  {StackForecastScope s;

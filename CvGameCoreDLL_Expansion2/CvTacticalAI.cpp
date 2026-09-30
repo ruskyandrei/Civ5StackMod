@@ -7601,14 +7601,48 @@ static StackDefenderForecasts gStackDefenderForecasts;
 // Node references survive unordered_map rehash; iterators do not. FIFO stores
 // only key pointers, not duplicate key vectors, and removes them before erase.
 static std::deque<const StackForecastKey*> gStackDangerOrder, gStackDefenderOrder;
+typedef std::map<std::pair<int, int>, unsigned char> StackThreatFlags;
+static StackThreatFlags gStackThreatFlags;
 static bool gStackForecastsActive = false;
 static unsigned int gStackForecastDepth = 0;
+static volatile LONG gStackForecastOwnerThread = 0;
+static long gStackForecastSceneEpoch = 0;
+static unsigned long gStackForecastRevision = 0;
 static unsigned long gStackDangerHits = 0, gStackDangerMisses = 0;
 static unsigned long gStackDefenderHits = 0, gStackDefenderMisses = 0;
 static unsigned long gStackInsertBypasses = 0, gStackNestedBypasses = 0;
 static unsigned long gStackDangerEvictions = 0, gStackDefenderEvictions = 0;
 static size_t gStackPeakEntries = 0, gStackPeakKeyBytes = 0, gStackPeakEstimatedBytes = 0;
 static size_t gStackKeyPayloadBytes = 0, gStackKeyPayloadLimit = 0, gStackEntryLimit = 0;
+static bool IsStackForecastOwner()
+{
+ return (DWORD)gStackForecastOwnerThread == GetCurrentThreadId();
+}
+static void ClearStackForecastEntries()
+{
+ // Only the owning search thread calls this. Foreign callbacks change the
+ // atomic scene epoch; they never touch these containers or borrowed buffers.
+ gStackDangerOrder.clear(); gStackDefenderOrder.clear();
+ gStackDangerForecasts.clear(); gStackDefenderForecasts.clear();
+ gStackThreatFlags.clear();
+ gStackKeyPayloadBytes = 0;
+ ++gStackForecastRevision;
+}
+static void InvalidateStackForecastScene()
+{
+ if (!IsStackForecastOwner())
+  return;
+ ClearStackForecastEntries();
+ gStackForecastSceneEpoch = CvStackingStrengthCache::SceneEpoch();
+}
+static bool StackForecastContext()
+{
+ if (!IsStackForecastOwner() || !gStackForecastsActive || gStackForecastDepth != 1)
+  return false;
+ if (gStackForecastSceneEpoch != CvStackingStrengthCache::SceneEpoch())
+  InvalidateStackForecastScene();
+ return true;
+}
 // Most queries hit. Reuse their temporary vectors rather than allocating a key
 // and two sorting buffers millions of times. A borrower owns the buffer through
 // the leaf calculation; nested callbacks use private fallback vectors.
@@ -7621,7 +7655,7 @@ struct StackForecastQuery
  bool* busy;
  StackForecastKey& key;
  StackForecastQuery(StackForecastKey& buffer,bool& inUse):
-  scratch(gStackForecastsActive && !inUse ? &buffer : NULL),busy(scratch ? &inUse : NULL),
+  scratch(StackForecastContext() && !inUse ? &buffer : NULL),busy(scratch ? &inUse : NULL),
   key(scratch ? *scratch : *new StackForecastKey)
  {
   if(busy) *busy=true;
@@ -7639,7 +7673,7 @@ struct StackForecastPairQuery
 {
  bool borrowed;
  vector<pair<int,int> >& entries;
- StackForecastPairQuery():borrowed(gStackForecastsActive && !gStackSortScratchBusy),
+ StackForecastPairQuery():borrowed(StackForecastContext() && !gStackSortScratchBusy),
   entries(borrowed ? gStackSortScratch : *new vector<pair<int,int> >)
  {
   if(borrowed) gStackSortScratchBusy=true;
@@ -7676,7 +7710,7 @@ struct VirtualFriendlyStackQuery
  VirtualFriendlyStackBuffer& buffer;
  vector<const CvUnit*>& candidates;
  SUnitIDValueContainer& damage;
- VirtualFriendlyStackQuery():borrowed(gStackForecastsActive && !gStackVirtualScratchBusy),
+ VirtualFriendlyStackQuery():borrowed(StackForecastContext() && !gStackVirtualScratchBusy),
   buffer(borrowed ? gStackVirtualScratch : *new VirtualFriendlyStackBuffer),
   candidates(buffer.candidates),damage(buffer.damage)
  {
@@ -7696,19 +7730,25 @@ private:
 
 struct StackForecastScope
 {
- StackForecastScope()
+ bool owned;
+ StackForecastScope():owned(false)
  {
+  const LONG thread = (LONG)GetCurrentThreadId();
+  const LONG previous = InterlockedCompareExchange(&gStackForecastOwnerThread, thread, 0);
+  if (previous != 0 && previous != thread)
+   return;
+  owned = true;
   ++gStackForecastDepth;
   gStackForecastsActive = gStackForecastDepth == 1;
   if (!gStackForecastsActive)
   {
-   // Ordinary callers are nonrecursive. A callback that reenters search must
-   // not clear/reuse the outer forecast table; the base search is not reentrant.
+   // A nested search bypasses shared storage and cancels outer computations
+   // in flight. The base tactical search itself is still nonreentrant.
+   InvalidateStackForecastScene();
    ++gStackNestedBypasses;
    return;
   }
-  gStackDangerOrder.clear(); gStackDefenderOrder.clear();
-  gStackDangerForecasts.clear(); gStackDefenderForecasts.clear();
+  InvalidateStackForecastScene();
   gStackDangerHits = gStackDangerMisses = gStackDefenderHits = gStackDefenderMisses = 0;
   gStackInsertBypasses = gStackNestedBypasses = 0;
   gStackDangerEvictions = gStackDefenderEvictions = 0;
@@ -7721,8 +7761,11 @@ struct StackForecastScope
  }
  ~StackForecastScope()
  {
+  if (!owned)
+   return;
   --gStackForecastDepth;
   gStackForecastsActive = gStackForecastDepth == 1;
+  InvalidateStackForecastScene();
   if (gStackForecastDepth == 0)
   {
    // clear() can retain buckets. Release them as well in the 32-bit game.
@@ -7730,13 +7773,18 @@ struct StackForecastScope
    std::deque<const StackForecastKey*>().swap(gStackDefenderOrder);
    StackDangerForecasts().swap(gStackDangerForecasts);
    StackDefenderForecasts().swap(gStackDefenderForecasts);
+   StackThreatFlags().swap(gStackThreatFlags);
    vector<int>().swap(gStackDangerScratch.state);
    vector<int>().swap(gStackDefenderScratch.state);
    vector<pair<int,int> >().swap(gStackSortScratch);
    gStackVirtualScratch.release();
    gStackKeyPayloadBytes = 0;
+   InterlockedExchange(&gStackForecastOwnerThread, 0);
   }
  }
+private:
+ StackForecastScope(const StackForecastScope&);
+ StackForecastScope& operator=(const StackForecastScope&);
 };
 
 static bool EvictOldestStackForecast()
@@ -7776,7 +7824,7 @@ static bool EvictOldestStackForecast()
 
 static bool CanStoreStackForecast(const StackForecastKey& key)
 {
- if (!gStackForecastsActive)
+ if (!StackForecastContext())
   return false;
  const size_t payload = key.state.capacity() * sizeof(int);
  // Reject a key that can never fit before evicting any useful entries.
@@ -7803,7 +7851,8 @@ static size_t EstimatedStackForecastBytes()
  // Key payload is measured; allocator/node/bucket overhead is an estimate.
  // FIFO adds only one key pointer per retained entry plus its two containers.
  return gStackKeyPayloadBytes + entries * (sizeof(StackForecastKey) + sizeof(const CvUnit*) + 9 * sizeof(void*))
-  + sizeof(gStackDangerOrder) + sizeof(gStackDefenderOrder);
+  + sizeof(gStackDangerOrder) + sizeof(gStackDefenderOrder)
+  + sizeof(gStackThreatFlags) + gStackThreatFlags.size() * (sizeof(StackThreatFlags::value_type) + 4 * sizeof(void*));
 }
 
 static void UpdateStackForecastPeaks()
@@ -7893,6 +7942,35 @@ static void AppendStackDamage(StackForecastKey& key, const SUnitIDValueContainer
  }
 }
 
+static void AppendStackDamageProjected(StackForecastKey& key, const SUnitIDValueContainer& damage,
+ const CvUnit* unit, const CvPlot* plot)
+{
+ // The danger leaf reads only sources in this plot's attack-reach map. Raw
+ // IDs preserve the existing owner aliases and negative city-ID convention;
+ // retain every exact nonzero HP value for those sources, never a hash alone.
+ const vector<int>* sourceIDs = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDangerDamageIDs(*plot);
+ if (!sourceIDs)
+ {
+  AppendStackDamage(key, damage);
+  return;
+ }
+ StackForecastPairQuery query;
+ vector<pair<int, int> >& entries = query.entries;
+ for (SUnitIDValueContainer::const_iterator it = damage.begin(); it != damage.end(); ++it)
+ {
+  const SUnitIDValueContainer::value_type entry = *it;
+  if (entry.second != 0 && std::binary_search(sourceIDs->begin(), sourceIDs->end(), entry.first))
+   entries.push_back(entry);
+ }
+ std::sort(entries.begin(), entries.end());
+ key.state.push_back((int)entries.size());
+ for (size_t i = 0; i < entries.size(); ++i)
+ {
+  key.state.push_back(entries[i].first);
+  key.state.push_back(entries[i].second);
+ }
+}
+
 static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
 {
@@ -7901,25 +7979,30 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   return fixedDanger;
  StackForecastQuery query(gStackDangerScratch,gStackDangerScratchBusy);
  StackForecastKey& key=query.key;
- if (gStackForecastsActive)
+ bool cacheable = StackForecastContext();
+ const unsigned long revision = cacheable ? gStackForecastRevision : 0;
+ const long scene = cacheable ? gStackForecastSceneEpoch : 0;
+ if (cacheable)
  {
   key.state.push_back(unit->GetID());
   key.state.push_back(plot->GetPlotIndex());
   key.state.push_back(friendlyDamage.GetValue(unit->GetID()));
   key.state.push_back(CvStacking::GetCityProtection(plot->getPlotCity()));
   AppendStackCandidates(key, candidates, friendlyDamage, !plot->isCity() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0);
-  AppendStackDamage(key, enemyDamage);
-  StackDangerForecasts::const_iterator cached = gStackDangerForecasts.find(key);
-  if (cached != gStackDangerForecasts.end())
+  AppendStackDamageProjected(key, enemyDamage, unit, plot);
+  cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
+  StackDangerForecasts::const_iterator cached = cacheable ? gStackDangerForecasts.find(key) : gStackDangerForecasts.end();
+  if (cacheable && cached != gStackDangerForecasts.end())
   {
    ++gStackDangerHits;
    return cached->second;
   }
  }
- if (gStackForecastsActive)
+ if (cacheable)
   ++gStackDangerMisses;
  const int result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
- StoreStackDangerForecast(key, result);
+ if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
+  StoreStackDangerForecast(key, result);
  return result;
 }
 
@@ -7928,7 +8011,10 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
 {
  StackForecastQuery query(gStackDefenderScratch,gStackDefenderScratchBusy);
  StackForecastKey& key=query.key;
- if (gStackForecastsActive)
+ bool cacheable = StackForecastContext();
+ const unsigned long revision = cacheable ? gStackForecastRevision : 0;
+ const long scene = cacheable ? gStackForecastSceneEpoch : 0;
+ if (cacheable)
  {
   key.state.push_back(attacker->GetID());
   key.state.push_back(from ? from->GetPlotIndex() : -1);
@@ -7936,17 +8022,19 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
   key.state.push_back(ranged ? 1 : 0);
   key.state.push_back(attackerDamage);
   AppendStackCandidates(key, candidates, damage, CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0);
-  StackDefenderForecasts::const_iterator cached = gStackDefenderForecasts.find(key);
-  if (cached != gStackDefenderForecasts.end())
+  cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
+  StackDefenderForecasts::const_iterator cached = cacheable ? gStackDefenderForecasts.find(key) : gStackDefenderForecasts.end();
+  if (cacheable && cached != gStackDefenderForecasts.end())
   {
    ++gStackDefenderHits;
    return cached->second;
   }
  }
- if (gStackForecastsActive)
+ if (cacheable)
   ++gStackDefenderMisses;
  const CvUnit* result = CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
- StoreStackDefenderForecast(key, result);
+ if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
+  StoreStackDefenderForecast(key, result);
  return result;
 }
 
@@ -8127,6 +8215,43 @@ static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iS
  return iDanger == INT_MAX ? 10 * pUnit->GetMaxHitPoints() : iDanger;
 }
 
+// Live attack-source roles are unchanged by hypothetical tactical assignments.
+static unsigned char GetStackAttackThreatFlags(const CvUnit* unit, const CvPlot* plot)
+{
+ const bool cacheable = StackForecastContext();
+ const unsigned long revision = cacheable ? gStackForecastRevision : 0;
+ const long scene = cacheable ? gStackForecastSceneEpoch : 0;
+ const std::pair<int, int> key(unit->getOwner(), plot->GetPlotIndex());
+ if (cacheable)
+ {
+  StackThreatFlags::const_iterator cached = gStackThreatFlags.find(key);
+  if (cached != gStackThreatFlags.end())
+   return cached->second;
+ }
+ // Match GetPossibleAttackers(NO_TEAM): cities are omitted; delayed/dead
+ // units are removed, and there is no extra visibility/virtual-damage filter.
+ const vector<CvUnit*> attackers = GET_PLAYER(unit->getOwner()).GetPossibleAttackers(*plot, NO_TEAM);
+ unsigned char flags = 0;
+ for (size_t i = 0; i < attackers.size(); ++i)
+ {
+  if (!(flags & 1) && CvStacking::CanFlank(attackers[i]))
+   flags |= 1;
+  if (!(flags & 2) && CvStacking::GetCollateralTargetLimit(attackers[i]) > 0 && CvStacking::GetInt("CollateralPercent", 20) > 0)
+   flags |= 2;
+  if (flags == 3)
+   break;
+ }
+ // These are live-scene flags, independent of hypothetical HP/movement. A
+ // callback that dirtied/reentered the scene cancels admission of its result.
+ if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene &&
+  gStackThreatFlags.size() < gStackEntryLimit)
+ {
+  gStackThreatFlags.insert(std::make_pair(key, flags));
+  UpdateStackForecastPeaks();
+ }
+ return flags;
+}
+
 // Value actual protection and its cost in collateral exposure. This considers
 // the candidate position, including friendly units omitted from the search.
 static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDamage, const CvTacticalPosition& position)
@@ -8142,23 +8267,20 @@ static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDa
  GetVirtualFriendlyStack(position, plot, unit, selfDamage, candidates, damage);
  if (candidates.size() < 2)
   return 0;
- const vector<CvUnit*> attackers = GET_PLAYER(unit->getOwner()).GetPossibleAttackers(*plot, NO_TEAM);
  // City bombardment alone can make a protective pair valuable. The forecast
  // below includes cities; these unit attackers only identify flanking/collateral.
- bool cavalryThreat = false, collateralThreat = false, antiCavalry = false;
+ const unsigned char threat = GetStackAttackThreatFlags(unit, plot);
+ const bool cavalryThreat = (threat & 1) != 0, collateralThreat = (threat & 2) != 0;
+ bool antiCavalry = false;
  int otherProtectors = 0;
  const CvUnit* vulnerable = NULL;
- for (size_t i = 0; i < attackers.size(); ++i)
- {
-  cavalryThreat |= CvStacking::CanFlank(attackers[i]);
-  collateralThreat |= CvStacking::GetCollateralTargetLimit(attackers[i]) > 0 && CvStacking::GetInt("CollateralPercent", 20) > 0;
- }
  for (size_t i = 0; i < candidates.size(); ++i)
  {
   const CvUnit* other = candidates[i];
   if (other->GetCurrHitPoints() <= damage.GetValue(other->GetID()) || other->getDomainType() != unit->getDomainType())
    continue;
-  antiCavalry |= CvStacking::IsAntiCavalry(other);
+  if (cavalryThreat && !antiCavalry)
+   antiCavalry = CvStacking::IsAntiCavalry(other);
   if (other != unit && !other->IsCanAttackRanged())
    ++otherProtectors;
   if (other->IsCanAttackRanged() && (!vulnerable || other->GetCurrHitPoints() < vulnerable->GetCurrHitPoints()))
@@ -13628,9 +13750,11 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		{
 			const DWORD yieldBegin=GetTickCount();
 			CvStackingStrengthCache::Invalidate();
+			InvalidateStackForecastScene();
 			gDLL->ReleaseGameCoreLock();
 			Sleep(1);
 			gDLL->GetGameCoreLock();
+			InvalidateStackForecastScene();
 			yieldMs+=GetTickCount()-yieldBegin;++yieldCount;
 		}
 
@@ -13683,7 +13807,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 				pTarget->getX(),pTarget->getY(), eAggLvl, durationMs, initialPosition->GetNumAvailableUnits(), initialPosition->getNumEnemies(), initialPosition->getNumPlots(), iUsedPositions, completedPositions.size()));
 		}
 
-		if (CvStacking::IsEnabled() && gStackForecastsActive)
+		if (CvStacking::IsEnabled() && StackForecastContext())
 			GET_PLAYER(ePlayer).GetTacticalAI()->LogTacticalMessage(CvString::format("stack forecast cache: danger %lu hit/%lu miss (%u entries), defender %lu hit/%lu miss (%u entries); peak %u/%u entries, key bytes %u/%u, estimated bytes %u, insertion bypasses %lu, nested bypasses %lu; retained %u entries/%u key bytes, evictions %lu danger/%lu defender",
 				gStackDangerHits, gStackDangerMisses, (unsigned int)gStackDangerForecasts.size(),
 				gStackDefenderHits, gStackDefenderMisses, (unsigned int)gStackDefenderForecasts.size(),
@@ -14093,9 +14217,12 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 		//be a good citizen and let the UI run in between ... stupid design
 		if (iOldPauseCount != iNewPauseCount && gDLL->HasGameCoreLock())
 		{
+			CvStackingStrengthCache::Invalidate();
+			InvalidateStackForecastScene();
 			gDLL->ReleaseGameCoreLock();
 			Sleep(1);
 			gDLL->GetGameCoreLock();
+			InvalidateStackForecastScene();
 		}
 	}
 

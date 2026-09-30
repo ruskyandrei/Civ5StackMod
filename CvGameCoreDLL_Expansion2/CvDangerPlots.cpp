@@ -418,6 +418,16 @@ bool CvDangerPlots::TryGetFixedStackDanger(const CvPlot& plot, const CvUnit* pUn
  return m_DangerPlots[index].TryGetFixedStackDanger(pUnit, result);
 }
 
+const std::vector<int>* CvDangerPlots::GetStackDangerDamageIDs(const CvPlot& plot)
+{
+ if (m_bDirty)
+  UpdateDanger();
+ const int index = plot.GetPlotIndex();
+ if (index < 0 || (size_t)index >= m_DangerPlots.size() || !m_DangerPlots[index].m_pPlot)
+  return NULL;
+ return &m_DangerPlots[index].GetStackDangerDamageIDs();
+}
+
 int CvDangerPlots::GetDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction)
 {
 	if(m_DangerPlots.empty() || !pUnit)
@@ -587,7 +597,10 @@ void CvDangerPlots::AssignUnitDangerValue(const CvUnit* pUnit, CvPlot* pPlot)
 	//because technically they are invisible, AI only tracks them because they were visible the turn before
 	//but now we rediscovered the attacker. so, do a double check:
 	if (std::find(v.begin(),v.end(),element) == v.end())
+	{
 		v.push_back(element);
+		m_DangerPlots[pPlot->GetPlotIndex()].InvalidateStackDangerDamageIDs();
+	}
 }
 
 //	-----------------------------------------------------------------------------------------------
@@ -600,6 +613,7 @@ void CvDangerPlots::AssignCityDangerValue(const CvCity* pCity, CvPlot* pPlot)
 		return;
 
 	m_DangerPlots[pPlot->GetPlotIndex()].m_apCities.push_back( std::make_pair(pCity->getOwner(),pCity->GetID()) );
+	m_DangerPlots[pPlot->GetPlotIndex()].InvalidateStackDangerDamageIDs();
 }
 
 ///
@@ -1107,6 +1121,23 @@ static int SimulateStackCityThreats(const CvDangerPlotContents& contents, const 
 
 // Simulate each known attack against the surviving virtual stack. Friendly and
 // enemy damage containers remain separate: player-local unit IDs may overlap.
+const std::vector<int>& CvDangerPlotContents::GetStackDangerDamageIDs() const
+{
+ if (!m_stackDangerDamageIDsValid)
+ {
+  m_stackDangerDamageIDs.clear();
+  m_stackDangerDamageIDs.reserve(m_apUnits.size() + m_apCities.size());
+  for (DangerUnitVector::const_iterator it = m_apUnits.begin(); it != m_apUnits.end(); ++it)
+   m_stackDangerDamageIDs.push_back(it->second);
+  for (DangerCityVector::const_iterator it = m_apCities.begin(); it != m_apCities.end(); ++it)
+   m_stackDangerDamageIDs.push_back(-it->second);
+  std::sort(m_stackDangerDamageIDs.begin(), m_stackDangerDamageIDs.end());
+  m_stackDangerDamageIDs.erase(std::unique(m_stackDangerDamageIDs.begin(), m_stackDangerDamageIDs.end()), m_stackDangerDamageIDs.end());
+  m_stackDangerDamageIDsValid = true;
+ }
+ return m_stackDangerDamageIDs;
+}
+
 bool CvDangerPlotContents::TryGetFixedStackDanger(const CvUnit* pUnit, int& result) const
 {
  if (!pUnit || !m_pPlot || !m_apUnits.empty() || !m_apCities.empty())

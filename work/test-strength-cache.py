@@ -62,8 +62,9 @@ int main(){
  expect("native x86",sizeof(void*)==4&&sizeof(long)==4);
  long token=0;int value=0;Key k=make(1);
  expect("inactive bypass",!Context(token));Store(k,token,55);expect("inactive miss",!Lookup(k,token,value));
- {Scope disabled(0);expect("zero disabled",!Context(token));}
- {Scope s(8);expect("scope available",Context(token));expect("empty miss",!Lookup(k,token,value));Store(k,token,55);expect("repeat hit",Lookup(k,token,value)&&value==55);
+ long scene=SceneEpoch();Invalidate();expect("scene revision readable outside cache",SceneEpoch()!=scene);
+ {Scope disabled(0);expect("zero disabled",!Context(token));scene=SceneEpoch();Invalidate();expect("scene revision independent of strength setting",SceneEpoch()!=scene);}
+ {Scope s(8);expect("scope available",Context(token));expect("scene revision matches cache generation",SceneEpoch()==token);expect("empty miss",!Lookup(k,token,value));Store(k,token,55);expect("repeat hit",Lookup(k,token,value)&&value==55);
   for(int i=0;i<20;++i){Key different=k;++different.values[i];expect("every word compared",!(different==k));expect("every word affects lookup",!Lookup(different,token,value));}
   {Scope nested(8);expect("nested preview bypass",!Context(token));Store(k,token,66);}
   expect("outer restored",Context(token));expect("nested results not reused",!Lookup(k,token,value));Store(k,token,77);

@@ -128,6 +128,7 @@ namespace CvStackingStrengthCache
 	}
 
 	void Invalidate() { InterlockedIncrement(&epoch); }
+	long SceneEpoch() { return Read(epoch); }
 	Stats GetStats()
 	{
 		if (!IsOwner())
