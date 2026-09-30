@@ -17246,13 +17246,29 @@ int CvUnit::GetMaxRangedCombatStrength(const CvUnit* pOtherUnit, const CvCity* p
 	const CvPlot* pMyPlot, const CvPlot* pOtherPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
 {
 	long generation;
-	if (!CvStackingStrengthCache::Context(generation))
+	// City blockade testing can run movement events even in quick ranged mode.
+	if (!CvStackingStrengthCache::Context(generation) || (MOD_EVENTS_CAN_MOVE_INTO && bAttacking && pCity))
 		return GetMaxRangedCombatStrengthUncached(pOtherUnit, pCity, bAttacking, pMyPlot, pOtherPlot,
 			bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
 	VALIDATE_OBJECT();
 	const CvPlot* target = pOtherPlot ? pOtherPlot : (pOtherUnit ? pOtherUnit->plot() : (pCity ? pCity->plot() : NULL));
-	const CvStackingStrengthCache::Key key = MakeStackStrengthKey(1, this, pOtherUnit, pCity,
+	CvStackingStrengthCache::Key key = MakeStackStrengthKey(1, this, pOtherUnit, pCity,
 		pMyPlot ? pMyPlot : plot(), target, bAttacking, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	int effectiveBase = GetBaseRangedCombatStrength();
+	if (isRangedSupportFire())
+		effectiveBase = GetBaseCombatStrength() / 2;
+	key.values[17] = key.values[18] = 0;
+	if (effectiveBase != 0)
+	{
+		key.values[17] = GetDamageCombatModifier(!bAttacking, key.values[4] + iAssumeExtraDamage);
+		if (bAttacking && pOtherUnit)
+		{
+			const int opponentDamage = key.values[9] + iAssumeExtraOtherDamage;
+			// Ranged uses ceiling-half HP; melee uses the integer floor.
+			key.values[18] = (opponentDamage > 0 ? 1 : 0) |
+				(opponentDamage < (key.values[10] + 1) / 2 ? 2 : 0);
+		}
+	}
 	int result;
 	if (CvStackingStrengthCache::Lookup(key, generation, result))
 		return result;

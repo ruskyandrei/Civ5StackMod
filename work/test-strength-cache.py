@@ -29,9 +29,14 @@ prefix=r'''
 using namespace std;
 #define VALIDATE_OBJECT() ((void)0)
 typedef int PlayerTypes;
+#define GD_INT_GET(name) D_##name
+int D_WOUNDED_DAMAGE_MULTIPLIER=33;bool MOD_BALANCE_RANGED_DEFENSE_UNIT_HEALTH=true,MOD_EVENTS_CAN_MOVE_INTO=false;
+struct Traits{bool IsFightWellDamaged()const{return false;}};struct CvPlayer{Traits traits;int GetWoundedUnitDamageMod()const{return 0;}const Traits*GetPlayerTraits()const{return &traits;}};typedef CvPlayer CvPlayerAI;static CvPlayer players[4];
+#define GET_PLAYER(owner) players[(owner)%4]
 struct CvPlot {int index,bonus; CvPlot(int i=0):index(i),bonus(i%13){} int GetPlotIndex()const{return index;}};
 struct CvCity {int owner,id,damage,attacked;CvPlot* at;CvCity():owner(2),id(4),damage(0),attacked(0),at(NULL){}int getOwner()const{return owner;}int GetID()const{return id;}int getDamage()const{return damage;}CvPlot* plot()const{return at;}int GetNumTimesAttackedThisTurn(int)const{return attacked;}};
 struct CvUnit {int owner,id,damage,hp,worldStrength,previousPromotionStrength;CvPlot* at;CvUnit(int i=0):owner(0),id(i),damage(0),hp(100),worldStrength(15),previousPromotionStrength(0),at(NULL){}int getOwner()const{return owner;}int GetID()const{return id;}CvPlot* plot()const{return at;}int getDamage()const{return damage;}int GetMaxHitPoints()const{return hp;}int GetNumTimesAttackedThisTurn(int)const{return damage%3;}int GetStrengthThisTurnFromPreviousSamePromotionAttacks()const{return previousPromotionStrength;}
+ int GetBaseRangedCombatStrength()const{return worldStrength;}int GetBaseCombatStrength()const{return worldStrength;}bool isRangedSupportFire()const{return false;}bool IsStrongerDamaged()const{return false;}bool IsFightWellDamaged()const{return false;}int GetDamageCombatModifier(bool,int)const;
  int GetGenericMeleeStrengthModifier(const CvUnit*,const CvPlot*,bool,bool,const CvPlot*,bool)const;
  int GetGenericMeleeStrengthModifierUncached(const CvUnit*,const CvPlot*,bool,bool,const CvPlot*,bool)const;
  int GetMaxRangedCombatStrength(const CvUnit*,const CvCity*,bool,const CvPlot*,const CvPlot*,bool,bool,int,int)const;
@@ -46,8 +51,11 @@ int CvUnit::GetGenericMeleeStrengthModifierUncached(const CvUnit* other,const Cv
 }
 int CvUnit::GetMaxRangedCombatStrengthUncached(const CvUnit* other,const CvCity* city,bool attack,const CvPlot* from,const CvPlot* target,bool ignore,bool quick,int extra,int extraOther)const{
  ++rangedCalls;if(invalidateDuringCompute)CvStackingStrengthCache::Invalidate();if(!from)from=at;if(!target)target=other?other->at:(city?city->at:NULL);
- const int otherHP=other?max(0,other->hp-other->damage-extraOther):0;
- return max(1,worldStrength*100+(other?other->worldStrength:0)+(city?city->owner*7+city->attacked:0)+from->bonus+(target?target->bonus:0)-(damage+extra)*5+otherHP+(attack?127:0)+(ignore?129:0)+(quick?143:0));
+ // Auxiliary model follows the actual wound modifier/ceil predicates;
+ // complete original ranged math has a separate actual-source regression.
+ if(worldStrength==0)return 0;
+ int opponent=0;if(attack&&other){const int wounds=other->damage+extraOther;opponent=(wounds>0?17:3)+(wounds<(other->hp+1)/2?19:7);}
+ return max(1,worldStrength*100+(other?other->worldStrength:0)+(city?city->owner*7+city->attacked:0)+from->bonus+(target?target->bonus:0)+GetDamageCombatModifier(!attack,damage+extra)+opponent+(attack?127:0)+(ignore?129:0)+(quick?143:0));
 }
 '''
 tests=r'''
@@ -108,7 +116,8 @@ int main(){
  printf("strength cache actual-source checks: %d checks, %d failures; combat bodies unchanged; engine services are substitutes\n",checks,failures);return failures?1:0;
 }
 '''
-cpp=out/'strength-cache-test.cpp';cpp.write_text(prefix+header.replace('#pragma once','')+module+services+actual_key+wrappers+tests,encoding='utf-8')
+wound=function(unit,'int CvUnit::GetDamageCombatModifier(')[0]
+cpp=out/'strength-cache-test.cpp';cpp.write_text(prefix+header.replace('#pragma once','')+module+wound+services+actual_key+wrappers+tests,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows'
 env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')
 for name in ('CL','_CL_','LINK'):env.pop(name,None)

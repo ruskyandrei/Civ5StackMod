@@ -292,3 +292,34 @@ legitimate roll/visibility restarts, source/preparation proof and actual timing.
 The tactical patch adds8 bytes per ephemeral assignment and changes no save
 format, combat math, search limits or army requirements. The original projected
 HP-consistency-gate prototype remains excluded.
+
+## DLL57 combat-victim correction
+
+Commitdea6f2eae built57 in `work/msvc-output/Release/20260930-233436`
+(74.140s). DLL8EDD72FC79390888BEC3347CF4992A2BA53388C8408AF3CFF47CB0807C7AB70F;
+PDBD3C273E885B31E3FAB7F0F6EC66A5B49898E27AF3529697DA52C46C91F97E926.
+`perf-d57-standard-full-logging`, native
+`Stacking-20260930T224217-405-p38320-r1`, completed and quit normally.
+Source/preparation/before census match56; subsequent actions intentionally differ.
+T25246.125s/PLAN14.014s; T253100.922s/PLAN65.404s. Goal<30s remains unmet.
+
+The third Utrecht garrison-killing shot now continues its plan instead of
+reporting a false surviving-defender result. Two earlier predicted kills still
+leave the expected, correctly matched garrison alive, so they still replan.
+Utrecht capture by8125 (combat125) passes its postcondition; the following
+visibility restart is intentional. Further forecast-versus-rolled-damage analysis
+is separate from the corrected identity/stale-pointer checks.
+
+Constructor instrumentation records44 of44 acquisitions at0 coarse milliseconds
+inside the23 T252 pending windows. Their14.472s dispatch wait remains outside the
+measured acquire as well as Update/tail/hooks. This rules out that constructor
+path as the multi-second cause in this sample, not every engine synchronization
+path. A bounded read-only OS thread-state sampler is being prepared; no suspend,
+attach, priority change or game call is needed for that first observation.
+
+Next58 is exact ranged-strength projected-key canonicalization, with original
+ranged body unchanged. It uses the ranged ceiling-half predicate, effective
+support-fire base and ignored-argument shortcuts, and preserves scripted city
+blockade callbacks by bypassing cache when movement events are enabled. Offline
+actual-source and related regressions8,360,158 checks passed; native equivalence
+against57 and speed remain to be measured. No search or cache capacity increase.

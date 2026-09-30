@@ -112,6 +112,7 @@ struct CvUnit{
  bool isNativeDomain(const CvPlot*plot)const{return plot&&plot->domain==domain;}bool IsFortified()const{return fortified;}
  bool isEmbarked()const{return embarked;}bool CanEverEmbark()const{return canEmbark;}bool IsStrongerDamaged()const{return strongerWounded;}bool IsFightWellDamaged()const{return fightWounded;}
  int GetNumFallBackPlotsAvailable(const CvUnit&)const{if(MOD_EVENTS_CAN_MOVE_INTO&&info.sendMoveEvent)++fallbackEvents;return fallback;}
+ int GetBaseRangedCombatStrength()const{return base;}bool isRangedSupportFire()const{return false;}
  int GetDamageCombatModifier(bool,int)const;int GetEmbarkedUnitDefense()const;
  int GetGenericMeleeStrengthModifier(const CvUnit*,const CvPlot*,bool,bool,const CvPlot*,bool)const;
  int GetGenericMeleeStrengthModifierUncached(const CvUnit*,const CvPlot*,bool,bool,const CvPlot*,bool)const;
@@ -137,7 +138,11 @@ int CvUnit::GetGenericMeleeStrengthModifierUncached(const CvUnit*other,const CvP
 }
 int CvUnit::GetMaxRangedCombatStrengthUncached(const CvUnit*other,const CvCity*city,bool attacking,const CvPlot*from,const CvPlot*target,bool ignore,bool quick,int extra,int otherExtra)const{
  if(!from)from=at;if(!target)target=other?other->at:(city?city->at:NULL);
- return base*100+(from?from->bonus:0)+(target?target->bonus:0)-damage-extra+(other?other->attacked[owner%4]-other->damage-otherExtra:0)+(city?city->damage+city->attacked[owner%4]:0)+(attacking?11:0)+(ignore?13:0)+(quick?17:0);
+ // This auxiliary ranged service follows the actual projected-argument
+ // observables; complete ranged math is checked by its dedicated source test.
+ if(base==0)return 0;
+ int opponent=0;if(attacking&&other){const int wounds=other->damage+otherExtra;opponent=(wounds>0?7:3)+(wounds<(other->maxHP+1)/2?11:5);}
+ return base*100+(from?from->bonus:0)+(target?target->bonus:0)+GetDamageCombatModifier(!attacking,damage+extra)+opponent+(other?other->attacked[owner%4]-other->damage:0)+(city?city->damage+city->attacked[owner%4]:0)+(attacking?11:0)+(ignore?13:0)+(quick?17:0);
 }
 '''
 tests=r'''
