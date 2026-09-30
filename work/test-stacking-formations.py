@@ -53,6 +53,10 @@ modinfo = ET.parse(cp / '(1) Community Patch (v 151).modinfo')
 updates = [e.text.replace('\\', '/') for e in modinfo.findall('./Actions/OnModActivated/UpdateDatabase')]
 check(updates.index('Database Changes/StackingFormations.sql') > updates.index('Database Changes/StackingConfig.xml'), 'formation SQL runs after XML settings')
 check(any(e.text == 'Database Changes/StackingFormations.sql' for e in modinfo.findall('./Files/File')), 'formation SQL included in mod package')
+project=ET.parse(cp / 'Community Patch.civ5proj')
+ns={'p':'http://schemas.microsoft.com/developer/msbuild/2003'}
+check(any(e.attrib.get('Include','').replace('\\','/') == 'Database Changes/StackingFormations.sql' for e in project.findall('./p:ItemGroup/p:Content',ns)), 'formation SQL included in project content')
+check(any(e.text.replace('\\','/') == 'Database Changes/StackingFormations.sql' for e in project.findall('./p:PropertyGroup/p:ModActions/p:Action/p:FileName',ns)), 'formation SQL registered in project database actions')
 out = root / 'work/formation-regression'
 out.mkdir(exist_ok=True)
 (out / 'result.json').write_text(json.dumps({'checks': checks, 'source_sha256': hashlib.sha256(sql_path.read_bytes()).hexdigest(),
