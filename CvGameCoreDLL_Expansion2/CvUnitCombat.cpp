@@ -3394,6 +3394,7 @@ bool CvUnitCombat::ParadropIntercept(CvUnit& paraUnit, CvPlot& dropPlot)
 //result is times 100
 int CvUnitCombat::DoDamageMath(int iAttackerStrength100, int iDefenderStrength100, int iDefaultDamage100, int iMaxRandomDamage100, bool bIncludeRand, const CvSeeder& randomSeed, int iModifierPercent)
 {
+	CvStackingDiagnostics::PlanSampleScope sample(bIncludeRand ? CvStackingDiagnostics::PLAN_RANDOM_DAMAGE_MATH : CvStackingDiagnostics::PLAN_DAMAGE_MATH); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	// Base damage for two units of identical strength
 	int iDamage = iDefaultDamage100;
 

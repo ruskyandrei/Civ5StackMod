@@ -37,6 +37,49 @@ namespace CvStackingDiagnostics
         unsigned long started, thread, generation;
         unsigned __int64 cpuStarted;
     };
+    // BEGIN PLAN_SAMPLE_DIAGNOSTIC_ONLY
+    // Session override resets on load; XML DiagnosticsTacticalSampling defaults off.
+    void SetTacticalSamplingEnabled(bool enabled);
+    bool GetTacticalSamplingEnabled();
+    // Sparse inclusive wall-time samples inside one owned tactical search.
+    // Off entries read only thread-local flags; no clock, lock, settings or log.
+    enum PlanSamplePart
+    {
+        PLAN_COMBAT_MOVE, PLAN_TURN_END, PLAN_STACK_SCORE, PLAN_UNIT_DANGER,
+        PLAN_DANGER_KEY, PLAN_DANGER_LEAF, PLAN_PREFERRED_ASSIGNMENTS,
+        PLAN_MOVE_UPDATE, PLAN_NEXT_ASSIGNMENTS, PLAN_CITY_SIMULATION,
+        PLAN_UNIT_SIMULATION, PLAN_DAMAGE_MATH, PLAN_RANDOM_DAMAGE_MATH,
+        PLAN_SAMPLE_PARTS
+    };
+    class PlanSampleSession
+    {
+    public:
+        PlanSampleSession(PlayerTypes player, int targetPlotIndex);
+        ~PlanSampleSession();
+    private:
+        PlanSampleSession(const PlanSampleSession&);
+        PlanSampleSession& operator=(const PlanSampleSession&);
+        bool entered, outer;
+        unsigned long serial;
+        const void* threadState;
+    };
+    class PlanSampleScope
+    {
+    public:
+        explicit PlanSampleScope(PlanSamplePart part, bool eligible = true);
+        ~PlanSampleScope();
+        void Finish();
+    private:
+        PlanSampleScope(const PlanSampleScope&);
+        PlanSampleScope& operator=(const PlanSampleScope&);
+        bool sampled;
+        PlanSamplePart part;
+        unsigned long serial;
+        long epoch;
+        unsigned __int64 started;
+        const void* threadState;
+    };
+    // END PLAN_SAMPLE_DIAGNOSTIC_ONLY
     // The last contiguous entry interval is a TURN_PHASE. Earlier busy polls
     // are aggregate counters only, never extra phase rows or a spanning timer.
     class UnitAIEntryScope

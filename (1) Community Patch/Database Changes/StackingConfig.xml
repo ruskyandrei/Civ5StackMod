@@ -156,6 +156,7 @@
     <Row Name="DiagnosticsVerboseEndTurn" Value="-1" />
     <Row Name="DiagnosticsCombatSummary" Value="1" />
     <Row Name="DiagnosticsPerformanceInterval" Value="1" />
+    <Row Name="DiagnosticsTacticalSampling" Value="0" /> <!-- PLAN_SAMPLE_DIAGNOSTIC_ONLY -->
     <Row Name="UIStackDiagnosticsHotkeyEnabled" Value="1" />
     <Row Name="DiagnosticsSummaryInterval" Value="1" />
     <Row Name="DiagnosticsDetailInterval" Value="10" />

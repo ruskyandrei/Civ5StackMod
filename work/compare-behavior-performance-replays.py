@@ -14,6 +14,12 @@ remain explicitly uncovered; this is not proof for other saved positions.
 Recorded prepared views must match unless --allow-cross-view explicitly allows
 that one controlled difference. Cross-view qualification requires recorded
 actual mode on both sides; historical archives are labeled unknown, not guessed.
+Sampled tactical-profiler controls are also reported separately. Recorded on/off
+differences require --allow-cross-tactical-sampling for semantic comparison; such
+runs explicitly differ in that recorded control. The equality field covers only
+view and tactical sampling, not engine threading/configuration or log settings.
+Historical unknown sampling is
+accepted for ordinary semantics, never inferred to be off.
 """
 from __future__ import annotations
 
@@ -242,6 +248,43 @@ def native(folder, manifest):
     return records, numbers
 
 
+def sampling_evidence(folder, manifest, prepared):
+    requested = manifest.get('TacticalSamplingMode', 'preserve')
+    if requested not in ('preserve', 'off', 'on'):
+        raise InvalidEvidence(f'{folder}: invalid requested tactical sampling mode')
+    if ('tacticalSamplingRequested' in prepared
+            and prepared['tacticalSamplingRequested'] != requested):
+        raise InvalidEvidence(f'{folder}: prepared tactical sampling request differs from manifest')
+    available = prepared.get('tacticalSamplingAPIAvailable')
+    valid = prepared.get('tacticalSamplingValueValid')
+    actual = prepared.get('tacticalSampling')
+    for flag in (available, valid):
+        if flag is not None and type(flag) is not bool:
+            raise InvalidEvidence(f'{folder}: invalid tactical sampling API/value flag')
+    known = valid is True and type(actual) is bool
+    if (valid is True and not known) or (available is True and not known):
+        raise InvalidEvidence(f'{folder}: tactical sampling API lacks a boolean result')
+    if valid is False and actual is not None:
+        raise InvalidEvidence(f'{folder}: invalid tactical sampling result marked known')
+    if requested != 'preserve' and (not known or available is not True or actual is not (requested == 'on')):
+        raise InvalidEvidence(f'{folder}: explicit tactical sampling request lacks actual paused proof')
+    for field, value in (('TacticalSamplingAPIAvailable', available), ('TacticalSamplingPrepared', actual),
+                         ('TacticalSamplingOriginal', prepared.get('tacticalSamplingOriginal'))):
+        if field in manifest and manifest[field] != value:
+            raise InvalidEvidence(f'{folder}: inconsistent {field} evidence')
+    stopped = manifest.get('Stopped', {})
+    stop_value = stopped.get('tacticalSampling')
+    if known and not (stopped.get('tacticalSamplingValueValid') is True
+                     and type(stop_value) is bool and stop_value is actual
+                     and stopped.get('tacticalSamplingAPIAvailable') is available):
+        raise InvalidEvidence(f'{folder}: tactical sampling changed or lacks final status proof')
+    if 'TacticalSamplingStopped' in manifest and manifest['TacticalSamplingStopped'] != stop_value:
+        raise InvalidEvidence(f'{folder}: inconsistent stopped tactical sampling evidence')
+    return dict(requested=requested, recorded=known, api_available=available,
+                enabled=actual if known else None, original=prepared.get('tacticalSamplingOriginal'),
+                stopped=stop_value, provenance='recorded_boolean' if known else 'unknown')
+
+
 def read(folder):
     folder = Path(folder)
     manifest, metadata = source_proof(folder)
@@ -278,15 +321,21 @@ def read(folder):
                 original=prepared.get('viewModeOriginal'), stopped=manifest.get('Stopped', {}).get('strategicView'),
                 late_preparation_recorded=late is not None,
                 preparation_provenance='late_verified' if late is not None else 'historical_recorded_preparation')
-    return dict(manifest=manifest, metadata=metadata, view=view, snapshots=snapshots, records=records, segments=segments)
+    sampling = sampling_evidence(folder, manifest, prepared)
+    return dict(manifest=manifest, metadata=metadata, view=view, sampling=sampling,
+                snapshots=snapshots, records=records, segments=segments)
 
 
-def compare(baseline, candidate, allow_cross_view=False):
+def compare(baseline, candidate, allow_cross_view=False, allow_cross_tactical_sampling=False):
     before, after = read(baseline), read(candidate)
     views_known = before['view']['recorded'] and after['view']['recorded']
     views_equal = before['view']['strategic'] == after['view']['strategic'] if views_known else None
     if allow_cross_view and not views_known:
         raise InvalidEvidence('Cross-view comparison requires recorded actual prepared modes on both sides; use a fresh control')
+    sampling_known = before['sampling']['recorded'] and after['sampling']['recorded']
+    sampling_equal = before['sampling']['enabled'] == after['sampling']['enabled'] if sampling_known else None
+    if allow_cross_tactical_sampling and not sampling_known:
+        raise InvalidEvidence('Cross-sampling comparison requires recorded actual boolean controls on both sides; use a fresh control')
     census = {}
     for stage in ('before', 'after'):
         census[stage] = {kind: rows_comparison(before['snapshots'][stage][kind], after['snapshots'][stage][kind]) for kind in ('players', 'units', 'cities', 'wars')}
@@ -297,13 +346,21 @@ def compare(baseline, candidate, allow_cross_view=False):
     for category in categories:
         a, b = [row for row in left if row[2] == category], [row for row in right if row[2] == category]
         per_category[category] = dict(counts=[len(a), len(b)], sequence_equal=a == b, first_difference=first_difference(a, b), covered=bool(a and b))
-    source_equal = before['metadata'] == after['metadata'] and (views_equal is not False or allow_cross_view)
+    source_equal = (before['metadata'] == after['metadata'] and (views_equal is not False or allow_cross_view)
+                    and (sampling_equal is not False or allow_cross_tactical_sampling))
+    view_and_tactical_sampling_controls_equal = (False if views_equal is False or sampling_equal is False else
+                                                 True if views_equal is True and sampling_equal is True else None)
     return dict(schema=1, baseline=before['manifest']['NativeRun'], candidate=after['manifest']['NativeRun'],
                 loadedDLLSHA256=[before['manifest']['SHA256'], after['manifest']['SHA256']], source_and_preparation_equal=source_equal,
                 source_metadata=[before['metadata'], after['metadata']], snapshots=census,
                 view_comparison=dict(recorded_on_both_sides=views_known, actual_modes_equal=views_equal,
                     explicit_cross_view_allowed=allow_cross_view, intentional_cross_view=allow_cross_view and views_equal is False,
                     evidence=[before['view'], after['view']]),
+                tactical_sampling_comparison=dict(recorded_on_both_sides=sampling_known,
+                    actual_controls_equal=sampling_equal, explicit_cross_sampling_allowed=allow_cross_tactical_sampling,
+                    intentional_cross_sampling=allow_cross_tactical_sampling and sampling_equal is False,
+                    evidence=[before['sampling'], after['sampling']]),
+                view_and_tactical_sampling_controls_equal=view_and_tactical_sampling_controls_equal,
                 native_semantics=dict(record_counts=[len(left), len(right)], segment_numbers=[before['segments'], after['segments']],
                                       sequence_equal=left == right, first_difference=first_difference(left, right), categories=per_category),
                 before_census_equal=census['before']['all_rows_equal'], after_census_equal=census['after']['all_rows_equal'],
@@ -312,6 +369,8 @@ def compare(baseline, candidate, allow_cross_view=False):
                        'Other semantic fields and event ordering retained. No empty-census equivalence; uncovered categories are not exercised-branch evidence. '
                        'World snapshots are expected-turn tags supported by prepared/stopped manifest proof. Unrecorded historical view modes remain unknown; ordinary comparisons do not establish view equality in that case. '
                        'Explicit cross-view allowance excludes only the recorded prepared-view difference; all source/census/native requirements remain. '
+                       'Explicit cross-sampling allowance excludes only the recorded sampled-profiler difference for semantics. Unknown historical sampling is not assumed off. '
+                       'view_and_tactical_sampling_controls_equal covers only those two recorded controls; engine threading/configuration/log settings are not checked and engine-config equality is not established. '
                        'Source and final return-player turns may be partial; this tool does not compare wall performance or unrecorded game state.')
 
 
@@ -382,6 +441,61 @@ def self_test():
         else: raise AssertionError('Explicit view request without matching actual view admitted')
         for directory, run in ((a,'Stacking-a'),(b,'Stacking-b')):
             write(directory/'replay-manifest.json',dict(manifest,NativeRun=run))
+        assert compare(a,b)['tactical_sampling_comparison']['recorded_on_both_sides'] is False
+        assert compare(a,b)['view_and_tactical_sampling_controls_equal'] is None
+        try: compare(a,b,allow_cross_tactical_sampling=True)
+        except InvalidEvidence as exc: assert 'fresh control' in str(exc)
+        else: raise AssertionError('Historical unknown sampling admitted as controlled difference')
+        def with_sampling(run, mode, enabled):
+            value=copy.deepcopy(manifest)
+            value.update(NativeRun=run, ViewMode='standard', ViewModeOriginal=False, ViewModePrepared=False,
+                TacticalSamplingMode=mode, TacticalSamplingAPIAvailable=True, TacticalSamplingPrepared=enabled,
+                TacticalSamplingOriginal=enabled if mode=='preserve' else False, TacticalSamplingStopped=enabled)
+            value['Prepared'].update(viewAPIAvailable=True, strategicView=False, viewModeOriginal=False,
+                tacticalSamplingRequested=mode,tacticalSamplingAPIAvailable=True,tacticalSamplingValueValid=True,
+                tacticalSampling=enabled,tacticalSamplingOriginal=value['TacticalSamplingOriginal'])
+            value['Stopped'].update(tacticalSamplingRequested=mode,tacticalSamplingAPIAvailable=True,
+                tacticalSamplingValueValid=True,tacticalSampling=enabled)
+            return value
+        for directory, run in ((a,'Stacking-a'),(b,'Stacking-b')):
+            write(directory/'replay-manifest.json',with_sampling(run,'off',False))
+        controlled=compare(a,b)
+        assert controlled['all_compared_semantics_equal'] and controlled['view_and_tactical_sampling_controls_equal'] is True
+        assert controlled['tactical_sampling_comparison']['actual_controls_equal'] is True
+        on=with_sampling('Stacking-b','on',True);write(b/'replay-manifest.json',on)
+        different=compare(a,b)
+        assert not different['all_compared_semantics_equal'] and different['view_and_tactical_sampling_controls_equal'] is False
+        allowed=compare(a,b,allow_cross_tactical_sampling=True)
+        assert allowed['all_compared_semantics_equal'] and allowed['view_and_tactical_sampling_controls_equal'] is False
+        assert allowed['tactical_sampling_comparison']['intentional_cross_sampling'] is True
+        changed=copy.deepcopy(on);changed['QuickMovement']=False;changed['Prepared']['quickMovement']=False
+        write(b/'replay-manifest.json',changed)
+        assert not compare(a,b,allow_cross_tactical_sampling=True)['source_and_preparation_equal']
+        invalid_cases=[]
+        changed=copy.deepcopy(on);changed['Prepared']['tacticalSampling']=False;invalid_cases.append(changed)
+        changed=copy.deepcopy(on);changed['Prepared']['tacticalSampling']=1;invalid_cases.append(changed)
+        changed=copy.deepcopy(on);changed['Stopped']['tacticalSampling']=False;invalid_cases.append(changed)
+        changed=copy.deepcopy(on);changed['Prepared'].pop('tacticalSamplingValueValid');invalid_cases.append(changed)
+        changed=copy.deepcopy(on);changed['TacticalSamplingPrepared']=False;invalid_cases.append(changed)
+        for changed in invalid_cases:
+            write(b/'replay-manifest.json',changed)
+            try: compare(a,b,allow_cross_tactical_sampling=True)
+            except InvalidEvidence: pass
+            else: raise AssertionError('Invalid/changed tactical sampling evidence admitted')
+        write(b/'replay-manifest.json',with_sampling('Stacking-b','preserve',False))
+        assert compare(a,b)['all_compared_semantics_equal'] and compare(a,b)['view_and_tactical_sampling_controls_equal'] is True
+        absent=copy.deepcopy(manifest);absent.update(NativeRun='Stacking-b',TacticalSamplingMode='preserve',
+            TacticalSamplingAPIAvailable=False,TacticalSamplingPrepared=None,TacticalSamplingOriginal=None,TacticalSamplingStopped=None)
+        absent['Prepared'].update(tacticalSamplingRequested='preserve',tacticalSamplingAPIAvailable=False,tacticalSamplingValueValid=False)
+        write(b/'replay-manifest.json',absent)
+        assert compare(a,b)['all_compared_semantics_equal'] and compare(a,b)['view_and_tactical_sampling_controls_equal'] is None
+        absent['TacticalSamplingMode']='off';absent['Prepared']['tacticalSamplingRequested']='off'
+        write(b/'replay-manifest.json',absent)
+        try: compare(a,b)
+        except InvalidEvidence: pass
+        else: raise AssertionError('Explicit off admitted old API omission')
+        for directory, run in ((a,'Stacking-a'),(b,'Stacking-b')):
+            write(directory/'replay-manifest.json',dict(manifest,NativeRun=run))
         human=read_json(b/'replay-manifest.json');human['SourceMode']='human'
         human['Prepared'].update(sourceMode='human',sourceActivePlayer=0,restoredAutoplay=0)
         write(b/'replay-manifest.json',human)
@@ -418,7 +532,7 @@ def self_test():
         try:compare(a,b)
         except InvalidEvidence:pass
         else:raise AssertionError('Truncated native admitted')
-    print(json.dumps(dict(ok=True, offline=True, gameCalls=0, checks='source/stop proof, before/after sorted nonzero census, duplicate rejection, timing/run-ID normalization, segment deduplication, PLAN/combat mismatches and truncated-log rejection')))
+    print(json.dumps(dict(ok=True, offline=True, gameCalls=0, checks='source/stop proof, before/after sorted nonzero census, duplicate rejection, timing/run-ID normalization, segment deduplication, PLAN/combat mismatches, truncated-log rejection, sampling known/unknown/explicit controls and intentional cross-sampling distinction')))
 
 
 def main():
@@ -428,12 +542,13 @@ def main():
     parser.add_argument('--output',type=Path)
     parser.add_argument('--self-test',action='store_true')
     parser.add_argument('--allow-cross-view',action='store_true',help='Allow only a recorded actual prepared-view difference; both archives must record mode')
+    parser.add_argument('--allow-cross-tactical-sampling',action='store_true',help='Allow only a recorded sampled-profiler difference for semantics; both controls must be known, engine settings remain unchecked')
     args=parser.parse_args()
     if args.self_test:self_test();return 0
     if args.baseline is None or args.candidate is None:parser.error('baseline and candidate run directories required')
     if args.output and (args.output.suffix.lower()!='.json' or args.output.name in ('replay-manifest.json','world-before.json','world-after.json') or args.output.parent.name=='native-segments'):
         parser.error('--output must be a derived .json, not an archived input')
-    try:result=compare(args.baseline,args.candidate,args.allow_cross_view)
+    try:result=compare(args.baseline,args.candidate,args.allow_cross_view,args.allow_cross_tactical_sampling)
     except (InvalidEvidence,OSError,UnicodeError,KeyError,TypeError,ValueError) as exc:
         result=dict(ok=False,all_compared_semantics_equal=False,error=str(exc));exit_code=2
     else:exit_code=0 if result['all_compared_semantics_equal'] else 1

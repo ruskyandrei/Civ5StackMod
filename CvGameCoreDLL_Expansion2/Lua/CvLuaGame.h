@@ -152,6 +152,8 @@ protected:
 	static int lGetStackingDiagnosticsStatus(lua_State* L);
 	static int lSetStackingDiagnosticsLevel(lua_State* L);
 	static int lFlushStackingDiagnostics(lua_State* L);
+	static int lSetStackingTacticalSampling(lua_State* L); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+	static int lGetStackingTacticalSampling(lua_State* L); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	static int lChangeActivePlayer(lua_State* L);
 
 	static int lIsScoreDirty(lua_State* L);

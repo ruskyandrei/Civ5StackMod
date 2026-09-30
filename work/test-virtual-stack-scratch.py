@@ -1,11 +1,13 @@
 """Check actual virtual-stack storage/count code against the deployed DLL35 source."""
 from pathlib import Path
+from plan_sample_fixture import without_plan_sample_probes
 import hashlib,json,os,subprocess,sys
 
 root=Path(__file__).resolve().parents[1]
 out=root/'work/virtual-stack-regression';out.mkdir(exist_ok=True)
 source=root/'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp';raw=source.read_bytes()
 text=raw.decode('utf-8-sig').replace('\r\n','\n')
+text = without_plan_sample_probes(text)
 unit=(root/'CvGameCoreDLL_Expansion2/CvUnit.h').read_text(encoding='utf-8-sig')
 container=unit[unit.index('struct SUnitIDValueContainer\n'):unit.index('\nnamespace std {',unit.index('struct SUnitIDValueContainer\n'))]
 cache=text[text.index('struct StackForecastKey\n'):text.index('static int GetCachedStackDanger(')]

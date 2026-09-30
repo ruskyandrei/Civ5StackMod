@@ -2,10 +2,11 @@
 No DLL build or game process. The native probe contains the current DoDamageMath body.
 """
 from pathlib import Path
+from plan_sample_fixture import without_plan_sample_probes
 import hashlib,json,subprocess,sys
 sys.dont_write_bytecode=True
 root=Path(__file__).resolve().parents[1];work=root/'work/air-calibration-regression'
-source=(root/'CvGameCoreDLL_Expansion2/CvUnitCombat.cpp').read_text(encoding='utf-8-sig');a=source.index('int CvUnitCombat::DoDamageMath(');b=source.index('//\t---------------------------------------------------------------------------\nvoid CvUnitCombat::ResolveCombat',a);actual=source[a:b]
+source=without_plan_sample_probes((root/'CvGameCoreDLL_Expansion2/CvUnitCombat.cpp').read_text(encoding='utf-8-sig'));a=source.index('int CvUnitCombat::DoDamageMath(');b=source.index('//\t---------------------------------------------------------------------------\nvoid CvUnitCombat::ResolveCombat',a);actual=source[a:b]
 assert actual in (work/'damage-bound-test.cpp').read_text(encoding='utf-8-sig'),'Native probe source changed; regenerate before reusing executable'
 r=subprocess.run([str(work/'damage-bound-test.exe')],cwd=work,capture_output=True,text=True);assert r.returncode==0
 rows=[tuple(map(int,line.split(','))) for line in r.stdout.splitlines()]

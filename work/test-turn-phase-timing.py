@@ -53,6 +53,8 @@ declaration = header[header.index("    class TurnPhaseScope"):header.index("    
 fixture = ast.parse((root / "work/test-diagnostics-core.py").read_text(encoding="utf-8-sig"))
 head = next(ast.literal_eval(n.value) for n in fixture.body if isinstance(n, ast.Assign)
             and any(isinstance(t, ast.Name) and t.id == "head" for t in n.targets))
+head = head.replace("struct SamplingDLLService{bool HasGameCoreLock()const{return false;}}samplingDLL;static SamplingDLLService*gDLL=&samplingDLL;\n", "")
+head += "\nstruct ICvEngineScriptSystem1;struct FlowDLL{bool HasGameCoreLock()const{return false;}ICvEngineScriptSystem1*GetScriptSystem();};extern FlowDLL flowDLL;static FlowDLL*gDLL=&flowDLL;\n"
 head = head.replace("struct Game{int turn;Game():turn(1){}int getGameTurn(){return turn;}};",
     "static bool forbiddenGC=false;static unsigned int phaseGCReads=0;struct Game{int turn;Game():turn(1){}int getGameTurn(){++phaseGCReads;if(forbiddenGC)throw 991;return turn;}};")
 head = head.replace("Game&getGame(){return game;}","Game&getGame(){++phaseGCReads;if(forbiddenGC)throw 992;return game;}")
@@ -91,8 +93,8 @@ static vector<string> flowTrace;
 static bool flowBusy=false,flowScript=true,flowThrow=false;
 static int flowGuardCalls=0;
 struct ICvEngineScriptSystem1{} flowSystem;
-struct FlowDLL{ICvEngineScriptSystem1*GetScriptSystem(){flowTrace.push_back("system");return flowScript?&flowSystem:NULL;}} flowDLL;
-static FlowDLL*gDLL=&flowDLL;
+FlowDLL flowDLL;
+ICvEngineScriptSystem1*FlowDLL::GetScriptSystem(){flowTrace.push_back("system");return flowScript?&flowSystem:NULL;}
 struct FlowArgs{void Push(int){}};
 struct CvLuaArgsHandle{FlowArgs value;FlowArgs*operator->(){return &value;}FlowArgs*get(){return &value;}};
 namespace LuaSupport{void CallHook(ICvEngineScriptSystem1*,const char*,FlowArgs*,bool&){flowTrace.push_back("hook");phaseClock+=10;phaseCPU+=2000;if(flowThrow)throw 91;}}

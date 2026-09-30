@@ -4,6 +4,7 @@ VC9/x86 engine substitutes exercise temporary membership and invalidation; this
 is a score/build-count regression, not a native game performance claim.
 """
 from pathlib import Path
+from plan_sample_fixture import without_plan_sample_probes
 import hashlib
 import json
 import os
@@ -16,6 +17,7 @@ out.mkdir(exist_ok=True)
 source = root / 'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'
 raw = source.read_bytes()
 text = raw.decode('utf-8-sig').replace('\r\n', '\n')
+text = without_plan_sample_probes(text)
 control_commit = '3b008c0d4'
 control = subprocess.check_output(['git', 'show', control_commit + ':CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'], cwd=root).decode('utf-8-sig').replace('\r\n', '\n')
 

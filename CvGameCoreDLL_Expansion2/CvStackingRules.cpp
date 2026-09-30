@@ -175,6 +175,7 @@ namespace
 		{"DiagnosticsVerboseEndTurn", -1, -1, 536870911},
 		{"DiagnosticsCombatSummary", 1, 0, 1},
 		{"DiagnosticsPerformanceInterval", 1, 0, 10000},
+		{"DiagnosticsTacticalSampling", 0, 0, 1}, // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 		{"UIStackDiagnosticsHotkeyEnabled", 1, 0, 1},
 		{"DiagnosticsSummaryInterval", 1, 1, 10000},
 		{"DiagnosticsDetailInterval", 10, 0, 10000},

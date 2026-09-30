@@ -5,6 +5,7 @@ no other test is executed. The helper, cache, source-stack builder, movement
 guard, dispatch wrapper and ordinary sibling call statements are real source.
 """
 from pathlib import Path
+from plan_sample_fixture import without_plan_sample_probes
 import ast, hashlib, json, os, subprocess, sys
 
 root = Path(__file__).resolve().parents[1]
@@ -12,6 +13,7 @@ core = root / 'CvGameCoreDLL_Expansion2'
 out = root / 'work/leaving-stack-protection-regression'
 out.mkdir(exist_ok=True)
 text = (core / 'CvTacticalAI.cpp').read_text(encoding='utf-8-sig')
+text = without_plan_sample_probes(text)
 old = subprocess.check_output(['git', 'show', 'e831746c6:CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'], cwd=root).decode('utf-8-sig')
 
 def function(source, signature):

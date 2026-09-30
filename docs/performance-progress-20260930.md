@@ -383,3 +383,34 @@ No permanent engine setting change has been retained. Thread distribution and
 same-thread timing coverage must be reviewed before attributing the change.
 Next diagnostic build samples tactical scorer/danger costs with fixed per-PLAN
 counters and bounded timing; it does not alter search limits or scoring.
+
+## Quiet-window continuation and opt-in tactical samples
+
+The second job-manager replay was stopped by the CPU temperature guard during
+T253 after three samples of97,98,97 C. Concurrent read-only process counters
+observed one Brave process using11–14 CPU cores. This run is incomplete and
+cannot validate the setting's performance. Its evidence remains in
+perf-d58-job-manager-repeat/guard-stop-review.json and guard-stop-evidence.
+No new crash file appeared; the newest dump remains the DLL47 September30
+19:56:52 crash. The persistent service was stopped and original config bytes
+restored. The user subsequently closed Brave and provided an eight-hour quiet
+window. Keep the engine setting at its original0 until a clean comparison.
+
+The source candidate now adds default-off tactical sampling with a strict Lua
+boolean toggle and XML DiagnosticsTacticalSampling0. It records one bounded
+PLAN_SAMPLE row per eligible search. The sampled methods are inclusive wall
+measurements; they overlap and are not CPU-share or additive phase totals.
+See docs/tactical-sampling-diagnostics.md and work/plan-sample-profiler.md.
+Relevant actual-source/Lua/config regressions766,624 checks passed. All eight
+production files restore byte-for-byte to DLL58 after only marked diagnostic
+additions are stripped. One old siege fixture retains a documented preexisting
+stale scaffold compile failure. Separate-object inactive probe measurements are
+approximately1–2ns per call; enabled native overhead remains unmeasured.
+
+The replay harness records strict sampling control proof and a read-only game
+setup census (map dimensions/world type/speed/alive major count). The comparator
+reports only view_and_tactical_sampling_controls_equal, explicitly excluding
+engine threading/configuration/logging equality. Next quiet off/on replay pair
+uses the same candidate DLL/config/save and251→255 so252 and253 are both interior
+observer turns. Required goal remains verified<30s per standard late-game turn,
+then an attempt at<20s; neither is proven by the current results.

@@ -9,9 +9,11 @@ generated work/danger-ledger-prototype/test.cpp scaffold. For --candidate runs,
 run both scripts with --candidate so the scaffold and batch use the same source.
 """
 from pathlib import Path
+from plan_sample_fixture import without_plan_sample_probes
 import hashlib,json,os,subprocess,sys
 root=Path(__file__).resolve().parents[1];source=root/'work/danger-ledger-candidate' if '--candidate' in sys.argv else root/'CvGameCoreDLL_Expansion2';out=root/'work/danger-ledger-batch-regression';out.mkdir(exist_ok=True)
 danger=(source/'CvDangerPlots.cpp').read_text();tactical=(source/'CvTacticalAI.cpp').read_text()
+tactical = without_plan_sample_probes(tactical)
 def function(text,signature):
  start=text.index(signature);end=text.index('{',start)+1;depth=1
  while depth:depth+=(text[end]=='{')-(text[end]=='}');end+=1

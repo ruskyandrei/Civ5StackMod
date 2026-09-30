@@ -60,6 +60,7 @@ namespace Database{struct Results{bool Step(){return false;}const char*GetText(c
 struct Game{int turn;Game():turn(1){}int getGameTurn(){return turn;}};
 struct Map{map<int,CvPlot*>plots;int getGridWidth(){return 80;}int getGridHeight(){return 52;}CvPlot*plotByIndexUnchecked(int i){return plots.count(i)?plots[i]:NULL;}};
 struct Global{Game game;Map map;Database::Connection db;Game&getGame(){return game;}Map&getMap(){return map;}Database::Connection*GetGameDatabase(){return &db;}}GC;
+struct SamplingDLLService{bool HasGameCoreLock()const{return false;}}samplingDLL;static SamplingDLLService*gDLL=&samplingDLL;
 struct FILogFile{enum{kDontTimeStamp=0};const wchar_t*GetFileName(){return L"logs\\StackingDiagnostics-path.log";}} locator;
 struct LogMgr{FILogFile*GetLog(const char*,int){return &locator;}}LOGFILEMGR;
 struct CvCombatMemberEntry{int owner,id,damage;CvCombatMemberEntry(int o=1,int i=2,int d=5):owner(o),id(i),damage(d){}bool IsUnit()const{return true;}int GetPlayer()const{return owner;}int GetID()const{return id;}int GetDamage()const{return damage;}};

@@ -25,6 +25,7 @@ static Database::Connection db;
 struct Game{int turn;Game():turn(1){}int getGameTurn(){return turn;}};
 struct Map{int getGridWidth(){return 80;}int getGridHeight(){return 52;}};
 struct Global{Game game;Map map;Game&getGame(){return game;}Map&getMap(){return map;}Database::Connection*GetGameDatabase(){return &db;}}GC;
+struct SamplingDLLService{bool HasGameCoreLock()const{return false;}}samplingDLL;static SamplingDLLService*gDLL=&samplingDLL;
 static wstring logLocator=L"logs\\StackingDiagnostics-path.log";
 struct FILogFile{enum{kDontTimeStamp=1};const wchar_t*GetFileName(){return logLocator.c_str();}} locator;
 struct LogMgr{FILogFile*GetLog(const char*,int){return &locator;}}LOGFILEMGR;

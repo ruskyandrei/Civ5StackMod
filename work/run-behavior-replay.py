@@ -23,12 +23,21 @@ Read-only per-player snapshots before/after include unit identity/type/position,
 HP/movement, city name/original owner/HP/strength/population and active wars.
 Per-player calls avoid the tuner's10,000-value result limit for whole campaigns.
 The named watch city (defaultAbernethy) is sampled during status polling too.
+Read-only game-setup.json and manifest GameSetup record map dimensions/world
+type, game speed and alive major count before the first census. A safe resume
+retains the original proof and requires the live metadata to agree.
 --view-mode preserves the current view by default. Explicit standard/strategic
 requests validate the engine globals before preparation mutates game settings,
 then apply the view in a separate late InGame request after the census while
 paused. This lets deferred active-player restoration run first. A further
 InGame status verifies final mode before continuation. Actual view is recorded
 even for preserve when the API exists; old archives have unknown view.
+--tactical-sampling preserves the current sampled profiler by default, including
+DLLs without that optional API. Explicit on/off validates both boolean APIs
+before replay preparation mutates settings, applies once while paused after
+Summary diagnostics, then verifies the result before continuation and each poll.
+Recorded profiler differences require explicit comparison allowance and do not
+qualify as identical performance controls.
 
 Commands and structured responses are archived with numbered files, alongside
 Lua.log, rolling native segments, save/DLL identities, snapshots and analyzer
@@ -52,6 +61,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,7 +80,45 @@ def view_matches(status, mode):
         and status.get("strategicView") is (mode == "strategic"))
 
 
-def prepared(status, start, count, view_mode="preserve"):
+def sampling_matches(status, mode, original=None):
+    if not isinstance(status, dict):
+        return False
+    if mode not in ("preserve", "off", "on"):
+        return False
+    if mode != "preserve" and not (status.get("tacticalSamplingAPIAvailable") is True
+            and status.get("tacticalSamplingValueValid") is True
+            and status.get("tacticalSampling") is (mode == "on")):
+        return False
+    if original is not None:
+        for field in ("tacticalSamplingAPIAvailable", "tacticalSamplingValueValid"):
+            if field in original and status.get(field) is not original[field]:
+                return False
+        if original.get("tacticalSamplingValueValid") is True:
+            return (type(status.get("tacticalSampling")) is bool
+                    and status["tacticalSampling"] is original.get("tacticalSampling"))
+    return True
+
+
+def validate_resume_sampling(manifest, mode):
+    if manifest.get("TacticalSamplingMode", "preserve") != mode:
+        raise ValueError("Resume tactical sampling mode changed")
+
+
+def lua_sampling_guard(status):
+    """Use archived read-only values, never change/retry a runtime toggle."""
+    if status.get("tacticalSamplingValueValid") is not True:
+        return ""
+    value = status.get("tacticalSampling")
+    if type(value) is not bool:
+        raise ValueError("Invalid prepared tactical sampling value")
+    return ("\nassert(type(Game.GetStackingTacticalSampling)=='function' and "
+            "Game.GetStackingTacticalSampling()==" + str(value).lower() +
+            ", 'Prepared tactical sampling changed')\n")
+
+
+def prepared(status, start, count, view_mode="preserve", sampling_mode="preserve"):
+    if not isinstance(status, dict):
+        return False
     return (status.get("turn") == start and status.get("autoplay") == count
             # VP observer slots can report IsHuman()==true or false. The
             # observer/pause/counter checks establish paused preparation.
@@ -79,7 +127,14 @@ def prepared(status, start, count, view_mode="preserve"):
             and isinstance(status.get("activePlayer"), int) and status["activePlayer"] >= 0
             and status.get("diagnostics") == 1 and status.get("quickCombat") is True
             and status.get("quickMovement") is True and status.get("multiplayer") is False
-            and view_matches(status, view_mode))
+            and view_matches(status, view_mode) and sampling_matches(status, sampling_mode))
+
+
+def prepared_result(result, start, count, sampling_mode="preserve"):
+    """An unknown result is not permission to replay preparation mutations."""
+    return (isinstance(result, dict) and result.get("ok") is True
+            and isinstance(result.get("values"), list) and len(result["values"]) == 1
+            and prepared(result["values"][0], start, count, sampling_mode=sampling_mode))
 
 
 def stopped(status, stop, player):
@@ -93,10 +148,29 @@ def lua_sources(args):
     count = stop - start
     source_mode = getattr(args, "source_mode", "observer")
     view_mode = getattr(args, "view_mode", "preserve")
+    sampling_mode = getattr(args, "tactical_sampling", "preserve")
     if source_mode not in ("observer", "human"):
         raise ValueError("Unknown replay source mode")
     if view_mode not in ("preserve", "standard", "strategic"):
         raise ValueError("Unknown replay view mode")
+    if sampling_mode not in ("preserve", "off", "on"):
+        raise ValueError("Unknown tactical sampling mode")
+    sampling_literal = tuner.lua_string(sampling_mode)
+    sampling_check = f"""local requestedSampling={sampling_literal}
+local samplingAPIAvailable=type(Game.GetStackingTacticalSampling)=='function'
+ and type(Game.SetStackingTacticalSampling)=='function'
+local originalSampling=nil
+if type(Game.GetStackingTacticalSampling)=='function' then originalSampling=Game.GetStackingTacticalSampling() end
+if requestedSampling~='preserve' then
+ assert(samplingAPIAvailable and type(originalSampling)=='boolean','Tactical sampling APIs unavailable')
+end"""
+    sampling_apply = "" if sampling_mode == "preserve" else f"""
+local samplingResult=Game.SetStackingTacticalSampling({str(sampling_mode == 'on').lower()})
+assert(type(samplingResult)=='boolean' and samplingResult=={str(sampling_mode == 'on').lower()}
+ and Game.GetStackingTacticalSampling()==samplingResult,'Tactical sampling request did not apply')"""
+    sampling_continue = "" if sampling_mode == "preserve" else f"""
+assert(type(Game.GetStackingTacticalSampling)=='function' and type(Game.SetStackingTacticalSampling)=='function'
+ and Game.GetStackingTacticalSampling()=={str(sampling_mode == 'on').lower()},'Prepared tactical sampling changed')"""
     view_literal = tuner.lua_string(view_mode)
     view_check = f"""local requestedView={view_literal}
 local originalView=nil
@@ -129,6 +203,15 @@ result.returnPlayerAlive=Players[{player}] and Players[{player}]:IsAlive() or fa
 result.viewModeRequested={view_literal}
 result.viewAPIAvailable=type(InStrategicView)=='function'
 if result.viewAPIAvailable then result.strategicView=InStrategicView() end
+result.tacticalSamplingRequested={sampling_literal}
+result.tacticalSamplingAPIAvailable=type(Game.GetStackingTacticalSampling)=='function'
+ and type(Game.SetStackingTacticalSampling)=='function'
+result.tacticalSamplingValueValid=false
+if type(Game.GetStackingTacticalSampling)=='function' then
+ local sampling=Game.GetStackingTacticalSampling()
+ result.tacticalSamplingValueValid=type(sampling)=='boolean'
+ if result.tacticalSamplingValueValid then result.tacticalSampling=sampling end
+end
 result.watchCities={{}}
 local watched={tuner.lua_string(args.watch_city)}
 for owner=0,63 do local p=Players[owner];if p and p:IsAlive() and not p:IsObserver() then
@@ -151,9 +234,11 @@ assert(returning and returning:IsAlive() and not returning:IsMinorCiv() and not 
  and not returning:IsBarbarian(),'Return civilization must be alive major')
 assert(Game.SetStackingDiagnosticsLevel and Game.FlushStackingDiagnostics,'Diagnostics APIs unavailable')
 {view_check}
+{sampling_check}
 local restored=Game.GetAIAutoPlay()
 {stop_restored}
 Game.SetStackingDiagnosticsLevel(1)
+{sampling_apply}
 Game.SetOption('GAMEOPTION_QUICK_COMBAT',true)
 Game.SetOption('GAMEOPTION_QUICK_MOVEMENT',true)
 Game.SetAIAutoPlay({count},{player})
@@ -165,6 +250,7 @@ Game.FlushStackingDiagnostics()
 print('BEHAVIOR_READY',Game.GetGameTurn(),Game.GetAIAutoPlay(),Game.GetActivePlayer())
 local ready=(function(){status}end)();ready.restoredAutoplay=restored
 ready.sourceMode='{source_mode}';ready.sourceActivePlayer=sourceActive
+ready.tacticalSamplingOriginal=originalSampling
 ready.viewModeOriginal=originalView;ready.viewModeResult=ready.strategicView;return ready
 """
     continuation = f"""
@@ -176,6 +262,7 @@ assert(Game.GetGameTurn()=={start} and Game.GetAIAutoPlay()=={count} and Players
 assert(Game.GetStackingDiagnosticsLevel()==1 and PreGame.GetQuickCombat() and PreGame.GetQuickMovement(),
  'Prepared diagnostics/options changed')
 {view_continue}
+{sampling_continue}
 Events.LoadScreenClose();Game.SetPausePlayer(-1);UI.SetDontShowPopups(false);return 'continued'
 """
     return status, prepare, continuation
@@ -221,6 +308,51 @@ for owner=0,63 do local player=Players[owner]
 end
 return owners
 """
+GAME_SETUP_FIELDS = ("turn", "width", "height", "worldSize", "worldType", "gameSpeed", "gameSpeedType", "aliveMajorCount")
+GAME_SETUP = """
+assert(Map and type(Map.GetGridSize)=='function' and type(Map.GetWorldSize)=='function'
+ and type(Game.GetGameSpeedType)=='function','Game setup APIs unavailable')
+local active=Game.GetActivePlayer()
+assert(Players[active] and Players[active]:IsObserver() and Game.GetPausePlayer()==active
+ and Game.GetAIAutoPlay()>0,'Game setup census requires paused prepared observer')
+local width,height=Map.GetGridSize()
+local worldSize=Map.GetWorldSize()
+local speed=Game.GetGameSpeedType()
+local function integer(value) return type(value)=='number' and value>-math.huge and value<math.huge and value==math.floor(value) end
+assert(integer(width) and integer(height) and width>0 and height>0,'Invalid map dimensions')
+assert(integer(worldSize) and worldSize>=0 and integer(speed) and speed>=0,'Invalid world/speed ID')
+local world=GameInfo and GameInfo.Worlds and GameInfo.Worlds[worldSize]
+local gameSpeed=GameInfo and GameInfo.GameSpeeds and GameInfo.GameSpeeds[speed]
+assert(world and type(world.Type)=='string' and #world.Type>0
+ and gameSpeed and type(gameSpeed.Type)=='string' and #gameSpeed.Type>0,'World/speed metadata unavailable')
+local majorCount=0
+for owner=0,63 do local player=Players[owner]
+ if player and player:IsAlive() and not player:IsObserver() then
+  assert(type(player.IsMajorCiv)=='function','Major player API unavailable')
+  if player:IsMajorCiv() then majorCount=majorCount+1 end
+ end
+end
+assert(majorCount>0,'No alive major civilizations')
+return {turn=Game.GetGameTurn(),width=width,height=height,worldSize=worldSize,worldType=world.Type,
+ gameSpeed=speed,gameSpeedType=gameSpeed.Type,aliveMajorCount=majorCount}
+"""
+
+
+def validate_game_setup(value, start):
+    if not isinstance(value, dict) or value.get("turn") != start:
+        raise ValueError("Game setup turn differs from paused source")
+    for field in ("turn", "width", "height", "worldSize", "gameSpeed", "aliveMajorCount"):
+        if type(value.get(field)) is not int:
+            raise ValueError("Invalid integer game setup field: " + field)
+    if (value["width"] <= 0 or value["height"] <= 0 or value["worldSize"] < 0 or value["gameSpeed"] < 0
+            or not 1 <= value["aliveMajorCount"] <= 64):
+        raise ValueError("Invalid positive game setup dimensions/IDs/major count")
+    for field in ("worldType", "gameSpeedType"):
+        if not isinstance(value.get(field), str) or not value[field]:
+            raise ValueError("Missing game setup type: " + field)
+    return {field: value[field] for field in GAME_SETUP_FIELDS}
+
+
 OWNER_SNAPSHOT = """
 local owner=OWNER_ARGUMENT;local player=assert(Players[owner]);assert(player:IsAlive() and not player:IsObserver())
 local civilization=GameInfo.Civilizations[player:GetCivilizationType()]
@@ -251,6 +383,25 @@ class BehaviorReplay(perf.Replay):
         self.status_source, self.prepare_source, self.continue_source = lua_sources(args)
         self.view_source = lua_view_preparation(args)
         self.deadline = None
+
+    def game_setup(self):
+        live = validate_game_setup(self.call("InGame", GAME_SETUP, "read-game-setup")[0], self.args.start_turn)
+        path = self.run / "game-setup.json"
+        if path.exists():
+            original = json.loads(path.read_text(encoding="utf-8-sig"))
+            if (validate_game_setup(original, self.args.start_turn) != live
+                    or original.get("sourceSaveSHA256") != self.args.save_sha
+                    or ("GameSetup" in self.manifest and self.manifest["GameSetup"] != original)):
+                raise ValueError("Existing game setup proof differs from live source/manifest; preserve it")
+            proof = original
+        else:
+            if "GameSetup" in self.manifest:
+                raise ValueError("Manifest game setup proof exists without its archived file")
+            proof = {"utc": perf.utc(), "sourceSaveSHA256": self.args.save_sha, **live}
+            perf.write_json(path, proof)
+        self.manifest["GameSetup"] = proof
+        self.save_manifest()
+        return proof
 
     def snapshot(self, stage):
         owners = self.call("InGame", OWNER_LIST, f"{stage}-snapshot-owners")[0]
@@ -316,6 +467,7 @@ class BehaviorReplay(perf.Replay):
                 raise ValueError("Resume source mode changed")
             if self.manifest.get("ViewMode", "preserve") != self.args.view_mode:
                 raise ValueError("Resume view mode changed")
+            validate_resume_sampling(self.manifest, self.args.tactical_sampling)
             if any(self.manifest.get(key) != value for key, value in expected.items()) or Path(self.manifest["Save"]).resolve() != save:
                 raise ValueError("Resume source/process/behavior settings changed")
             if self.manifest.get("ContinuedUTC") or self.manifest.get("Stopped") or self.manifest.get("Status") not in ("preparing", "armed", "failed"):
@@ -326,7 +478,7 @@ class BehaviorReplay(perf.Replay):
             if len(records) != 1 or records[0].with_suffix(".lua").read_text(encoding="utf-8") != self.prepare_source:
                 raise ValueError("Exact original behavior preparation source/result is required")
             result = json.loads(records[0].read_text(encoding="utf-8-sig"))["result"]
-            if not result.get("ok") or not prepared(result.get("values", [{}])[0], self.args.start_turn, count):
+            if not prepared_result(result, self.args.start_turn, count, self.args.tactical_sampling):
                 raise ValueError("Original preparation did not establish exact bounded paused state")
             snapshot_path = self.run / f"manifest-before-resume-{self.sequence+1:03d}.json"
             with snapshot_path.open("x", encoding="utf-8") as stream:
@@ -335,7 +487,9 @@ class BehaviorReplay(perf.Replay):
             if failure and failure not in self.manifest.setdefault("FailureHistory", []):
                 self.manifest["FailureHistory"].append(failure)
             live = self.call("InGame", self.status_source, "resume-paused-behavior-state")[0]
-            if not prepared(live, self.args.start_turn, count) or not live["returnPlayerAlive"]:
+            if (not prepared(live, self.args.start_turn, count, sampling_mode=self.args.tactical_sampling)
+                    or not live["returnPlayerAlive"] or not sampling_matches(live, self.args.tactical_sampling,
+                                                                           result["values"][0])):
                 raise ValueError("Live paused state is unsafe to resume")
             self.manifest["ViewModeOriginal"] = result.get("values", [{}])[0].get("viewModeOriginal")
             self.manifest["ViewModePrepared"] = live.get("strategicView")
@@ -347,6 +501,7 @@ class BehaviorReplay(perf.Replay):
                              "StartTurn": self.args.start_turn, "StopTurn": self.args.stop_turn, "TurnLimit": count,
                              "SourceMode": self.args.source_mode,
                              "ViewMode": self.args.view_mode,
+                             "TacticalSamplingMode": self.args.tactical_sampling,
                              "ReturnPlayer": self.args.return_player, "DiagnosticLevel": 1, "QuickCombat": True, "QuickMovement": True,
                              "PID": self.args.game_pid, "StartTicks": self.args.start_ticks, "StartedUTC": perf.utc(),
                              "ExpectedDLLSHA256": self.args.expected_dll_sha, "WatchCity": self.args.watch_city,
@@ -376,11 +531,14 @@ class BehaviorReplay(perf.Replay):
                     raise TimeoutError("Save load budget expired")
                 time.sleep(1)
             ready = self.call("InGame", self.prepare_source, "prepare-bounded-behavior")[0]
-            if not prepared(ready, self.args.start_turn, count):
+            if not prepared(ready, self.args.start_turn, count, sampling_mode=self.args.tactical_sampling):
                 raise ValueError("Behavior preparation failed ready-state validation")
             self.manifest["Prepared"] = ready
             self.manifest["ViewModeOriginal"] = ready.get("viewModeOriginal")
             self.manifest["ViewModePrepared"] = ready.get("strategicView")
+            self.manifest["TacticalSamplingOriginal"] = ready.get("tacticalSamplingOriginal")
+            self.manifest["TacticalSamplingAPIAvailable"] = ready.get("tacticalSamplingAPIAvailable")
+            self.manifest["TacticalSamplingPrepared"] = ready.get("tacticalSampling")
             self.save_manifest()
         proof = perf.gamecore_metadata(lambda: perf.exact_process(self.args.game_pid, self.args.start_ticks, guards),
                                        lambda **fields: self.progress("loaded-dll-metadata", **fields))
@@ -390,6 +548,7 @@ class BehaviorReplay(perf.Replay):
         self.manifest.update(InstalledDLL=module, SHA256=perf.sha(module))
         perf.write_json(self.run / "loaded-dll.json", {**proof, "Path": module, "SHA256": perf.sha(module)})
         self.archive_native()
+        self.game_setup()
         if not (self.run / "world-before.json").exists():
             self.snapshot("before")
         shutil.copyfile(self.args.logs / "Lua.log", self.run / "Lua-start.log")
@@ -409,35 +568,43 @@ class BehaviorReplay(perf.Replay):
         else:
             view_proof = self.call("InGame", self.view_source, "prepare-replay-view")[0]
         final_ready = self.call("InGame", self.status_source, "verify-final-prepared-view")[0]
-        if (not prepared(final_ready, self.args.start_turn, count, self.args.view_mode)
+        initial_ready = self.manifest.get("Prepared", result["values"][0] if self.args.resume_prepared else {})
+        if (not prepared(final_ready, self.args.start_turn, count, self.args.view_mode, self.args.tactical_sampling)
                 or not final_ready["returnPlayerAlive"] or not isinstance(view_proof, dict)
                 or view_proof.get("semantics") != "late_paused_view_preparation"
                 or view_proof.get("viewModeRequested") != self.args.view_mode
-                or view_proof.get("strategicView") != final_ready.get("strategicView")):
+                or view_proof.get("strategicView") != final_ready.get("strategicView")
+                or not sampling_matches(final_ready, self.args.tactical_sampling, initial_ready)):
             raise ValueError("Final paused view preparation failed validation")
-        initial_ready = self.manifest.get("Prepared", result["values"][0] if self.args.resume_prepared else {})
         self.manifest.setdefault("PreparedInitial", initial_ready.copy())
         self.manifest["Prepared"] = {**initial_ready, **final_ready, "viewModeResult": final_ready.get("strategicView")}
         self.manifest["ViewPreparation"] = view_proof
         self.manifest["ViewModePrepared"] = final_ready.get("strategicView")
+        self.manifest["TacticalSamplingAPIAvailable"] = final_ready.get("tacticalSamplingAPIAvailable")
+        self.manifest["TacticalSamplingPrepared"] = final_ready.get("tacticalSampling")
+        self.manifest["TacticalSamplingOriginal"] = initial_ready.get("tacticalSamplingOriginal")
         self.manifest["Status"] = "armed"
         self.save_manifest()
-        self.call("LoadScreen", self.continue_source, "continue-bounded-behavior")
+        self.call("LoadScreen", lua_sampling_guard(final_ready) + self.continue_source, "continue-bounded-behavior")
         self.manifest.update(Status="running", ContinuedUTC=perf.utc())
         self.save_manifest()
         self.deadline = time.monotonic() + self.args.maximum_seconds
         while True:
             status = self.call("InGame", self.status_source, "behavior-status")[0]
             self.progress("behavior-progress", status=status)
-            if stopped(status, self.args.stop_turn, self.args.return_player):
+            if (stopped(status, self.args.stop_turn, self.args.return_player)
+                    and sampling_matches(status, self.args.tactical_sampling, final_ready)):
                 self.safe_stop = True
                 (self.run / "complete.signal").write_text("Expected behavior replay stopped "+perf.utc()+"\n", encoding="utf-8")
                 self.manifest.update(Status="stopped", Stopped=status, StoppedUTC=perf.utc())
                 self.manifest["ViewModeStopped"] = status.get("strategicView")
+                self.manifest["TacticalSamplingStopped"] = status.get("tacticalSampling")
                 self.save_manifest()
                 break
             if (status["turn"] > self.args.stop_turn or status["autoplay"] == 0 or not status["returnPlayerAlive"]
-                    or not view_matches(status, self.args.view_mode) or time.monotonic() >= self.deadline):
+                    or not view_matches(status, self.args.view_mode)
+                    or not sampling_matches(status, self.args.tactical_sampling, final_ready)
+                    or time.monotonic() >= self.deadline):
                 # A dead return player can leave observer autoplay advancing at
                 # counter0. Pause once while the channel is known usable; fail
                 # visibly instead of silently switching another civilization.
@@ -474,13 +641,57 @@ def self_test():
     for change in ({"turn": 231}, {"autoplay": 1}, {"activePlayer": 8}, {"human": False}, {"observer": True}, {"returnPlayerAlive": False}):
         assert not stopped({**end, **change}, 230, 0)
     assert "Game.SetAIAutoPlay(0,-1)" in preparation and "Game.SetAIAutoPlay(15,0)" in preparation
+    assert "local samplingResult=Game.SetStackingTacticalSampling" not in preparation
+    assert sampling_matches(ready, "preserve") and not sampling_matches(ready, "on")
+    validate_resume_sampling({}, "preserve")
+    for old, new in (("preserve", "on"), ("off", "on"), ("on", "preserve")):
+        try: validate_resume_sampling({"TacticalSamplingMode": old}, new)
+        except ValueError as exc: assert "sampling mode changed" in str(exc)
+        else: raise AssertionError("Resume sampling mode changed")
+    assert prepared_result({"ok": True, "values": [ready]}, 215, 15)
+    for unknown in (None, {}, {"ok": False, "values": [ready]}, {"ok": True, "values": []},
+                    {"ok": True, "values": [None]}, {"ok": True, "values": "timeout"}):
+        assert not prepared_result(unknown, 215, 15)
+    setup_fixture = dict(turn=215,width=88,height=58,worldSize=3,worldType="WORLDSIZE_STANDARD",
+                         gameSpeed=1,gameSpeedType="GAMESPEED_STANDARD",aliveMajorCount=8)
+    assert validate_game_setup(setup_fixture,215) == setup_fixture
+    for changes in ({"turn":216},{"width":0},{"height":True},{"worldSize":-1},{"gameSpeed":1.5},
+                    {"worldType":""},{"gameSpeedType":None},{"aliveMajorCount":0},{"aliveMajorCount":65}):
+        try: validate_game_setup({**setup_fixture,**changes},215)
+        except ValueError: pass
+        else: raise AssertionError("Invalid game setup proof admitted")
+    with tempfile.TemporaryDirectory(prefix="civ5-replay-setup-") as temporary:
+        replay = object.__new__(BehaviorReplay)
+        replay.run = Path(temporary)
+        replay.args = argparse.Namespace(start_turn=215,save_sha="A"*64)
+        replay.manifest = {}
+        def fake_call(context, source, label):
+            assert context=="InGame" and source==GAME_SETUP and label=="read-game-setup"
+            return [setup_fixture.copy()]
+        replay.call = fake_call
+        replay.save_manifest = lambda: None
+        first = replay.game_setup()
+        archived = (replay.run/"game-setup.json").read_bytes()
+        assert first == replay.manifest["GameSetup"] and replay.game_setup() == first
+        assert (replay.run/"game-setup.json").read_bytes() == archived
+        replay.call = lambda *arguments: [{**setup_fixture,"width":89}]
+        try: replay.game_setup()
+        except ValueError as exc: assert "differs from live" in str(exc)
+        else: raise AssertionError("Changed live map replaced existing game setup proof")
+        assert (replay.run/"game-setup.json").read_bytes() == archived and replay.manifest["GameSetup"]==first
+        replay.call = fake_call
+        replay.args.save_sha = "B"*64
+        try: replay.game_setup()
+        except ValueError: pass
+        else: raise AssertionError("Changed source SHA reused game setup proof")
+        assert (replay.run/"game-setup.json").read_bytes() == archived
     runtime = ROOT / "work/lua-validation"
     if runtime.exists():
         sys.path.insert(0, str(runtime))
         from lupa.lua51 import LuaRuntime
         lua = LuaRuntime(unpack_returned_tuples=True)
         syntax = lua.eval("function(s) assert(loadstring(s));return true end")
-        for source in (status, preparation, continuation, OWNER_LIST, OWNER_SNAPSHOT.replace("OWNER_ARGUMENT", "0"), PAUSE_UNEXPECTED):
+        for source in (status, preparation, continuation, OWNER_LIST, GAME_SETUP, OWNER_SNAPSHOT.replace("OWNER_ARGUMENT", "0"), PAUSE_UNEXPECTED):
             assert syntax(source)
         # Execute real generated preparation/status on a source-derived mock:
         # existing observer must survive stop/rearm without human->AI reseeding.
@@ -663,11 +874,101 @@ Game.SetPausePlayer=function(n) assert(n==8 or n==-1);state.pause=n end
         assert prepared(preserved,215,15) and preserved['viewAPIAvailable'] is False and 'strategicView' not in preserved
         preserve_late = dict(lua.execute(lua_view_preparation(human_args)).items())
         assert preserve_late['viewAPIAvailable'] is False and preserve_late['toggled'] is False
+        # Actual generated Lua: default preserve keeps old-DLL support, explicit
+        # APIs are validated before any prep mutation, and toggles never retry.
+        assert preserved['tacticalSamplingAPIAvailable'] is False
+        assert preserved['tacticalSamplingValueValid'] is False and 'tacticalSampling' not in preserved
+        sampling_mock = """
+state.sampling=ORIGINAL_SAMPLING;state.samplingCalls=0
+Game.GetStackingTacticalSampling=function() return state.sampling end
+Game.SetStackingTacticalSampling=function(value)
+ assert(type(value)=='boolean' and state.pause==state.active and state.turn==215 and state.diag==1)
+ calls[#calls+1]={'sampling',value};state.samplingCalls=state.samplingCalls+1;state.sampling=value;return value
+end
+"""
+        for mode, original, desired, setters in (("preserve",False,False,0),("preserve",True,True,0),
+                ("off",False,False,1),("off",True,False,1),("on",False,True,1),("on",True,True,1)):
+            configured = argparse.Namespace(**vars(human_args), tactical_sampling=mode)
+            sample_status, sample_prepare, sample_continue = lua_sources(configured)
+            assert syntax(sample_status) and syntax(sample_prepare) and syntax(sample_continue)
+            if mode != "preserve":
+                assert sample_prepare.index('Tactical sampling APIs unavailable') < sample_prepare.index('Game.SetStackingDiagnosticsLevel(1)')
+                assert sample_prepare.index('Game.SetStackingDiagnosticsLevel(1)') < sample_prepare.index('local samplingResult=')
+            lua.execute(human_reset+"\n"+sampling_mock.replace('ORIGINAL_SAMPLING',str(original).lower()))
+            observed = dict(lua.execute(sample_prepare).items())
+            assert prepared(observed,215,15,sampling_mode=mode)
+            assert observed['tacticalSamplingOriginal'] is original and observed['tacticalSampling'] is desired
+            assert observed['tacticalSamplingRequested']==mode and observed['tacticalSamplingAPIAvailable'] is True
+            assert lua.globals().state.samplingCalls==setters and len(lua.globals().calls)==5+setters
+            assert sampling_matches(dict(lua.execute(sample_status).items()),mode,observed)
+            lua.execute("state.sampling=not state.sampling;state.continued=0;Game.SetPausePlayer=function(n) assert(n==8 or n==-1);state.pause=n end")
+            changed = dict(lua.execute(sample_status).items())
+            assert not sampling_matches(changed,mode,observed)
+            try: lua.execute(lua_sampling_guard(observed)+sample_continue)
+            except Exception as exc: assert 'Prepared tactical sampling changed' in str(exc)
+            else: raise AssertionError('Changed sampling continued')
+            assert lua.globals().state.continued==0 and lua.globals().state.pause==8
+            lua.execute('state.sampling='+str(desired).lower())
+            assert lua.execute(lua_sampling_guard(observed)+sample_continue)=='continued'
+            assert lua.globals().state.continued==1 and lua.globals().state.samplingCalls==setters
+        for mode in ('off','on'):
+            configured = argparse.Namespace(**vars(human_args), tactical_sampling=mode)
+            _, source, _ = lua_sources(configured)
+            for unavailable in ("Game.GetStackingTacticalSampling=nil;Game.SetStackingTacticalSampling=nil",
+                    "Game.GetStackingTacticalSampling=function() return false end;Game.SetStackingTacticalSampling=nil",
+                    "Game.GetStackingTacticalSampling=nil;Game.SetStackingTacticalSampling=function() end",
+                    "Game.GetStackingTacticalSampling=function() return 0 end;Game.SetStackingTacticalSampling=function() end"):
+                lua.execute(human_reset+'\n'+unavailable)
+                try: lua.execute(source)
+                except Exception as exc: assert 'Tactical sampling APIs unavailable' in str(exc)
+                else: raise AssertionError('Explicit sampling admitted missing/invalid APIs')
+                assert len(lua.globals().calls)==0 and lua.globals().state.auto==0 and lua.globals().state.pause==0
+        configured = argparse.Namespace(**vars(human_args), tactical_sampling='on')
+        _, source, _ = lua_sources(configured)
+        for invalid_result in ('nil','0','false'):
+            lua.execute(human_reset+'\n'+sampling_mock.replace('ORIGINAL_SAMPLING','false')+"\n"+
+                "Game.SetStackingTacticalSampling=function(value) state.samplingCalls=state.samplingCalls+1;return "+invalid_result+" end")
+            try: lua.execute(source)
+            except Exception as exc: assert 'Tactical sampling request did not apply' in str(exc)
+            else: raise AssertionError('Unapplied sampling accepted')
+            assert lua.globals().state.samplingCalls==1 and lua.globals().state.auto==0 and lua.globals().state.pause==0
+        # Old API omission remains safe in both generated source modes.
+        lua.execute(human_reset+"\nGame.GetStackingTacticalSampling=nil;Game.SetStackingTacticalSampling=nil")
+        old_ready = dict(lua.execute(human_prepare).items())
+        assert prepared(old_ready,215,15) and not old_ready['tacticalSamplingAPIAvailable']
+        assert sampling_matches(old_ready,'preserve',old_ready) and lua_sampling_guard(old_ready)==''
+        setup_mock = """
+Map={GetGridSize=function() return 88,58 end,GetWorldSize=function() return 3 end}
+Game.GetGameSpeedType=function() return 1 end
+GameInfo.Worlds={[3]={Type='WORLDSIZE_STANDARD'}}
+GameInfo.GameSpeeds={[1]={Type='GAMESPEED_STANDARD'}}
+Players[0].IsMajorCiv=function() return true end
+Players[1].IsMajorCiv=function() return true end
+Players[2]={IsAlive=function() return true end,IsObserver=function() return false end,IsMajorCiv=function() return false end}
+Players[3]={IsAlive=function() return false end,IsObserver=function() return false end,IsMajorCiv=function() return true end}
+"""
+        lua.execute(setup_mock)
+        actual = validate_game_setup(dict(lua.execute(GAME_SETUP).items()),215)
+        assert actual == {**setup_fixture,"aliveMajorCount":2}
+        assert len(lua.globals().calls)==5 and lua.globals().state.pause==8 and lua.globals().state.auto==15
+        for invalid in ("Map.GetGridSize=nil","Map.GetWorldSize=nil","Game.GetGameSpeedType=nil",
+                "Map.GetGridSize=function() return 0,58 end","Map.GetGridSize=function() return true,58 end",
+                "Map.GetGridSize=function() return math.huge,58 end","Map.GetWorldSize=function() return -1 end",
+                "GameInfo.Worlds=nil","GameInfo.GameSpeeds[1].Type=nil","Players[0].IsMajorCiv=nil"):
+            lua.execute(setup_mock+"\n"+invalid)
+            try: lua.execute(GAME_SETUP)
+            except Exception: pass
+            else: raise AssertionError("Missing/invalid game setup API or metadata admitted")
+            assert len(lua.globals().calls)==5 and lua.globals().state.pause==8 and lua.globals().state.auto==15
     print(json.dumps({"ok": True, "offline": True, "gameCommandsSent": 0, "negativeStateCases": 12,
                       "lua51Validated": runtime.exists(), "snapshotsAndCityWatchValidated": runtime.exists(),
                       "explicitHumanSourceValidated": runtime.exists(), "humanSourceNegativeCases": 6,
                       "viewModesValidated": runtime.exists(), "viewMissingAPINegativeCases": 3,
-                      "delayedViewRestorationValidated": runtime.exists()}))
+                      "delayedViewRestorationValidated": runtime.exists(), "tacticalSamplingModesValidated": runtime.exists(),
+                      "samplingMissingAPINegativeCases": 8, "samplingUnknownResultNegativeCases": 9,
+                      "samplingDriftContinuationAndPollCases": 6, "samplingResumeModeChangeCases": 3,
+                      "gameSetupLua51Validated": runtime.exists(), "gameSetupAPINegativeCases":10,
+                      "gameSetupMetadataNegativeCases":9,"gameSetupResumeProofPreserved":True}))
 
 
 def main():
@@ -683,6 +984,8 @@ def main():
                         help="Human explicitly allows the same paused return-player save to switch to observer, including VP slot-change AI decisions")
     parser.add_argument("--view-mode", choices=("preserve", "standard", "strategic"), default="preserve",
                         help="Preserve the loaded view by default; explicit modes apply while paused after observer normalization and are verified in status polls")
+    parser.add_argument("--tactical-sampling", choices=("preserve", "off", "on"), default="preserve",
+                        help="Preserve sampled-profiler state, including old DLLs; explicit on/off validates optional boolean APIs before preparation and verifies every status")
     parser.add_argument("--watch-city", default="Abernethy")
     parser.add_argument("--logs", type=Path, default=perf.DEFAULT_LOGS)
     parser.add_argument("--game-pid", type=int)

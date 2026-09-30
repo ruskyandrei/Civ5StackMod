@@ -25,7 +25,7 @@ namespace
         {"DiagnosticsLevel",0,0}, {"DiagnosticsSummaryInterval",1,1}, {"DiagnosticsDetailInterval",10,10},
         {"DiagnosticsMemoryInterval",10,10}, {"DiagnosticsPlayer",-1,-1}, {"DiagnosticsMaxFileKB",4096,4096},
         {"DiagnosticsMaxFiles",8,8}, {"DiagnosticsMaxRowsPerTurn",4096,4096}, {"DiagnosticsHistogramMaxStack",32,32},
-        {"DiagnosticsImmediateFlush",0,0}, {"DiagnosticsBufferKB",64,64}, {"DiagnosticsFlushEveryRows",256,256}, {"DiagnosticsFlushIntervalMilliseconds",1000,1000}, {"DiagnosticsCategoryMask",63,63}, {"DiagnosticsVerboseStartTurn",-1,-1}, {"DiagnosticsVerboseEndTurn",-1,-1}, {"DiagnosticsCombatSummary",1,1}, {"DiagnosticsPerformanceInterval",1,1}
+        {"DiagnosticsImmediateFlush",0,0}, {"DiagnosticsBufferKB",64,64}, {"DiagnosticsFlushEveryRows",256,256}, {"DiagnosticsFlushIntervalMilliseconds",1000,1000}, {"DiagnosticsCategoryMask",63,63}, {"DiagnosticsVerboseStartTurn",-1,-1}, {"DiagnosticsVerboseEndTurn",-1,-1}, {"DiagnosticsCombatSummary",1,1}, {"DiagnosticsPerformanceInterval",1,1}, {"DiagnosticsTacticalSampling",0,0}
     };
     struct Costs
     {
@@ -47,6 +47,32 @@ namespace
     FILE* output = NULL;
     unsigned int sequence = 0, runCounter = 0, combatCounter = 0;
     unsigned long phaseGeneration = 0;
+    // BEGIN PLAN_SAMPLE_DIAGNOSTIC_ONLY
+    const unsigned long PLAN_SAMPLE_STRIDE = 4096;
+    int tacticalSamplingOverride = -1;
+    struct PlanSampleCounter
+    {
+        unsigned __int64 calls, selected, samples, ticks, maximum;
+    };
+    struct PlanSampleState
+    {
+        bool enabled;
+        unsigned int depth;
+        unsigned long serial, generation, thread, phase;
+        PlayerTypes actor;
+        int turn, target;
+        long epoch;
+        unsigned __int64 frequency, clockReads, clockFailures;
+        PlanSampleCounter counter[CvStackingDiagnostics::PLAN_SAMPLE_PARTS];
+    };
+    // POD TLS is also used by GetStatus. A UI/foreign thread cannot read or
+    // update an owning search's counters, and nested searches are suppressed.
+    static __declspec(thread) PlanSampleState planSamples = {};
+    static __declspec(thread) unsigned long planSampleSerial = 0;
+    __declspec(align(4)) volatile LONG planSampleEpoch = 0;
+    long ReadPlanSampleEpoch() { return InterlockedCompareExchange(&planSampleEpoch,0,0); }
+    void InvalidatePlanSampleEpoch() { InterlockedIncrement(&planSampleEpoch); }
+    // END PLAN_SAMPLE_DIAGNOSTIC_ONLY
     struct EntryCosts
     {
         int turn;
@@ -148,7 +174,7 @@ namespace
             !strcmp(category,"CITY") || !strncmp(category,"SAMPLE_",7) || !strncmp(category,"DECISION_",9) || !strcmp(category,"UNIT_DECISION")) return 1;
         if(!strncmp(category,"COMBAT_",7) || !strcmp(category,"CITY_CAPTURE")) return 8;
         if(!strcmp(category,"MEMORY")) return 32;
-        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE") || !strcmp(category,"TURN_UPDATE_GAP")) return 16;
+        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE") || !strcmp(category,"TURN_UPDATE_GAP") || !strcmp(category,"PLAN_SAMPLE")) return 16;
         if(!strncmp(category,"PLAN",4) || !strncmp(category,"RECRUIT",7) || !strcmp(category,"LONG_PLAN") || !strcmp(category,"ATTACK_GATE")) return 4;
         return 2;
     }
@@ -374,6 +400,8 @@ namespace CvStackingDiagnostics
     {
         Lock lock;
         ++phaseGeneration;
+        InvalidatePlanSampleEpoch(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+        tacticalSamplingOverride=-1; // PLAN_SAMPLE_DIAGNOSTIC_ONLY
         clearUpdateGapState();
         closeFile(); level = -1; rowTurn = -1; memoryTurn = -1; rows = 0;
         initialized = false; failed = false; suppressed = false; optionsLoaded = false;
@@ -409,6 +437,7 @@ namespace CvStackingDiagnostics
         Lock lock;
         if (value < 0 || value > 2) return;
         ++phaseGeneration;
+        InvalidatePlanSampleEpoch(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
         clearUpdateGapState();
         getLevelUnlocked();
         if (output) writeLine(GC.getGame().getGameTurn(), -1, "LEVEL", value == 0 ? "off" : value == 1 ? "summary" : "verbose");
@@ -470,6 +499,113 @@ namespace CvStackingDiagnostics
         cpuAvailable=cpuAvailable && threadCPU100ns(cpuEnded) && cpuEnded>=cpuStarted;
         Record(1,actor,"TURN_PHASE","phase=%s startTick=%lu endTick=%lu elapsedMs=%lu thread=%lu cpuAvailable=%d cpuStart100ns=%I64u cpuEnd100ns=%I64u cpu100ns=%I64u semantics=inclusive cpuSemantics=inclusive_same_thread; nested TURN_PHASE and PLAN intervals overlap; do not sum all phase wall or CPU durations as a round",name,started,ended,ended-started,thread,cpuAvailable?1:0,cpuAvailable?cpuStarted:0,cpuAvailable?cpuEnded:0,cpuAvailable?cpuEnded-cpuStarted:0);
     }
+    // BEGIN PLAN_SAMPLE_DIAGNOSTIC_ONLY
+    void SetTacticalSamplingEnabled(bool enabled)
+    {
+        Lock lock;
+        tacticalSamplingOverride=enabled?1:0;
+        InvalidatePlanSampleEpoch();
+    }
+    bool GetTacticalSamplingEnabled()
+    {
+        Lock lock;
+        return tacticalSamplingOverride>=0 ? tacticalSamplingOverride!=0 : setting("DiagnosticsTacticalSampling",0)!=0;
+    }
+    PlanSampleSession::PlanSampleSession(PlayerTypes player,int targetPlotIndex):entered(true),outer(false),serial(0),threadState(&planSamples)
+    {
+        if(planSamples.depth++)
+        {
+            serial=planSamples.serial;
+            return;
+        }
+        outer=true;
+        serial=++planSampleSerial;
+        if(!serial) serial=++planSampleSerial;
+        planSamples.serial=serial;
+        planSamples.enabled=false;
+        Lock lock;
+        if(!(tacticalSamplingOverride>=0 ? tacticalSamplingOverride!=0 : setting("DiagnosticsTacticalSampling",0)!=0)) return;
+        if(!categoryEnabledUnlocked(1,player,"PLAN_SAMPLE")) return;
+        const int interval=setting("DiagnosticsPerformanceInterval",1);
+        if(interval<=0 || GC.getGame().getGameTurn()%interval || !gDLL->HasGameCoreLock()) return;
+        LARGE_INTEGER frequency;
+        if(!QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0) return;
+        memset(planSamples.counter,0,sizeof(planSamples.counter));
+        planSamples.generation=phaseGeneration;
+        planSamples.thread=GetCurrentThreadId();
+        planSamples.actor=player;
+        planSamples.turn=GC.getGame().getGameTurn();
+        planSamples.target=targetPlotIndex;
+        planSamples.epoch=ReadPlanSampleEpoch();
+        planSamples.phase=((unsigned long)targetPlotIndex*1664525UL+1013904223UL)&(PLAN_SAMPLE_STRIDE-1);
+        planSamples.frequency=(unsigned __int64)frequency.QuadPart;
+        planSamples.clockReads=planSamples.clockFailures=0;
+        planSamples.enabled=true;
+    }
+    PlanSampleSession::~PlanSampleSession()
+    {
+        if(!entered || threadState!=&planSamples || planSamples.serial!=serial || !planSamples.depth) return;
+        if(--planSamples.depth || !outer) return;
+        const bool enabled=planSamples.enabled;
+        planSamples.enabled=false;
+        if(!enabled) return;
+        Lock lock;
+        if(planSamples.epoch!=ReadPlanSampleEpoch() || planSamples.generation!=phaseGeneration ||
+            planSamples.thread!=GetCurrentThreadId() || planSamples.turn!=GC.getGame().getGameTurn() ||
+            !categoryEnabledUnlocked(1,planSamples.actor,"PLAN_SAMPLE")) return;
+        // One bounded row per outer search, including early returns/unwinding.
+        // Lists share the fixed part ordering below; durations overlap.
+        char calls[384]="",selected[384]="",samples[384]="",ticks[384]="",maximum[384]="";
+        size_t a=0,b=0,c=0,d=0,e=0;
+        for(int i=0;i<PLAN_SAMPLE_PARTS;++i)
+        {
+            const PlanSampleCounter& part=planSamples.counter[i];
+            a+=sprintf_s(calls+a,sizeof(calls)-a,"%s%I64u",i?",":"",part.calls);
+            b+=sprintf_s(selected+b,sizeof(selected)-b,"%s%I64u",i?",":"",part.selected);
+            c+=sprintf_s(samples+c,sizeof(samples)-c,"%s%I64u",i?",":"",part.samples);
+            d+=sprintf_s(ticks+d,sizeof(ticks)-d,"%s%I64u",i?",":"",part.ticks);
+            e+=sprintf_s(maximum+e,sizeof(maximum)-e,"%s%I64u",i?",":"",part.maximum);
+        }
+        Record(1,planSamples.actor,"PLAN_SAMPLE","targetPlot=%d serial=%lu thread=%lu stride=%lu phase=%lu qpcFrequency=%I64u qpcFrequencyCalls=1 qpcReads=%I64u clockFailures=%I64u parts=combatMove,turnEnd,stackScore,unitDanger,dangerKey,dangerLeaf,preferred,moveUpdate,nextAssignments,citySimulation,unitSimulation,damageMath,randomDamageMath calls=%s selected=%s samples=%s ticks=%s maxTicks=%s semantics=inclusive_same_thread_wall_samples overlap=parent_child_not_additive lifecycle=outer_return_or_unwind; raw ticks require frequency conversion; stride estimates are approximate and systematic samples can alias work; dangerKey includes lookup, dangerLeaf is scalar-miss/outcome-resolution excluding admission; no native CPU-share claim",
+            planSamples.target,serial,planSamples.thread,PLAN_SAMPLE_STRIDE,planSamples.phase,planSamples.frequency,
+            planSamples.clockReads,planSamples.clockFailures,calls,selected,samples,ticks,maximum);
+    }
+    PlanSampleScope::PlanSampleScope(PlanSamplePart value,bool eligible):sampled(false),part(value),serial(0),epoch(0),started(0),threadState(NULL)
+    {
+        if(!eligible || !planSamples.enabled || planSamples.depth!=1 || value<0 || value>=PLAN_SAMPLE_PARTS) return;
+        PlanSampleCounter& count=planSamples.counter[value];
+        ++count.calls;
+        const unsigned long phase=(planSamples.phase+(unsigned long)value*97UL)&(PLAN_SAMPLE_STRIDE-1);
+        if((count.calls+phase)&(PLAN_SAMPLE_STRIDE-1)) return;
+        if(planSamples.epoch!=ReadPlanSampleEpoch()) { planSamples.enabled=false; return; }
+        ++count.selected;
+        LARGE_INTEGER now;
+        ++planSamples.clockReads;
+        if(!QueryPerformanceCounter(&now) || now.QuadPart<0) { ++planSamples.clockFailures; return; }
+        serial=planSamples.serial;
+        epoch=planSamples.epoch;
+        started=(unsigned __int64)now.QuadPart;
+        threadState=&planSamples;
+        sampled=true;
+    }
+    PlanSampleScope::~PlanSampleScope() { Finish(); }
+    void PlanSampleScope::Finish()
+    {
+        if(!sampled || threadState!=&planSamples) return;
+        sampled=false;
+        if(!planSamples.enabled || planSamples.depth!=1 || planSamples.serial!=serial ||
+            planSamples.epoch!=epoch || epoch!=ReadPlanSampleEpoch()) return;
+        LARGE_INTEGER now;
+        ++planSamples.clockReads;
+        if(!QueryPerformanceCounter(&now) || now.QuadPart<0 || (unsigned __int64)now.QuadPart<started)
+        { ++planSamples.clockFailures; return; }
+        PlanSampleCounter& count=planSamples.counter[part];
+        const unsigned __int64 duration=(unsigned __int64)now.QuadPart-started;
+        ++count.samples;
+        count.ticks+=duration;
+        if(duration>count.maximum) count.maximum=duration;
+    }
+    // END PLAN_SAMPLE_DIAGNOSTIC_ONLY
     UpdateBoundaryScope::UpdateBoundaryScope(UpdateBoundaryPart value):active(false),part(value),thread(0),generation(0)
     {
         Lock lock;

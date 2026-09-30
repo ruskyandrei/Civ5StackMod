@@ -6856,6 +6856,7 @@ const CvUnit* TacticalAIHelpers::GetSimulatedGarrison(const CvCity* city, const 
 int TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(const CvCity* pCity, const CvUnit* pAttacker, const CvPlot* pAttackerPlot, int& iAttackerDamage,
 	int& iGarrisonDamage, bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraCityDamage, int iExtraGarrisonDamage, bool bQuickAndDirty, bool bOverrideGarrison, const CvUnit* pGarrisonOverride)
 {
+	CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_CITY_SIMULATION); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	if (!pAttacker || !pCity || pAttacker->isDelayedDeath() || pAttacker->IsDead())
 		return 0;
 		
@@ -6888,6 +6889,7 @@ int TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(const CvUnit* pDefende
 				const CvPlot* pDefenderPlot, const CvPlot* pAttackerPlot, int& iAttackerDamage, 
 				bool bIgnoreUnitAdjacencyBoni, int iExtraSelfDamage, int iExtraDefenderDamage, bool bQuickAndDirty, bool bNextTurnThreat)
 {
+	CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_UNIT_SIMULATION); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	if (!pAttacker || !pDefender || pDefender->isDelayedDeath() || pDefender->IsDead() || pAttacker->isDelayedDeath() || pAttacker->IsDead())
 		return 0;
 		
@@ -8284,6 +8286,7 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
  bool cacheable = StackForecastContext();
  const unsigned long revision = cacheable ? gStackForecastRevision : 0;
  const long scene = cacheable ? gStackForecastSceneEpoch : 0;
+ CvStackingDiagnostics::PlanSampleScope keySample(CvStackingDiagnostics::PLAN_DANGER_KEY,cacheable); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (cacheable)
  {
   key.state.push_back(unit->GetID());
@@ -8300,11 +8303,14 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
    return cached->second;
   }
  }
+ keySample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (cacheable)
   ++gStackDangerMisses;
  int result = 0;
+ CvStackingDiagnostics::PlanSampleScope leafSample(CvStackingDiagnostics::PLAN_DANGER_LEAF); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
   result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
+ leafSample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
   StoreStackDangerForecast(key, result);
  return result;
@@ -8561,6 +8567,7 @@ static bool HasVirtualCityEncirclement(const CvTacticalPosition& position, const
 static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition,
  MovementDestinationStackQuery* destinationStack = NULL)
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_UNIT_DANGER); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  int iDanger = 0;
  if (CvStacking::IsEnabled() && pUnit->IsCombatUnit() && pUnit->getDomainType() != DOMAIN_AIR)
  {
@@ -8690,6 +8697,7 @@ static int ScoreStackPositionMembers(const CvUnit* unit, const CvPlot* plot, con
 static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDamage, const CvTacticalPosition& position,
  MovementDestinationStackQuery* destinationStack = NULL)
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_STACK_SCORE); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (!StackPreferencesEnabled())
   return 0;
  int fixedDanger = 0;
@@ -9440,6 +9448,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 							CvTacticalPlot::eTactPlotDomain eRelevantDomain, int iSelfDamage,
 							const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, bool bRelaxedCheck, bool bOnlyCheckImpossible)
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_TURN_END); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	int iResult = 0;
 	const CvPlot* pTestPlot = testPlot->getPlot();
 
@@ -9643,6 +9652,7 @@ struct LeavingStackProtectionMemo
 
 static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& assumedPosition, eUnitMoveEvalMode evalMode, LeavingStackProtectionMemo* leavingProtection = NULL)
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_COMBAT_MOVE); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	//default action is do nothing and invalid score (not -INT_MAX, to prevent overflows!)
 	STacticalAssignment* result = gAssignmentStorage.peekNext();
 	result->init(unit.iPlotIndex,testPlot->getPlotIndex(), unit.iUnitID, unit.iMovesLeft, unit.eMoveStrategy, A_MOVE, GetPrevPlotScore(unit.iUnitID, assumedPosition));
@@ -10668,6 +10678,7 @@ static STacticalAssignment* ScorePlotForMove(const SUnitStats& unit, const CvTac
 
 void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_PREFERRED_ASSIGNMENTS); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	//the challenge is that often a move can be good or bad depending on what our *other* units end up doing. so there are two strategies:
 	//a) return as many moves as possible and check validity at the end.
 	//b) return only "safe" moves in the sense that we dare to actually do them.
@@ -11066,6 +11077,7 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 	vector<CvTacticalPosition*>& openPositionsHeap, vector<CvTacticalPosition*>& completedPositions, const PrPositionSortHeapGeneration& heapSort,
 	const vector<const CvUnit*>& ourUnits)
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_NEXT_ASSIGNMENTS); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	/*
 	abstract:
 	get preferred plots for all combat units
@@ -11282,6 +11294,7 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 //lazy update of move plots
 void CvTacticalPosition::updateMovePlotsIfRequired()
 {
+ CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_MOVE_UPDATE); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	const vector<SUnitStats>& availableUnits_r = availableUnits.read();
 	if (movePlotUpdateFlagA==-1 && movePlotUpdateFlagB==-1)
 	{
@@ -14066,6 +14079,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	TeamTypes ourTeam = GET_PLAYER(ePlayer).getTeam();
 	StackForecastScope stackForecastScope;
 	CvStackingStrengthCache::Scope strengthCacheScope(CvStacking::IsEnabled() && gDLL->HasGameCoreLock() ? CvStacking::GetInt("AITacticalStrengthCacheEntries", 16384) : 0);
+	CvStackingDiagnostics::PlanSampleSession sampleSession(ePlayer,pTarget->GetPlotIndex()); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 
 	static vector<CvTacticalPosition*> openPositionsHeap;
 	static vector<CvTacticalPosition*> completedPositions;

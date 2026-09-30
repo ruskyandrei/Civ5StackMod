@@ -171,6 +171,8 @@ void CvLuaGame::RegisterMembers(lua_State* L)
 	Method(GetStackingDiagnosticsStatus);
 	Method(SetStackingDiagnosticsLevel);
 	Method(FlushStackingDiagnostics);
+	Method(SetStackingTacticalSampling); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+	Method(GetStackingTacticalSampling); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	Method(ChangeActivePlayer);
 
 	Method(IsScoreDirty);
@@ -1264,6 +1266,20 @@ int CvLuaGame::lSetStackingDiagnosticsLevel(lua_State* L)
 	return 1;
 }
 
+    // BEGIN PLAN_SAMPLE_DIAGNOSTIC_ONLY
+int CvLuaGame::lSetStackingTacticalSampling(lua_State* L)
+{
+	luaL_checktype(L, 1, LUA_TBOOLEAN);
+	CvStackingDiagnostics::SetTacticalSamplingEnabled(lua_toboolean(L, 1) != 0);
+	lua_pushboolean(L, CvStackingDiagnostics::GetTacticalSamplingEnabled());
+	return 1;
+}
+int CvLuaGame::lGetStackingTacticalSampling(lua_State* L)
+{
+	lua_pushboolean(L, CvStackingDiagnostics::GetTacticalSamplingEnabled());
+	return 1;
+}
+    // END PLAN_SAMPLE_DIAGNOSTIC_ONLY
 int CvLuaGame::lChangeActivePlayer(lua_State* L)
 {
 	const PlayerTypes eNewPlayer = toValue<PlayerTypes>(L, 2);
