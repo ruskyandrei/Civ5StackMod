@@ -68,6 +68,7 @@ namespace
     std::map<Key,March> marches;
     std::map<Key,std::pair<int,int> > captureRetries; // unit -> target, expiry
     std::map<Key,ProductionClaim> production;
+    std::map<Key,int> assemblyHolds;
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
     int Setting(const char* name,int value) { return CvStacking::GetInt(name,value); }
     bool Live(CvAIOperation* op)
@@ -89,6 +90,7 @@ namespace
         const int turn=GC.getGame().getGameTurn();
         if(currentTurn==turn) return;
         currentTurn=turn;
+        assemblyHolds.clear();
         for(int i=0;i<MAX_PLAYERS;++i) { synced[i]=-1; captureQueries[i]=0; extraBatches[i]=0; assaultQueries[i]=0; }
         // Tactical movement need not pass through RecordTransfer. Observe real
         // positions before aging objectives, including a dispatch near expiry.
@@ -152,11 +154,13 @@ namespace
             CvAIOperation* op=GET_PLAYER((PlayerTypes)i->first.owner).getAIOperation(i->second.operation);
             const bool active=Live(op) && CvStackingOffensiveAI::CityTarget(op)==p;
             // City ownership is already public game information. Never read hidden occupants.
-            const bool invalid=!p || !p->isCity() || p->getOwner()!=i->second.enemy || (op && CvStackingOffensiveAI::CityTarget(op)!=p) ||
-                (!GET_PLAYER((PlayerTypes)i->first.owner).IsAtWarWith((PlayerTypes)i->second.enemy) && !active);
+            const char* reason=!p || !p->isCity()?"city_missing":p->getOwner()!=i->second.enemy?"ownership_changed":
+                (op && CvStackingOffensiveAI::CityTarget(op)!=p)?"operation_retargeted":
+                (!GET_PLAYER((PlayerTypes)i->first.owner).IsAtWarWith((PlayerTypes)i->second.enemy) && !active)?"peace":NULL;
+            const bool invalid=reason!=NULL;
             if(invalid || (!active && turn-i->second.refreshed>Setting("AIOffensiveSupportMemoryTurns",12)))
             {
-                CvStackingDiagnostics::Record(1,(PlayerTypes)i->first.owner,"OFFENSIVE_OBJECTIVE","target=%d domain=%d action=expire",i->first.target,i->first.domain);
+                CvStackingDiagnostics::Record(1,(PlayerTypes)i->first.owner,"OFFENSIVE_OBJECTIVE","target=%d domain=%d action=expire reason=%s operation=%d refreshedAge=%d",i->first.target,i->first.domain,reason?reason:"memory_timeout",i->second.operation,turn-i->second.refreshed);
                 objectives.erase(i++);
             }
             else ++i;
@@ -331,6 +335,50 @@ namespace
         }
         return max(0,best);
     }
+    CvPlot* AttackApproach(CvUnit* unit,CvPlot* target,int maximumTurns,int& eta)
+    {
+        const PlayerTypes owner=unit->getOwner();
+        const bool ranged=unit->IsCanAttackRanged();
+        const int budget=Setting("AIAssaultPathQueriesPerTurn",64);
+        const int range=ranged?unit->GetRange():1;
+        if(unit->isNativeDomain(unit->plot()) && plotDistance(*unit->plot(),*target)<=range &&
+            (!ranged || unit->canEverRangeStrikeAt(target->getX(),target->getY(),unit->plot(),false)))
+        { eta=0;return unit->plot(); }
+        if(assaultQueries[owner]>=budget) return NULL;
+        ++assaultQueries[owner];
+        const int flags=(ranged?CvUnit::MOVEFLAG_APPROX_TARGET_RING2:CvUnit::MOVEFLAG_APPROX_TARGET_RING1)|
+            CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN|CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY;
+        if(unit->GeneratePath(target,flags,maximumTurns,&eta) && eta<=maximumTurns)
+        {
+            CvPlot* end=unit->GetPathLastPlot();
+            if(end && unit->isNativeDomain(end) && plotDistance(*end,*target)<=range &&
+                (!ranged || unit->canEverRangeStrikeAt(target->getX(),target->getY(),end,false))) return end;
+        }
+        if(!ranged) return NULL;
+        // A ring-two endpoint can have blocked line of sight or be outside a
+        // unique unit's range. Try a bounded set of real legal firing positions.
+        std::vector<std::pair<int,int> > candidates;
+        const int radius=min(range,Setting("AIAssaultFiringPositionRadiusMaximum",6));
+        const int scan=min(1+3*radius*(radius+1),Setting("AIAssaultFiringPositionScanPlots",96));
+        for(int i=1;i<scan;++i)
+        {
+            CvPlot* p=iterateRingPlots(target,i);
+            if(!p || !p->isVisible(GET_PLAYER(owner).getTeam()) || !unit->isNativeDomain(p) ||
+                !unit->canMoveInto(*p,CvUnit::MOVEFLAG_DESTINATION) ||
+                !unit->canEverRangeStrikeAt(target->getX(),target->getY(),p,false)) continue;
+            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p),p->GetPlotIndex()));
+        }
+        std::sort(candidates.begin(),candidates.end());
+        for(size_t i=0;i<candidates.size() && i<(size_t)Setting("AIAssaultFiringPositionCandidates",6);++i)
+        {
+            if(assaultQueries[owner]>=budget) break;
+            ++assaultQueries[owner];
+            CvPlot* p=GC.getMap().plotByIndexUnchecked(candidates[i].second);
+            if(unit->GeneratePath(p,CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY,maximumTurns,&eta) && eta<=maximumTurns &&
+                unit->GetPathLastPlot()==p) return p;
+        }
+        return NULL;
+    }
     void CapturePlan(PlayerTypes owner,CvPlot* target,Objective& o,DomainTypes domain=DOMAIN_LAND)
     {
         if(o.captureTurn==currentTurn) return;
@@ -372,7 +420,9 @@ namespace
             if(!approach && plotDistance(*u->plot(),*target)<=1 && u->isNativeDomain(u->plot()))
             { approach=u->plot();eta=0; }
             if(!approach || plotDistance(*approach,*target)>1 || !u->isNativeDomain(approach)) continue;
-            if(u->GetID()==previous && eta>1 && o.captureProgress>=0 &&
+            // A one-turn ETA is not an arrival. Fast units can stay at a safe
+            // assembly point indefinitely while still forecasting ETA one.
+            if(u->GetID()==previous && plotDistance(*u->plot(),*target)>1 && o.captureProgress>=0 &&
                 currentTurn-o.captureProgress>=Setting("AICaptureNoProgressTurns",6))
             {
                 captureRetries[unitKey]=std::make_pair(target->GetPlotIndex(),currentTurn+Setting("AICaptureRetryTurns",4));
@@ -383,7 +433,9 @@ namespace
             int retaliation=0,garrison=0;
             const int captureDamage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(target->getPlotCity(),u,approach,retaliation,garrison,false,0,
                 max(0,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()-1));
-            const bool survives=captureDamage>0 && retaliation<u->GetCurrHitPoints();
+            const bool healthy=u->GetCurrHitPoints()*100>=u->GetMaxHitPoints()*Setting("AICapturePlanMinimumHPPercent",60);
+            const bool survives=captureDamage>0 && retaliation<u->GetCurrHitPoints() &&
+                (healthy || plotDistance(*u->plot(),*target)<=1);
             CvStackingDiagnostics::Record(1,owner,"CAPTURE_CANDIDATE","target=%d unit=%d domain=%d eta=%d approach=%d retaliation=%d hp=%d captureDamage=%d viable=%d",target->GetPlotIndex(),u->GetID(),u->getDomainType(),eta,approach->GetPlotIndex(),retaliation,u->GetCurrHitPoints(),captureDamage,survives);
             if(survives)
             {
@@ -444,12 +496,14 @@ namespace
                     break;
                 }
             }
-        const bool credible=o.captureID>=0 && (o.captureEta<=1 ||
+        const bool adjacent=o.captureID>=0 && (o.captureOwner!=owner ||
+            (best && plotDistance(*best->plot(),*target)<=1 && best->isNativeDomain(best->plot())));
+        const bool credible=o.captureID>=0 && (adjacent ||
             (o.captureProgress>=0 && currentTurn-o.captureProgress<Setting("AICaptureNoProgressTurns",6)));
         // Changing the candidate alone does not restart a stalled siege clock.
-        if(o.captureID>=0 && (o.captureEta<=1 || actualProgress)) o.noCaptureSince=-1;
+        if(o.captureID>=0 && (adjacent || actualProgress)) o.noCaptureSince=-1;
         else if(o.captureKnown && o.noCaptureSince<0) o.noCaptureSince=currentTurn;
-        CvStackingDiagnostics::Record(1,owner,"CAPTURE_PLAN","target=%d unit=%d unitOwner=%d eta=%d known=%d credible=%d progressAge=%d missingTurns=%d queries=%d",target->GetPlotIndex(),o.captureID,o.captureOwner,o.captureEta,o.captureKnown,credible,o.captureProgress<0?-1:currentTurn-o.captureProgress,o.noCaptureSince<0?0:currentTurn-o.noCaptureSince,captureQueries[owner]);
+        CvStackingDiagnostics::Record(1,owner,"CAPTURE_PLAN","target=%d domain=%d unit=%d unitOwner=%d eta=%d known=%d credible=%d adjacent=%d progressAge=%d missingTurns=%d queries=%d",target->GetPlotIndex(),domain,o.captureID,o.captureOwner,o.captureEta,o.captureKnown,credible,adjacent,o.captureProgress<0?-1:currentTurn-o.captureProgress,o.noCaptureSince<0?0:currentTurn-o.noCaptureSince,captureQueries[owner]);
     }
 }
 
@@ -511,8 +565,9 @@ namespace CvStackingOffensiveAI
         Objective* objective=Touch(owner,target,domain);
         if(!objective)
         {
-            result.ready=!RouteBlocked(owner,target,domain==DOMAIN_SEA);
-            if(!result.ready) { result.phase=2;result.reason=7; }
+            // An objective/work limit is not evidence that a second domain is
+            // ready. Otherwise an unassessed fleet can bypass a gathering army.
+            result.phase=2;result.reason=8;
             return result;
         }
         Objective& o=*objective;
@@ -537,19 +592,9 @@ namespace CvStackingOffensiveAI
             if(u->GetCurrHitPoints()*100<u->GetMaxHitPoints()*Setting("AIAssaultHealthyPercent",65)) continue;
             if(plotDistance(*u->plot(),*target)>approachTurns*max(1,u->baseMoves(false))+u->GetRange())
             { ++result.inbound; continue; }
-            if(assaultQueries[owner]>=budget) { ++result.inbound; continue; }
-            ++assaultQueries[owner];
-            const int flags=(u->IsCanAttackRanged()?CvUnit::MOVEFLAG_APPROX_TARGET_RING2:CvUnit::MOVEFLAG_APPROX_TARGET_RING1)|
-                CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN|CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY;
             int eta=INT_MAX;
-            if(!u->GeneratePath(target,flags,approachTurns,&eta) || eta>approachTurns) { ++result.inbound; continue; }
-            CvPlot* firing=u->GetPathLastPlot();
-            if(!firing && u->isNativeDomain(u->plot()) &&
-                (u->IsCanAttackRanged()?u->canEverRangeStrikeAt(target->getX(),target->getY(),u->plot(),false):plotDistance(*u->plot(),*target)<=1))
-            { firing=u->plot();eta=0; }
-            if(!firing || !u->isNativeDomain(firing) ||
-                (u->IsCanAttackRanged() && !u->canEverRangeStrikeAt(target->getX(),target->getY(),firing,false)) ||
-                (!u->IsCanAttackRanged() && plotDistance(*firing,*target)>1)) continue;
+            CvPlot* firing=AttackApproach(u,target,approachTurns,eta);
+            if(!firing) { ++result.inbound;continue; }
             int retaliation=0,garrison=0;
             const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,u,firing,retaliation,garrison);
             if(damage<=0 || retaliation>=u->GetCurrHitPoints()) continue;
@@ -574,12 +619,11 @@ namespace CvStackingOffensiveAI
         if(o.captureOwner==owner && o.captureID>=0)
         {
             CvUnit* capturer=player.getUnit(o.captureID);
-            if(capturer && capturer->canMove() && !capturer->isOutOfAttacks() &&
-                plotDistance(*capturer->plot(),*target)<=1 && capturer->isNativeDomain(capturer->plot()) &&
-                capturer->canMoveInto(*target,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION))
+            CvPlot* approach=GetCaptureApproachNow(capturer,city);
+            if(approach)
             {
                 int retaliation=0,garrison=0;
-                const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,capturer,capturer->plot(),retaliation,garrison);
+                const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,capturer,approach,retaliation,garrison);
                 immediateCapture=damage>=hp && retaliation<capturer->GetCurrHitPoints();
             }
         }
@@ -659,7 +703,12 @@ namespace CvStackingOffensiveAI
         }
         const int radius=Setting("AIAssaultStageCohesionRadius",2);
         if(currentDanger<=dangerLimit && plotDistance(*unit->plot(),*stage)<=radius)
-        { unit->SetTurnProcessed(true);return true; }
+        {
+            if(!HasCommitment(unit,cityTarget))
+                RecordTransfer(unit,cityTarget->GetPlotIndex(),-1,plotDistance(*unit->plot(),*cityTarget)/max(1,unit->baseMoves(false)));
+            assemblyHolds[Key(owner,unit->GetID())]=currentTurn;
+            unit->SetTurnProcessed(true);return true;
+        }
         std::vector<std::pair<int,int> > candidates;
         for(int i=0;i<1+3*radius*(radius+1);++i)
         {
@@ -685,6 +734,7 @@ namespace CvStackingOffensiveAI
             if(!unit || unit->isDelayedDeath()) return true;
             if(unit->plot()->GetPlotIndex()==from) continue;
             RecordTransfer(unit,cityTarget->GetPlotIndex(),-1,plotDistance(*unit->plot(),*cityTarget)/max(1,unit->baseMoves(false)));
+            assemblyHolds[Key(owner,id)]=currentTurn;
             unit->SetTurnProcessed(true);
             CvStackingDiagnostics::Record(2,owner,"ASSAULT_STAGE","unit=%d target=%d from=%d after=%d stage=%d",id,cityTarget->GetPlotIndex(),from,unit->plot()->GetPlotIndex(),stage->GetPlotIndex());
             return true;
@@ -721,6 +771,52 @@ namespace CvStackingOffensiveAI
             { result=GET_PLAYER(owner).getUnit(i->second.captureID); bestEta=i->second.captureEta; }
         }
         return result;
+    }
+    bool IsAssemblyHeld(const CvUnit* unit)
+    {
+        if(!unit) return false;
+        Refresh();
+        const std::map<Key,int>::const_iterator i=assemblyHolds.find(Key(unit->getOwner(),unit->GetID()));
+        return i!=assemblyHolds.end() && i->second==currentTurn;
+    }
+    void ReleaseAssemblyHold(CvUnit* unit)
+    {
+        if(IsAssemblyHeld(unit))
+        {
+            assemblyHolds.erase(Key(unit->getOwner(),unit->GetID()));
+            unit->SetTurnProcessed(false);
+        }
+    }
+    CvPlot* GetCaptureApproachNow(CvUnit* unit,CvCity* city)
+    {
+        if(!city || !CanCapture(unit,city->plot()) || !unit->canMove() || unit->isOutOfAttacks() ||
+            (!unit->canUseNow() && !IsAssemblyHeld(unit)) ||
+            !unit->canMoveInto(*city->plot(),CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)) return NULL;
+        if(plotDistance(*unit->plot(),*city->plot())<=1 && unit->isNativeDomain(unit->plot())) return unit->plot();
+        Refresh();
+        if(captureQueries[unit->getOwner()]>=Setting("AICapturePlanPathQueriesPerTurn",32)) return NULL;
+        ++captureQueries[unit->getOwner()];
+        const int flags=CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION|CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY;
+        // Exact current-turn reach includes movement and the final attack; an
+        // approximate arrival forecast may use movement from the following turn.
+        if(!unit->GeneratePath(city->plot(),flags,1) || unit->GetPathEndFirstTurnPlot()!=city->plot()) return NULL;
+        const CvPathNodeArray& path=unit->GetLastPath();
+        CvPlot* approach=path.size()>1?path.GetPlotByIndex((int)path.size()-2):unit->plot();
+        return approach && unit->isNativeDomain(approach) && plotDistance(*approach,*city->plot())<=1?approach:NULL;
+    }
+    bool AllowCityAttack(const CvUnit* unit,CvCity* city,const CvPlot* firing,bool capture)
+    {
+        if(!unit || !city || !firing) return false;
+        if(!Enabled(unit->getOwner()) || Setting("AIAssaultCoordinationEnabled",1)==0 || capture) return true;
+        const AssaultPlan plan=AssessAssault(unit->getOwner(),city,unit->getDomainType());
+        if(plan.ready) return true;
+        if(!unit->IsCanAttackRanged()) return false;
+        // Generic combat searches may target a different city than their main
+        // target. Enforce assembly on that actual city, preserving safe fire.
+        const std::vector<const CvUnit*> alone(1,unit);const SUnitIDValueContainer noDamage;
+        if(GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*firing,unit,alone,noDamage,noDamage)>
+            unit->GetCurrHitPoints()*Setting("AIAssaultStageDangerPercent",0)/100) return false;
+        return ContinueSiege(unit->getOwner(),city);
     }
     void ReviewObjectives(PlayerTypes owner)
     {
@@ -857,12 +953,12 @@ namespace CvStackingOffensiveAI
         }
     }
     void Reset()
-    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); currentTurn=-1; }
+    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); assemblyHolds.clear(); currentTurn=-1; }
     bool CanCapture(const CvUnit* u,const CvPlot* city)
     {
         return Usable(u) && city && city->isCity() && u->IsCanAttackWithMove() && !u->isNoCapture() &&
             (u->getDomainType()==DOMAIN_LAND || (u->getDomainType()==DOMAIN_SEA && city->isCoastalLand())) &&
-            u->GetCurrHitPoints()*100>=u->GetMaxHitPoints()*Setting("AICapturePlanMinimumHPPercent",60);
+            u->GetCurrHitPoints()>0;
     }
     void ObserveOperation(CvAIOperation* op)
     {
@@ -1039,6 +1135,7 @@ namespace CvStackingOffensiveAI
         // Homeland patrol runs after tactical combat: keep a safe staged reserve available
         // for next turn instead of wandering back home when the formation is still full.
         c->second.lastProgress=currentTurn;
+        assemblyHolds[Key(unit->getOwner(),unit->GetID())]=currentTurn;
         unit->SetTurnProcessed(true);
         CvStackingDiagnostics::Record(2,unit->getOwner(),"OFFENSIVE_SUPPORT","unit=%d target=%d operation=%d action=staged_reserve",unit->GetID(),c->second.goal.target,op?op->GetID():-1);
         return true;
@@ -1165,7 +1262,7 @@ namespace CvStackingOffensiveAI
         if(i==objectives.end()) return true;
         Objective& o=i->second; CapturePlan(owner,city->plot(),o);
         const int hp=city->GetMaxHitPoints()-city->getDamage();
-        const bool review=o.captureKnown && (o.captureID<0 || o.captureEta>1) && o.noCaptureSince>=0 && currentTurn-o.noCaptureSince>=Setting("AISiegeNoCaptureReviewTurns",8) &&
+        const bool review=o.captureKnown && o.noCaptureSince>=0 && currentTurn-o.noCaptureSince>=Setting("AISiegeNoCaptureReviewTurns",8) &&
             hp*100<=city->GetMaxHitPoints()*Setting("AISiegeNoCaptureLowHPPercent",25);
         if(!review) return true;
         // Collateral/defender pressure remains useful even without a current capture route.

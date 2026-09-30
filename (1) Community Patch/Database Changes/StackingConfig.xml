@@ -29,6 +29,9 @@
     <Row Name="AIAssaultStagePlacementCandidates" Value="8"/>
     <Row Name="AIAssaultStageCandidates" Value="96"/>
     <Row Name="AIAssaultPathQueriesPerTurn" Value="64"/>
+    <Row Name="AIAssaultFiringPositionCandidates" Value="6"/>
+    <Row Name="AIAssaultFiringPositionScanPlots" Value="96"/>
+    <Row Name="AIAssaultFiringPositionRadiusMaximum" Value="6"/>
     <Row Name="AIAssaultStageDangerPercent" Value="0"/>
     <Row Name="AIAssaultReviewInterval" Value="3"/>
     <Row Name="AIAssaultObjectiveSummaryInterval" Value="5"/>

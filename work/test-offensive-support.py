@@ -83,6 +83,20 @@ stubs=stubs.replace('CvUnit*GetGarrisonedUnit()const','int getProductionUnit()co
 stubs=stubs.replace('int getProductionUnit()const','bool IsBuildingUnitForOperation()const{return productionOperation>=0;}int GetUnitProductionOperation()const{return productionOperation;}int getProductionUnit()const')
 stubs=stubs.replace('maxhp,productionType,productionTurns;','maxhp,productionType,productionTurns,productionOperation;').replace('productionTurns(1),capital(false)','productionTurns(1),productionOperation(-1),capital(false)')
 stubs=stubs.replace('CvCity*firstCity(int*i)','CvCity*getCity(int n)const{for(size_t i=0;i<cities.size();++i)if(cities[i]->id==n)return cities[i];return NULL;}CvCity*firstCity(int*i)')
+stubs=stubs.replace('struct UnitInfo{','struct CvPathNodeArray:vector<CvPlot*>{CvPlot*GetPlotByIndex(int n)const{return at(n);}};\nstruct UnitInfo{')
+stubs=stubs.replace('bool dynamicEnd,canFire','bool moves,exactCapturePath,dynamicEnd,canFire')
+stubs=stubs.replace('dynamicEnd(false),canFire','moves(true),exactCapturePath(false),dynamicEnd(false),canFire')
+stubs=stubs.replace('CvPlot*position;CvPlot*end;UnitInfo info;','CvPlot*position;CvPlot*end;CvPlot*exactDestination;CvPathNodeArray lastPath;UnitInfo info;')
+stubs=stubs.replace('position(NULL),end(NULL)','position(NULL),end(NULL),exactDestination(NULL)')
+stubs=stubs.replace('bool canMove()const{return !processed&&!dead;}','bool canMove()const{return moves&&!dead;}')
+stubs=stubs.replace('bool canUseNow()const{return !processed&&!dead;}','bool canUseNow()const{return canMove()&&!processed&&!dead;}')
+stubs=stubs.replace('bool GeneratePath(CvPlot*p,int,int,int*turns=NULL){++pathCalls;',
+                    'bool GeneratePath(CvPlot*p,int flags,int,int*turns=NULL){++pathCalls;exactDestination=(flags&MOVEFLAG_ATTACK)&&exactCapturePath?p:NULL;')
+stubs=stubs.replace('CvPlot*GetPathEndFirstTurnPlot(){return end;}',
+                    'CvPlot*GetPathEndFirstTurnPlot(){return exactDestination?exactDestination:end;}const CvPathNodeArray&GetLastPath()const{return lastPath;}')
+stubs=stubs.replace('CvPathNodeArray lastPath;UnitInfo info;','CvPathNodeArray lastPath;map<int,bool>firingLegal;UnitInfo info;')
+stubs=stubs.replace('bool canEverRangeStrikeAt(int,int,const CvPlot*,bool)const{return ranged&&canFire;}',
+                    'bool canEverRangeStrikeAt(int,int,const CvPlot*p,bool)const{return ranged&&canFire&&(!firingLegal.count(p->id)||firingLegal.find(p->id)->second);}')
 def clean(s):return re.sub(r'^#(?:include|pragma)[^\n]*\n','',s,flags=re.M)
 source=(core/'CvStackingOffensiveAI.cpp').read_text(encoding='utf-8-sig')
 header=clean((core/'CvStackingOffensiveAI.h').read_text(encoding='utf-8-sig'))
@@ -170,11 +184,12 @@ void capsTests(){init();options["AIOffensiveSupportMaximumUnits"]=18;CvPlot t(10
 void captureTests(){init();CvPlot t(10,5),s(1),adj(2,4);CvCity city(10,&t);city.owner=1;t.owner=1;GC.map.plots[t.id]=&t;CvUnit u(1);put(u,s);u.end=&adj;
  check(CvStackingOffensiveAI::CanCapture(&u,&t),"land melee eligible");u.capture=false;check(!CvStackingOffensiveAI::CanCapture(&u,&t),"no capture promotion rejected");u.capture=true;
  u.domain=DOMAIN_SEA;check(!CvStackingOffensiveAI::CanCapture(&u,&t),"ship cannot take inland city");t.coastal=true;check(CvStackingOffensiveAI::CanCapture(&u,&t),"naval melee coastal capture");u.domain=DOMAIN_LAND;
- u.hp=59;check(!CvStackingOffensiveAI::CanCapture(&u,&t),"unhealthy capturer rejected");u.hp=100;
+ u.hp=59;check(CvStackingOffensiveAI::CanCapture(&u,&t),"capture capability is separate from planning health threshold");u.hp=100;
  city.damage=290;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"viable path supports low HP siege");
  u.pathOK=false;for(int n=0;n<9;++n){++GC.game.turn;CvStackingOffensiveAI::ContinueSiege(0,&city);}
  check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"closed/inaccessible path eventually stops futile low HP fire");
- u.pathOK=true;++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"new route resumes siege");
+ u.pathOK=true;++GC.game.turn;check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"new ETA forecast alone does not erase a stalled capture clock");
+ u.position=&adj;u.eta=0;++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"actual adjacent arrival resumes siege");
  retaliation=100;for(int n=0;n<9;++n){++GC.game.turn;CvStackingOffensiveAI::ContinueSiege(0,&city);}check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"suicidal capturer not credited");
  CvUnit defender(3);defender.owner=1;put(defender,t);++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"useful collateral fire retained");defender.hp=50;++GC.game.turn;check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"victim floor is not useful collateral");
  t.visible=false;++GC.game.turn;check(CvStackingOffensiveAI::ContinueSiege(0,&city),"unseen city health/occupants are not reassessed");t.visible=true;
@@ -338,7 +353,53 @@ void reassignmentTests(){
  check(!CvStackingOffensiveAI::HasCommitment(&unit,&target),"new army targeting another city immediately supersedes old support commitment");
  ++GC.game.turn;CvStackingOffensiveAI::HasCommitment(&unit);check(commitments.empty(),"refresh releases reassigned operation duty without waiting for movement stall");
 }
-int main(){policyTests();routeTests();openingTests();supportTests();capsTests();captureTests();navalTests();marchTests();expiryProgressTests();captureCommitmentTests();assaultTests();productionTests();stagedReserveTests();preparationProductionTests();stagePlacementTests();captureOrderTests();emptyApproximatePathTests();reassignmentTests();printf("offensive support: %d checks, %d failures\n",checks,failed);return failed?1:0;}
+void captureArrivalRegressionTests(){
+ init();CvPlot target(10,5),stage(1,2),adj(2,4);CvCity city(10,&target);city.owner=target.owner=1;city.damage=299;GC.map.plots[target.id]=&target;CvUnit unit(1);unit.end=&adj;unit.eta=1;put(unit,stage);
+ check(CvStackingOffensiveAI::ContinueSiege(0,&city),"fresh short-ETA capturer receives bounded preparation grace");
+ for(int n=0;n<8;++n){++GC.game.turn;CvStackingOffensiveAI::ContinueSiege(0,&city);}
+ check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"stationary ETA-one capturer cannot permit indefinite low-HP bombardment");
+ check(!CvStackingOffensiveAI::GetReservedCapturer(0,&city),"stationary ETA-one candidate enters retry cooldown");
+ init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;unit=CvUnit(1);unit.eta=1;unit.end=&adj;put(unit,stage);unit.exactCapturePath=true;unit.lastPath.push_back(&stage);unit.lastPath.push_back(&adj);unit.lastPath.push_back(&target);CvStackingOffensiveAI::ContinueSiege(0,&city);CvTacticalAI tactical;
+ check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1,"fast capturer may move through a legal approach and capture in this turn");
+ unit.exactCapturePath=false;check(!tactical.TryReservedCityCapture(&target),"approximate one-turn arrival cannot substitute for exact current-turn capture reach");
+ unit.exactCapturePath=true;unit.lastPath[1]=&stage;check(!tactical.TryReservedCityCapture(&target),"nonadjacent final approach rejected even if mocked exact endpoint is target");unit.lastPath[1]=&adj;
+ captureQueries[0]=32;check(!tactical.TryReservedCityCapture(&target),"exact distant capture obeys existing shared path budget");captureQueries[0]=0;
+ unit.moves=false;check(!tactical.TryReservedCityCapture(&target),"no remaining movement forbids distant capture");unit.moves=true;
+ unit.processed=true;check(!tactical.TryReservedCityCapture(&target),"arbitrarily processed fast unit cannot be reused");
+ assemblyHolds[Key(0,unit.id)]=currentTurn;check(tactical.TryReservedCityCapture(&target)&&!unit.processed&&!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"specifically held reserve is released only for verified executable capture");
+ unit.processed=true;assemblyHolds[Key(0,unit.id)]=currentTurn;unit.cityShot=0;check(!tactical.TryReservedCityCapture(&target)&&unit.processed&&CvStackingOffensiveAI::IsAssemblyHeld(&unit),"insufficient damage leaves reserve hold intact");unit.cityShot=30;
+ ++GC.game.turn;check(!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"hold exception expires at next turn");
+ unit.processed=false;unit.position=&adj;unit.end=&adj;unit.hp=30;unit.eta=0;++GC.game.turn;
+ check(tactical.TryReservedCityCapture(&target),"wounded adjacent unit that survives can capture without the recruitment health minimum");
+ retaliation=30;check(!tactical.TryReservedCityCapture(&target),"wounded adjacent unit with lethal retaliation still rejected");
+ init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;options["AIOffensiveSupportMaximumObjectives"]=0;
+ const CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND);
+ check(!plan.ready&&plan.reason==8,"objective limit returns an unassessed plan instead of inventing assault readiness");
+}
+void cityAttackGateTests(){
+ init();CvPlot target(10,10),stage(1,4),adj(2,9);CvCity city(10,&target);city.owner=target.owner=1;GC.map.plots[target.id]=&target;GC.map.plots[stage.id]=&stage;target.ring.push_back(&stage);CvUnit melee(1);melee.eta=2;melee.end=&adj;put(melee,stage);
+ check(!CvStackingOffensiveAI::AllowCityAttack(&melee,&city,&adj,false),"generic melee city chip attack respects incomplete assault readiness");
+ melee.danger=80;check(!CvStackingOffensiveAI::AllowCityAttack(&melee,&city,&adj,false),"endangered attacker cannot bypass city assembly gate");
+ check(CvStackingOffensiveAI::AllowCityAttack(&melee,&city,&adj,true),"simulated capture stays available during gathering");
+ CvUnit archer(2);archer.ranged=true;archer.rs=40;archer.end=&adj;put(archer,stage);dangerMap.danger[stage.id]=0;
+ check(CvStackingOffensiveAI::AllowCityAttack(&archer,&city,&stage,false),"safe ranged softening remains available during gathering");
+ dangerMap.danger[adj.id]=80;check(!CvStackingOffensiveAI::AllowCityAttack(&archer,&city,&adj,false),"ranged move into defender firing footprint waits for ready wave");
+ options["AIAssaultCoordinationEnabled"]=0;check(CvStackingOffensiveAI::AllowCityAttack(&melee,&city,&adj,false),"XML switch restores unrestricted VP attack choices");
+ check(!CvStackingOffensiveAI::AllowCityAttack(NULL,&city,&adj,false),"missing city-attack actor rejected");
+}
+void firingApproachTests(){
+ init();CvPlot target(10,10),rear(1,1),blocked(2,8),legal(3,9),water(4,9);CvCity city(10,&target);city.owner=target.owner=1;GC.map.plots[target.id]=&target;GC.map.plots[legal.id]=&legal;GC.map.plots[water.id]=&water;target.ring.push_back(&blocked);target.ring.push_back(&water);target.ring.push_back(&legal);water.water=true;
+ CvUnit siege(1);siege.ranged=true;siege.info.role=UNITAI_CITY_BOMBARD;siege.end=&blocked;siege.dynamicEnd=true;siege.eta=2;siege.firingLegal[blocked.id]=false;put(siege,rear);int eta=INT_MAX;
+ check(AttackApproach(&siege,&target,3,eta)==&legal&&eta==2,"blocked approximate endpoint finds a native legal alternative firing tile");
+ check(siege.pathCalls==2,"legal alternative uses one extra bounded path query");
+ siege.position=&legal;int before=siege.pathCalls;check(AttackApproach(&siege,&target,3,eta)==&legal&&eta==0&&siege.pathCalls==before,"existing legal firing tile is credited without path search");
+ siege.position=&rear;siege.end=&blocked;assaultQueries[0]=63;check(!AttackApproach(&siege,&target,3,eta)&&assaultQueries[0]==64,"alternative firing search cannot exceed shared per-turn work budget");
+ assaultQueries[0]=0;options["AIAssaultFiringPositionCandidates"]=0;check(!AttackApproach(&siege,&target,3,eta),"XML zero disables alternative firing paths");options["AIAssaultFiringPositionCandidates"]=6;
+ legal.visible=false;siege.end=&blocked;check(!AttackApproach(&siege,&target,3,eta),"hidden alternate tile is not counted as known firing access");legal.visible=true;
+ siege.pathOK=false;siege.end=&blocked;check(!AttackApproach(&siege,&target,3,eta),"unreachable alternative does not create a ready siege unit");siege.pathOK=true;
+ siege.eta=4;siege.end=&blocked;check(!AttackApproach(&siege,&target,3,eta),"late alternate firing route does not enter current wave");
+}
+int main(){policyTests();routeTests();openingTests();supportTests();capsTests();captureTests();navalTests();marchTests();expiryProgressTests();captureCommitmentTests();assaultTests();productionTests();stagedReserveTests();preparationProductionTests();stagePlacementTests();captureOrderTests();emptyApproximatePathTests();reassignmentTests();captureArrivalRegressionTests();cityAttackGateTests();firingApproachTests();printf("offensive support: %d checks, %d failures\n",checks,failed);return failed?1:0;}
 '''
 cpp=out/'offensive-source-test.cpp';cpp.write_text(stubs+header+policy+clean(source)+capture_harness+capture_actual+tests,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows';env=os.environ.copy()

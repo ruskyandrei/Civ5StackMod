@@ -60,6 +60,10 @@ namespace CvStackingOffensiveAI
     bool HoldForAssembly(const CvUnit* unit, const CvPlot* tacticalTarget);
     void ReviewObjectives(PlayerTypes owner);
     CvUnit* GetReservedCapturer(PlayerTypes owner, CvCity* city);
+    CvPlot* GetCaptureApproachNow(CvUnit* unit, CvCity* city);
+    bool IsAssemblyHeld(const CvUnit* unit);
+    void ReleaseAssemblyHold(CvUnit* unit);
+    bool AllowCityAttack(const CvUnit* unit, CvCity* city, const CvPlot* firing, bool capture);
     int ProductionBonus(const CvCity* city, UnitTypes unit);
     void RecordProduction(CvCity* city, UnitTypes unit);
     void UnitProduced(CvCity* city, CvUnit* unit);

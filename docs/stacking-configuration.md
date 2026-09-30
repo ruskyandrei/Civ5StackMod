@@ -298,7 +298,10 @@ All controls remain in `StackingConfig.xml`. The new pass keeps the tactical 13-
 | AIOffensiveProductionMaximumTurns | 12 | 1–30 | Maximum production plus approximate travel lead time for a moving formation request. |
 | AICapturePlanMaximumTurns | 6 | 1–15 | Actual unit-path horizon to a native-domain tile adjacent to a city, with safe embark paths allowed for assessment. |
 | AICapturePlanPathQueriesPerTurn | 32 | 1–128 | Per-player cap on capture path queries; exhausted budget means unknown, not impossible. |
-| AICapturePlanMinimumHPPercent | 60 | 1–100 | Health floor for counting a capture-capable unit. |
+| AICapturePlanMinimumHPPercent | 60 | 1–100 | Health floor for planning a distant capturer. An adjacent wounded unit remains eligible if its actual capture attack survives. |
+| AIAssaultFiringPositionCandidates | 6 | 0–32 | Maximum alternative firing routes when the approximate endpoint cannot fire; 0 disables the fallback. Shares the assault path budget. |
+| AIAssaultFiringPositionScanPlots | 96 | 1–192 | Maximum tiles inspected for alternative native-domain firing positions. |
+| AIAssaultFiringPositionRadiusMaximum | 6 | 1–10 | Maximum alternative search radius, also limited by the unit's actual range. |
 | AISiegeNoCaptureReviewTurns | 8 | 2–30 | Missing-capture grace period before reviewing futile fire. |
 | AISiegeNoCaptureLowHPPercent | 25 | 0–100 | Only suppress city fire below this city-health threshold when no viable capturer or useful collateral exists. |
 | AIOperationRouteRetryTurns | 6 | 0–30 | Target/domain retry cooldown after LostPath or moving-phase timeout; 0 disables it. |
@@ -310,6 +313,8 @@ All controls remain in `StackingConfig.xml`. The new pass keeps the tactical 13-
 Fortification timing is **before each hit**. Sum building protection, cap it, then multiply by current city HP / maximum HP and round down. Simulated prior city damage is included in offensive and defensive multi-hit forecasts. The primary shot has not yet reduced protection for its own collateral. A 90% cap gives 90/45/0 protection at full/half/zero city HP. The unit HP floor, existing siege penalty, normal garrison absorption and city damage are independent.
 
 Native `WAR_READINESS`, `WAR_DECLARATION`, `OPERATION_ROUTE`, `OPERATION_PROGRESS`, `OPERATION_CONTACT`, `CAPTURE_PLAN`, `CAPTURE_CANDIDATE`, `SIEGE_REASSESS`, `OFFENSIVE_OBJECTIVE` and `OFFENSIVE_SUPPORT` are Summary records. Candidate route rejections and per-candidate `OFFENSIVE_DEMAND` are Verbose. The existing logger limits and player filter apply. `joined_formation` is distinct from a front/staging arrival; neither alone proves useful combat.
+
+`CAPTURE_PLAN` includes domain and actual adjacency, so parallel land/naval forecasts can be distinguished. A stationary fast unit forecasting ETA one still reaches the configurable no-progress deadline. `CAPTURE_ORDER` includes the start and verified attack approach; distant orders require an exact route that reaches and attacks the city in the current turn. Only units specifically held for assembly may have that hold released for a verified surviving capture. `OFFENSIVE_OBJECTIVE` expiry includes its reason and refresh age. Summary `CITY_RETAIN` identifies each unit actually reserved for city defense, including its role, ranged/siege status, health and garrison status; other physical city occupants are not implicitly counted as retained defenders.
 
 Readiness uses intended-enemy army routes (respects third-party borders), not a precise future movement simulation. Capture assessment uses legal unit paths and simulated retaliation against a softened city. Strategic dispatch remains native-domain/no-embark; safe crossings may be recognized without this pass constructing an escorted landing. Existing VP naval/combined invasions and tactical landing code remain responsible for that movement.
 

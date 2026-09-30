@@ -883,13 +883,14 @@ bool CvTacticalAI::TryReservedCityCapture(CvPlot* target)
 	if(!target || !target->isCity() || target->getOwner()==NO_PLAYER || !m_pPlayer->IsAtWarWith(target->getOwner())) return false;
 	CvCity* city=target->getPlotCity();
 	CvUnit* unit=CvStackingOffensiveAI::GetReservedCapturer(m_pPlayer->GetID(),city);
-	if(!CvStackingOffensiveAI::CanCapture(unit,target) || !unit->canUseNow() || !unit->canMove() || unit->isOutOfAttacks() ||
-		plotDistance(*unit->plot(),*target)>1 || !unit->canMoveInto(*target,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)) return false;
+	CvPlot* approach=CvStackingOffensiveAI::GetCaptureApproachNow(unit,city);
+	if(!approach) return false;
 	int retaliation=0,garrison=0;
-	const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,unit,unit->plot(),retaliation,garrison);
+	const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,unit,approach,retaliation,garrison);
 	const int remaining=max(0,city->GetMaxHitPoints()-city->getDamage());
 	if(damage<remaining || retaliation>=unit->GetCurrHitPoints()) return false;
-	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_ORDER","target=%d unit=%d hp=%d damage=%d retaliation=%d",target->GetPlotIndex(),unit->GetID(),remaining,damage,retaliation);
+	CvStackingOffensiveAI::ReleaseAssemblyHold(unit);
+	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_ORDER","target=%d unit=%d from=%d approach=%d hp=%d damage=%d retaliation=%d",target->GetPlotIndex(),unit->GetID(),unit->plot()->GetPlotIndex(),approach->GetPlotIndex(),remaining,damage,retaliation);
 	return ExecuteMoveToPlot(unit,target,false,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION)!=INT_MAX;
 }
 
@@ -908,11 +909,11 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 			m_CurrentMoveCities.clear();
 			CvCity* pCity = pPlot->getPlotCity();
 
-			if(!CvStackingOffensiveAI::ContinueSiege(m_pPlayer->GetID(),pCity)) continue;
 			// Safe preparatory fire may have opened a capture while the shared
 			// gathering forecast is still cached. Actual legality wins over it.
 			if(TryReservedCityCapture(pPlot))
 			{ if(pPlot->getOwner()==m_pPlayer->GetID()) DeleteFocusArea(pPlot);continue; }
+			if(!CvStackingOffensiveAI::ContinueSiege(m_pPlayer->GetID(),pCity)) continue;
 
 			//first try the land zone
 			CvTacticalDominanceZone* pZone = GetTacticalAnalysisMap()->GetZoneByCity(pCity, false);
@@ -1584,7 +1585,9 @@ void CvTacticalAI::PlotGarrisonMoves(int iNumTurnsAway)
 				defender=m_pPlayer->getUnit(retained[i]);
 				if (!defender || defender->isDelayedDeath()) continue;
 				defender->PushMission(CvTypes::getMISSION_SKIP());
-				CvStackingDiagnostics::Record(2,m_pPlayer->GetID(),"CITY_RETAIN","city=%d unit=%d reason=defense_requirement",pCity->GetID(),defender->GetID());
+				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CITY_RETAIN","city=%d plot=%d unit=%d domain=%d role=%d ranged=%d siege=%d garrison=%d hp=%d reason=defense_requirement",
+					pCity->GetID(),pPlot->GetPlotIndex(),defender->GetID(),defender->getDomainType(),defender->AI_getUnitAIType(),
+					defender->IsCanAttackRanged(),CvStackingOffensiveAI::IsSiegeUnit(defender),defender->IsGarrisoned(),defender->GetCurrHitPoints());
 				UnitProcessed(defender->GetID()); // may upgrade/delete the old unit; no dereference afterward
 			}
 			continue;
@@ -9343,6 +9346,9 @@ static STacticalAssignment* ScorePlotForRangedAttack(const SUnitStats& unit, con
 	ScoreAttackDamage(enemyPlot, unit.pUnit, assumedUnitPlot, assumedPosition, gTactPosStorage.getAttackCache(), result, unit.iSelfDamage);
 	if (!result->IsAcceptable())
 		return result;
+	if(enemyPlot->isEnemyCity() && !CvStackingOffensiveAI::AllowCityAttack(unit.pUnit,
+		enemyPlot->getPlot()->getPlotCity(),assumedUnitPlot->getPlot(),false))
+	{ result->SetScore(0,0,0);return result; }
 
 	//what happens next?
 	if (AttackEndsTurn(unit.pUnit, unit.iAttacksLeft))
@@ -9397,6 +9403,9 @@ static STacticalAssignment* ScorePlotForMeleeAttack(const SUnitStats& unit, cons
 	ScoreAttackDamage(enemyPlot, pUnit, assumedUnitPlot, assumedPosition, gTactPosStorage.getAttackCache(), result, unit.iSelfDamage);
 	if (!result->IsAcceptable())
 		return result;
+	if(enemyPlot->isEnemyCity() && !CvStackingOffensiveAI::AllowCityAttack(pUnit,
+		pEnemyPlot->getPlotCity(),assumedUnitPlot->getPlot(),result->eAssignmentType==A_MELEEKILL))
+	{ result->SetScore(0,0,0);return result; }
 
 	//what happens next? capturing a city always ends the turn
 	if (AttackEndsTurn(pUnit, iMaxAttacks) ||
@@ -13269,6 +13278,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	vector<STacticalAssignment> result;
 	if (vUnits.empty() || vUnits.front()==NULL || pTarget==NULL)
 		return result;
+	const DWORD planningBegin=GetTickCount();
 
 	//meta parameters depending on difficulty setting
 	int iMaxBranches = range(GC.getGame().getHandicapInfo().getTacticalSimMaxBranches(),2,9); //cannot do more, else our ID scheme doesn't work
@@ -13437,6 +13447,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	openPositionsHeap.clear();
 	completedPositions.clear();
 	size_t iUsedPositions = 0;
+	DWORD yieldMs=0;unsigned int yieldCount=0;
 
 	//don't need to call make_heap for a single element
 	openPositionsHeap.push_back(initialPosition);
@@ -13445,6 +13456,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	CvTacticalPosition::PrPositionSortHeapGeneration heapSort(false);
 
 	cvStopWatch timer("tactsim", NULL, 0, true);
+	const DWORD searchBegin=GetTickCount();
 	timer.StartPerfTest();
 	while (!openPositionsHeap.empty())
 	{
@@ -13482,9 +13494,11 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		//be a good citizen and let the UI run in between ... stupid design
 		if (iOldPauseCount!=iNewPauseCount && gDLL->HasGameCoreLock())
 		{
+			const DWORD yieldBegin=GetTickCount();
 			gDLL->ReleaseGameCoreLock();
 			Sleep(1);
 			gDLL->GetGameCoreLock();
+			yieldMs+=GetTickCount()-yieldBegin;++yieldCount;
 		}
 
 		//did we run out of resources?
@@ -13507,6 +13521,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	}
 	timer.EndPerfTest();
 	int durationMs = int(timer.GetDeltaInSeconds() * 1000);
+	const DWORD searchEnd=GetTickCount();
 
 	if (completedPositions.empty())
 	{
@@ -13574,6 +13589,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	OutputDebugString(szDebugInfo);
 #endif
 
+	const int perfInterval=CvStacking::GetInt("DiagnosticsPerformanceInterval",1);
+	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
+			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
+			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions);
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,
 		(unsigned int)completedPositions.size(), (unsigned int)result.size(), durationMs);
@@ -13666,6 +13687,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		case A_RANGEATTACK:
 		{
 			bool bCityBefore = pToPlot->isEnemyCity(*pUnit);
+			if(bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false)) return false;
 			bool bUnitBefore = pToPlot->isEnemyUnit(ePlayer, true, true);
 			bPrecondition = (pUnit->plot() == pFromPlot) && (bCityBefore || bUnitBefore); //enemy present
 			pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
@@ -13682,6 +13704,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			bPostcondition = pEnemy && pEnemy->IsDead(); //defending unit is gone
 			break;
 		case A_MELEEATTACK:
+			if(pToPlot->isEnemyCity(*pUnit) && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false)) return false;
 			bPrecondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //enemy present
 			if (bPrecondition)
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pToPlot->getX(), pToPlot->getY());
