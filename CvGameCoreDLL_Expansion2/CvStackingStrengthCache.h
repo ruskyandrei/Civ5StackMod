@@ -7,12 +7,13 @@ namespace CvStackingStrengthCache
 {
 	struct Key
 	{
-		int values[20];
+		int values[22];
 		bool operator==(const Key& other) const;
 	};
 	struct Stats
 	{
 		unsigned long meleeHits, meleeMisses, rangedHits, rangedMisses;
+		unsigned long attackHits, attackMisses, defenseHits, defenseMisses;
 		unsigned long evictions, invalidations;
 		unsigned int entries, peakEntries, limit;
 	};

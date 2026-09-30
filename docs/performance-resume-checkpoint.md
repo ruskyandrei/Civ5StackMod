@@ -1,8 +1,9 @@
 # Performance resume checkpoint — 30 September 2026
 
-**Paused at the user's request. The game is closed; no autoplay, tuner service,
-campaign heartbeat or performance build remains running.** The three research
-agents were interrupted. Core Temp is the user's app and was left open.
+This records the earlier pause. **The user subsequently resumed performance
+work**, targeting complete turns250+ below30 seconds. See the current
+[performance progress](performance-progress-20260930.md). At the pause the game,
+tuner service and monitors were stopped; Core Temp was left open.
 
 ## Current tested installation
 

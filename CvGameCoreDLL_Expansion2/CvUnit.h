@@ -939,9 +939,14 @@ public:
 	int GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender, 
 									bool bIgnoreUnitAdjacencyBoni = false, bool bQuickAndDirty = false,
 									int iAssumeSelfDamage = 0, int iAssumeExtraOtherDamage = 0) const;
+	int GetMaxAttackStrengthUncached(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender,
+									bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty,
+									int iAssumeSelfDamage, int iAssumeExtraOtherDamage) const;
 	int GetMaxDefenseStrength(const CvPlot* pInPlot, const CvUnit* pAttacker, const CvPlot* pFromPlot, 
 									bool bFromRangedAttack = false, bool bQuickAndDirty = false,
 									int iAssumeSelfDamage = 0) const;
+	int GetMaxDefenseStrengthUncached(const CvPlot* pInPlot, const CvUnit* pAttacker, const CvPlot* pFromPlot,
+									bool bFromRangedAttack, bool bQuickAndDirty, int iAssumeSelfDamage) const;
 
 	int GetEmbarkedUnitDefense() const;
 

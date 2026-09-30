@@ -96,8 +96,10 @@ namespace CvStackingStrengthCache
 		if (!Context(current) || generation != current)
 			return false;
 		Table::const_iterator found = table.find(key);
-		unsigned long& hits = key.values[0] == 0 ? stats.meleeHits : stats.rangedHits;
-		unsigned long& misses = key.values[0] == 0 ? stats.meleeMisses : stats.rangedMisses;
+		unsigned long& hits = key.values[0] == 0 ? stats.meleeHits : key.values[0] == 1 ? stats.rangedHits :
+			key.values[0] == 2 ? stats.attackHits : stats.defenseHits;
+		unsigned long& misses = key.values[0] == 0 ? stats.meleeMisses : key.values[0] == 1 ? stats.rangedMisses :
+			key.values[0] == 2 ? stats.attackMisses : stats.defenseMisses;
 		if (found == table.end())
 		{
 			++misses;

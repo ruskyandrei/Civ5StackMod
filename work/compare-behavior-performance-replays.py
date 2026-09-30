@@ -176,6 +176,13 @@ def source_proof(folder):
     if not isinstance(dll_sha, str) or not re.fullmatch(r'[0-9A-Fa-f]{64}', dll_sha) or dll_sha.upper() != str(manifest.get('ExpectedDLLSHA256', '')).upper():
         raise InvalidEvidence(f'{folder}: loaded DLL SHA proof missing/mismatched')
     metadata = {key: manifest[key] for key in SOURCE_FIELDS}
+    metadata['SourceMode'] = manifest.get('SourceMode', 'observer')
+    if metadata['SourceMode'] not in ('observer', 'human'):
+        raise InvalidEvidence(f'{folder}: unsupported source mode')
+    if metadata['SourceMode'] == 'human' and not (
+            prepared.get('sourceMode') == 'human' and prepared.get('sourceActivePlayer') == returning
+            and prepared.get('restoredAutoplay') == 0):
+        raise InvalidEvidence(f'{folder}: missing explicit human-source transition proof')
     metadata['SaveSHA256'] = save_sha.upper()
     mods = array(manifest.get('EnabledMods'), 'EnabledMods')
     if not mods:
@@ -292,6 +299,15 @@ def self_test():
             (directory/'native-segments').mkdir();(directory/'native-segments'/'segment0.log').write_text(log,encoding='utf-8')
             (directory/'native-segments'/'rolling-copy.log').write_text(log,encoding='utf-8')
         equal=compare(a,b);assert equal['all_compared_semantics_equal'] and equal['native_semantics']['record_counts']==[6,6]
+        human=read_json(b/'replay-manifest.json');human['SourceMode']='human'
+        human['Prepared'].update(sourceMode='human',sourceActivePlayer=0,restoredAutoplay=0)
+        write(b/'replay-manifest.json',human)
+        assert not compare(a,b)['source_and_preparation_equal']
+        human['Prepared']['sourceActivePlayer']=1;write(b/'replay-manifest.json',human)
+        try: compare(a,b)
+        except InvalidEvidence: pass
+        else: raise AssertionError('Unproven human-source transition admitted')
+        write(b/'replay-manifest.json',dict(manifest,NativeRun='Stacking-b'))
         recovered=read_json(b/'replay-manifest.json');recovered['ResumeAttempts']=[dict(verified=recovered.pop('Prepared'))];write(b/'replay-manifest.json',recovered)
         assert compare(a,b)['all_compared_semantics_equal']
         unitfile=b/'world-after.json';saved=read_json(unitfile);changed=copy.deepcopy(saved);changed['players'][-1]['units'][0][4]=9;write(unitfile,changed)

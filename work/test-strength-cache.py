@@ -31,7 +31,7 @@ using namespace std;
 typedef int PlayerTypes;
 struct CvPlot {int index,bonus; CvPlot(int i=0):index(i),bonus(i%13){} int GetPlotIndex()const{return index;}};
 struct CvCity {int owner,id,damage,attacked;CvPlot* at;CvCity():owner(2),id(4),damage(0),attacked(0),at(NULL){}int getOwner()const{return owner;}int GetID()const{return id;}int getDamage()const{return damage;}CvPlot* plot()const{return at;}int GetNumTimesAttackedThisTurn(int)const{return attacked;}};
-struct CvUnit {int owner,id,damage,hp,worldStrength;CvPlot* at;CvUnit(int i=0):owner(0),id(i),damage(0),hp(100),worldStrength(15),at(NULL){}int getOwner()const{return owner;}int GetID()const{return id;}CvPlot* plot()const{return at;}int getDamage()const{return damage;}int GetMaxHitPoints()const{return hp;}int GetNumTimesAttackedThisTurn(int)const{return damage%3;}
+struct CvUnit {int owner,id,damage,hp,worldStrength,previousPromotionStrength;CvPlot* at;CvUnit(int i=0):owner(0),id(i),damage(0),hp(100),worldStrength(15),previousPromotionStrength(0),at(NULL){}int getOwner()const{return owner;}int GetID()const{return id;}CvPlot* plot()const{return at;}int getDamage()const{return damage;}int GetMaxHitPoints()const{return hp;}int GetNumTimesAttackedThisTurn(int)const{return damage%3;}int GetStrengthThisTurnFromPreviousSamePromotionAttacks()const{return previousPromotionStrength;}
  int GetGenericMeleeStrengthModifier(const CvUnit*,const CvPlot*,bool,bool,const CvPlot*,bool)const;
  int GetGenericMeleeStrengthModifierUncached(const CvUnit*,const CvPlot*,bool,bool,const CvPlot*,bool)const;
  int GetMaxRangedCombatStrength(const CvUnit*,const CvCity*,bool,const CvPlot*,const CvPlot*,bool,bool,int,int)const;
@@ -56,7 +56,7 @@ int checks=0, failures=0;
 void expect(const char* name,bool okay){++checks;if(!okay){++failures;if(failures<20)printf("FAIL %s\n",name);}}
 unsigned int seed=0x51a5;
 unsigned int randomValue(){seed=seed*1664525u+1013904223u;return seed;}
-Key make(int id){Key k;for(int i=0;i<20;++i)k.values[i]=i*19;k.values[0]=id%2;k.values[2]=id;return k;}
+Key make(int id){Key k;for(size_t i=0;i<sizeof(k.values)/sizeof(k.values[0]);++i)k.values[i]=(int)i*19;k.values[0]=id%2;k.values[2]=id;return k;}
 DWORD WINAPI foreign(void*){long token;DWORD failures=0;if(Context(token))failures|=1;Scope skipped(16);if(Context(token))failures|=2;int value=0;if(Lookup(make(1),0,value))failures|=4;Store(make(1),0,333);Invalidate();return failures;}
 int main(){
  expect("native x86",sizeof(void*)==4&&sizeof(long)==4);
@@ -65,7 +65,7 @@ int main(){
  long scene=SceneEpoch();Invalidate();expect("scene revision readable outside cache",SceneEpoch()!=scene);
  {Scope disabled(0);expect("zero disabled",!Context(token));scene=SceneEpoch();Invalidate();expect("scene revision independent of strength setting",SceneEpoch()!=scene);}
  {Scope s(8);expect("scope available",Context(token));expect("scene revision matches cache generation",SceneEpoch()==token);expect("empty miss",!Lookup(k,token,value));Store(k,token,55);expect("repeat hit",Lookup(k,token,value)&&value==55);
-  for(int i=0;i<20;++i){Key different=k;++different.values[i];expect("every word compared",!(different==k));expect("every word affects lookup",!Lookup(different,token,value));}
+  for(size_t i=0;i<sizeof(k.values)/sizeof(k.values[0]);++i){Key different=k;++different.values[i];expect("every word compared",!(different==k));expect("every word affects lookup",!Lookup(different,token,value));}
   {Scope nested(8);expect("nested preview bypass",!Context(token));Store(k,token,66);}
   expect("outer restored",Context(token));expect("nested results not reused",!Lookup(k,token,value));Store(k,token,77);
   HANDLE t=CreateThread(NULL,0,foreign,NULL,0,NULL);expect("foreign thread created",t!=NULL);if(t){expect("foreign thread finishes",WaitForSingleObject(t,10000)==WAIT_OBJECT_0);DWORD code=STILL_ACTIVE;GetExitCodeThread(t,&code);expect("UI thread bypasses Context",!(code&1));expect("UI search bypasses AI table",!(code&2));expect("UI thread cannot lookup",!(code&4));CloseHandle(t);}

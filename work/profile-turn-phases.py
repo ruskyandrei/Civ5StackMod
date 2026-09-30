@@ -192,24 +192,34 @@ def analyze(records, turn, player_filter=None, quality=None):
     next_begin = next_legacy["tick"] if next_legacy else None
     complete_boundary = begin is not None and next_begin is not None and next_begin >= begin
     window = (begin, next_begin) if complete_boundary else None
-    warnings, phases, plans, perf_pending = [], [], [], {}
+    warnings, phases, recorded_window_phases, plans, perf_pending = [], [], [], [], {}
     invalid = []
     for record in records:
         key = (record["turn"], record["player"], record["values"].get("target"))
         if record["category"] == "PLAN_PERF":
             perf_pending[key] = record
-        if record["turn"] != turn:
-            continue
         value = record["values"]
         if record["category"] == "TURN_PHASE":
             interval, error = phase_interval(record)
             if error or value.get("semantics") != "inclusive" or not isinstance(value.get("phase"), str):
-                invalid.append(dict(origin=record.get("origin"), reason=error or "unsupported_phase_semantics"))
+                if record["turn"] == turn:
+                    invalid.append(dict(origin=record.get("origin"), reason=error or "unsupported_phase_semantics"))
                 continue
-            phases.append(dict(player=record["player"], phase=value["phase"],
+            phase = dict(sourceTurn=record["turn"], player=record["player"], phase=value["phase"],
                 thread=value.get("thread"), interval=interval, elapsed_ms=interval[1]-interval[0],
-                origin=record.get("origin")))
-        elif record["category"] == "PLAN":
+                origin=record.get("origin"))
+            if record["turn"] == turn:
+                phases.append(phase)
+            # A legacy first-event window can extend into next-turn preparation.
+            # Preserve its provenance instead of calling those measured bounds
+            # uninstrumented engine time or charging them to selected-turn AI.
+            if window and ((interval[1] > interval[0] and interval[1] > window[0] and interval[0] < window[1])
+                           or (interval[0] == interval[1] and window[0] <= interval[0] < window[1])):
+                recorded_window_phases.append(dict(phase,
+                    clipped_interval=(max(interval[0], window[0]), min(interval[1], window[1]))))
+        if record["turn"] != turn:
+            continue
+        if record["category"] == "PLAN":
             milliseconds = value.get("milliseconds")
             if not isinstance(milliseconds, int) or milliseconds < 0:
                 warnings.append("A PLAN row has no valid nonnegative milliseconds; skipped.")
@@ -258,6 +268,8 @@ def analyze(records, turn, player_filter=None, quality=None):
     all_phase = clip([p["interval"] for p in phases], window)
     all_plan = clip([p["interval"] for p in plans], window)
     combined = union(all_phase+all_plan)
+    recorded_phase_union = union(p["clipped_interval"] for p in recorded_window_phases)
+    recorded_combined = union(recorded_phase_union+all_plan)
     phase_plan_overlap = length(intersection(all_phase, all_plan))
     player_rows = []
     players = sorted({r["player"] for r in current if r["player"] >= 0})
@@ -329,6 +341,7 @@ def analyze(records, turn, player_filter=None, quality=None):
             round_unattributed_by_phase_scopes_ms=any_duration-length(any_phases) if any_duration is not None else None,
             round_unattributed_by_phases_and_estimated_PLAN_ms=any_duration-length(union(any_phases+any_plans)) if any_duration is not None else None),
         observed_last_tick=max(r["tick"] for r in current),
+        coverage_scope="selected source turn only, clipped to the legacy event window; player tables retain that same selected-turn attribution",
         coverage=dict(phase_calls=len(phases), phase_union_ms=length(all_phase), top_enclosing_union_ms=length(all_phase),
             PLAN_calls=len(plans), PLAN_milliseconds_sum=sum(p["milliseconds"] for p in plans),
             estimated_PLAN_union_ms=length(all_plan), phase_and_estimated_PLAN_overlap_ms=phase_plan_overlap,
@@ -337,6 +350,16 @@ def analyze(records, turn, player_filter=None, quality=None):
             round_outside_estimated_PLAN_ms=round_ms-length(all_plan) if round_ms is not None else None,
             round_unattributed_by_phase_scopes_ms=round_ms-length(all_phase) if round_ms is not None else None,
             round_unattributed_by_phases_and_estimated_PLAN_ms=round_ms-length(combined) if round_ms is not None else None),
+        recorded_window_coverage=dict(scope="all retained TURN_PHASE rows whose bounds intersect the legacy event window, regardless of sourceTurn; selected-turn PLAN estimates unchanged",
+            phase_calls=len(recorded_window_phases), source_turn_calls=dict(Counter(p["sourceTurn"] for p in recorded_window_phases)),
+            phase_union_ms=length(recorded_phase_union),
+            additional_phase_coverage_vs_selected_turn_ms=length(recorded_phase_union)-length(all_phase) if window else None,
+            phase_and_estimated_PLAN_overlap_ms=length(intersection(recorded_phase_union, all_plan)),
+            measured_phase_outside_estimated_PLAN_ms=length(recorded_phase_union)-length(intersection(recorded_phase_union, all_plan)),
+            phase_or_estimated_PLAN_union_ms=length(recorded_combined),
+            round_unattributed_by_phase_scopes_ms=round_ms-length(recorded_phase_union) if round_ms is not None else None,
+            round_unattributed_by_phases_and_estimated_PLAN_ms=round_ms-length(recorded_combined) if round_ms is not None else None),
+        recorded_window_phase_intervals=recorded_window_phases,
         players=player_rows, phase_intervals=phases, truncated_events=truncations, diagnostic_drop_samples=dropped,
         invalid_phase_rows=invalid, PLAN_anchor_counts=dict(Counter(p["end_anchor"] for p in plans)),
         PLAN_intervals=plans, warnings=warnings,
@@ -344,6 +367,7 @@ def analyze(records, turn, player_filter=None, quality=None):
             "PLAN location is estimated from high precision duration and coarse emission/finalization ticks; logger delay/quantization can shift overlap attribution.",
             "Existing performance flags, player filters, row budgets, unfinished scopes/turns and retained segments limit coverage.",
             "Original VP versus stacking is a scope label distinction, not proof of source provenance for every instruction.",
+            "The legacy event window may include adjacent-turn phase bounds; recorded_window_coverage includes those with sourceTurn provenance, while coverage/player tables remain selected-turn only.",
             "Complete native boundary means the next turn is observed; it does not prove every prior phase/event was retained."])
 
 
@@ -434,6 +458,18 @@ def self_test():
     expect(anchored["coverage"]["phase_union_ms"] == 10 and anchored["all_event_coverage"]["phase_union_ms"] == 12, "each window clips early phase intervals independently")
     baseline_anchor = [x for x in anchor if x["category"] != "TURN_PHASE"]
     expect(analyze(baseline_anchor, 7)["native_round_window"] == anchored["native_round_window"], "timing rows cannot change baseline-comparable bounds")
+    expect(anchored["recorded_window_coverage"]["phase_union_ms"] == 15 and anchored["recorded_window_coverage"]["additional_phase_coverage_vs_selected_turn_ms"] == 5,
+           "next-turn early preparation included alongside selected-turn view")
+    expect(next(x for x in anchored["recorded_window_phase_intervals"] if x["phase"] == "next_early")["sourceTurn"] == 8,
+           "adjacent-turn coverage retains source provenance")
+    crossing = [rec(10), rec(100, turn=8, category="TURN_PHASE", phase="next_crossing", startTick=5, endTick=100, elapsedMs=95, thread=1, semantics="inclusive"), rec(120, turn=8)]
+    unwrap(crossing)
+    crossed = analyze(crossing, 7)
+    expect(crossed["coverage"]["phase_union_ms"] == 0 and crossed["recorded_window_coverage"]["phase_union_ms"] == 90,
+           "adjacent source turn crossing window cannot fabricate selected-turn work")
+    expect(crossed["recorded_window_phase_intervals"][0]["clipped_interval"] == (10, 100)
+           and crossed["recorded_window_coverage"]["round_unattributed_by_phase_scopes_ms"] == 20,
+           "adjacent-turn crossing bounds clip and residual remains explicit")
     return dict(checks=checks, failures=0, scope="synthetic nested/overlap/wrap/partial/filter/PLAN anchor/row-budget interval semantics")
 
 

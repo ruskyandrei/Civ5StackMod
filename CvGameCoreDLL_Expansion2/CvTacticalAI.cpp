@@ -13751,6 +13751,95 @@ void CvTacticalPosition::HealFriendlyUnit(int iUnitID, int iChange)
 		it->iSelfDamage -= iChange;
 }
 
+// Summary-only execution evidence. Basic state/signatures deliberately omit
+// terrain, visibility, other units and policy state: equality is not a proof
+// that two tactical searches have identical inputs, and never drives gameplay.
+struct StackPlanDiagnosticUnitState
+{
+	int values[21];
+};
+
+static StackPlanDiagnosticUnitState ReadStackPlanDiagnosticUnitState(const CvUnit* unit)
+{
+	StackPlanDiagnosticUnitState result;
+	for (size_t i=0;i<21;++i) result.values[i]=-1;
+	result.values[0]=unit?1:0;
+	if (!unit) return result;
+	result.values[1]=unit->getOwner();result.values[2]=unit->GetID();
+	result.values[3]=unit->plot()?unit->plot()->GetPlotIndex():-1;
+	result.values[4]=unit->getMoves();result.values[5]=unit->GetCurrHitPoints();result.values[6]=unit->GetMaxHitPoints();
+	result.values[7]=unit->getNumAttacksMadeThisTurn();result.values[8]=unit->getNumAttacks();
+	result.values[9]=unit->TurnProcessed()?1:0;result.values[10]=unit->GetActivityType();
+	result.values[11]=unit->GetMissionTimer();result.values[12]=unit->GetLengthMissionQueue();
+	result.values[13]=unit->GetMissionAIType();
+	const MissionData* mission=unit->GetHeadMissionData();
+	if (mission)
+	{
+		result.values[14]=mission->eMissionType;result.values[15]=mission->iData1;result.values[16]=mission->iData2;
+		result.values[17]=mission->iFlags;result.values[18]=mission->iPushTurn;
+	}
+	result.values[19]=unit->getArmyID();result.values[20]=unit->isEmbarked()?1:0;
+	return result;
+}
+
+static void AddStackPlanDiagnosticHash(unsigned __int64& hash,int value)
+{
+	unsigned int bits=(unsigned int)value;
+	for (unsigned int i=0;i<4;++i) { hash^=(bits&255);hash*=1099511628211ULL;bits>>=8; }
+}
+
+static unsigned __int64 StackPlanDiagnosticInputHash(PlayerTypes owner,const vector<int>& ids)
+{
+	unsigned __int64 hash=14695981039346656037ULL;
+	AddStackPlanDiagnosticHash(hash,(int)ids.size());
+	for (size_t i=0;i<ids.size();++i)
+	{
+		AddStackPlanDiagnosticHash(hash,ids[i]);
+		const StackPlanDiagnosticUnitState state=ReadStackPlanDiagnosticUnitState(GET_PLAYER(owner).getUnit(ids[i]));
+		for (size_t field=0;field<21;++field) AddStackPlanDiagnosticHash(hash,state.values[field]);
+	}
+	return hash;
+}
+
+class StackPlanRetryDiagnostic
+{
+public:
+	StackPlanRetryDiagnostic(PlayerTypes owner_,const CvPlot* target_,int batch_,int attempt_,const vector<CvUnit*>& units)
+		: active(CvStackingDiagnostics::EnabledCategory(1,owner_,"PLAN_RETRY")),owner(owner_),target(target_),batch(batch_),attempt(attempt_),before(0)
+	{
+		if (!active) return;
+		ids.reserve(units.size());
+		for (size_t i=0;i<units.size();++i) ids.push_back(units[i]->GetID());
+		before=StackPlanDiagnosticInputHash(owner,ids);
+	}
+	void Failed(size_t assignments) const
+	{
+		if (!active || !CvStackingDiagnostics::EnabledCategory(1,owner,"PLAN_RETRY")) return;
+		const unsigned __int64 after=StackPlanDiagnosticInputHash(owner,ids);
+		std::ostringstream ordered;
+		for (size_t i=0;i<ids.size() && i<40;++i) { if (i) ordered<<",";ordered<<ids[i]; }
+		CvStackingDiagnostics::Record(1,owner,"PLAN_RETRY","target=%d:%d batch=%d attempt=%d input=%u assignments=%u beforeBasicSignature=%016I64X afterBasicSignature=%016I64X sameBasicSignature=%d idsShown=%u idsTruncated=%d ids=%s; signatures cover ordered input unit basic state only, not complete tactical scene",
+			target->getX(),target->getY(),batch+1,attempt+1,(unsigned int)ids.size(),(unsigned int)assignments,before,after,before==after?1:0,
+			(unsigned int)min(ids.size(),(size_t)40),ids.size()>40?1:0,ordered.str().c_str());
+	}
+private:
+	bool active;PlayerTypes owner;const CvPlot* target;int batch,attempt;
+	unsigned __int64 before;vector<int> ids;
+};
+
+static void RecordStackPlanExecutionFailure(PlayerTypes owner,const STacticalAssignment& assignment,size_t index,const char* reason,
+	bool precondition,bool postcondition,unsigned int missionOrders,unsigned int ordersBefore,const StackPlanDiagnosticUnitState& before)
+{
+	// Missions/combat may remove or replace the actor. Never inspect the old
+	// execution pointer to collect its diagnostic after-state.
+	const StackPlanDiagnosticUnitState after=ReadStackPlanDiagnosticUnitState(GET_PLAYER(owner).getUnit(assignment.iUnitID));
+	CvStackingDiagnostics::Record(1,owner,"PLAN_EXEC_FAIL","index=%u unit=%d type=%d from=%d to=%d reason=%s pre=%d post=%d issuedOrders=%u currentOrderIssued=%d beforePresent=%d afterPresent=%d beforePlot=%d afterPlot=%d beforeMoves=%d afterMoves=%d beforeHP=%d afterHP=%d beforeAttacksMade=%d afterAttacksMade=%d beforeProcessed=%d afterProcessed=%d beforeActivity=%d afterActivity=%d beforeMissionTimer=%d afterMissionTimer=%d beforeMissionCount=%d afterMissionCount=%d beforeMissionAI=%d afterMissionAI=%d beforeHeadMission=%d afterHeadMission=%d beforeHeadData1=%d afterHeadData1=%d beforeHeadData2=%d afterHeadData2=%d beforeHeadFlags=%d afterHeadFlags=%d beforeHeadTurn=%d afterHeadTurn=%d",
+		(unsigned int)index,assignment.iUnitID,(int)assignment.eAssignmentType,assignment.iFromPlotIndex,assignment.iToPlotIndex,reason,precondition?1:0,postcondition?1:0,missionOrders,missionOrders>ordersBefore?1:0,
+		before.values[0],after.values[0],before.values[3],after.values[3],before.values[4],after.values[4],before.values[5],after.values[5],before.values[7],after.values[7],before.values[9],after.values[9],
+		before.values[10],after.values[10],before.values[11],after.values[11],before.values[12],after.values[12],before.values[13],after.values[13],before.values[14],after.values[14],
+		before.values[15],after.values[15],before.values[16],after.values[16],before.values[17],after.values[17],before.values[18],after.values[18]);
+}
+
 bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, vector<CvUnit*>& vUnits, CvPlot* pTarget, eAggressionLevel eAggLvl)
 {
     if (!pTarget || vUnits.empty()) return false;
@@ -13782,6 +13871,7 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
             if (batch && attempt==0 && !CvStackingOffensiveAI::ConsumeAdditionalTacticalBatch(ePlayer)) break;
             TacticalAIHelpers::UpdatePlotDistanceToTarget(ePlayer,pTarget);
             set<int> unusable;
+            StackPlanRetryDiagnostic diagnostic(ePlayer,pTarget,batch,attempt,currentUnits);
             vector<STacticalAssignment> plan=TacticalAIHelpers::FindBestUnitAssignments(currentUnits,pTarget,eAggLvl,unusable,true);
             if (plan.empty())
             {
@@ -13790,6 +13880,7 @@ bool TacticalAIHelpers::FindAndExecuteBestUnitAssignments(PlayerTypes ePlayer, v
                 continue;
             }
             success=TacticalAIHelpers::ExecuteUnitAssignments(ePlayer,plan);
+            if (!success) diagnostic.Failed(plan.size());
             if (success)
             {
                 anySuccess=true;
@@ -14163,11 +14254,13 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
 	{
 		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
 			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
-			strength.meleeHits,strength.meleeMisses,strength.rangedHits,strength.rangedMisses,strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations);
+			strength.meleeHits,strength.meleeMisses,strength.rangedHits,strength.rangedMisses,
+			strength.attackHits,strength.attackMisses,strength.defenseHits,strength.defenseMisses,
+			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations);
 	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,
@@ -14193,6 +14286,8 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 	//may fail if a melee kill unexpectedly happens or does not happen
 
 	vector<CvUnit*> finishedUnits;
+	const bool diagnose=CvStackingDiagnostics::EnabledCategory(1,ePlayer,"PLAN_EXEC_FAIL");
+	unsigned int missionOrders=0;
 
 	for (size_t i = 0; i < vAssignments.size(); i++)
 	{
@@ -14209,6 +14304,9 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		int iMoveflags = CvUnit::MOVEFLAG_IGNORE_DANGER | CvUnit::MOVEFLAG_NO_STOPNODES | CvUnit::MOVEFLAG_ABORT_IF_NEW_ENEMY_REVEALED;
 		bool bPrecondition = false;
 		bool bPostcondition = false;
+		const unsigned int ordersBefore=missionOrders;
+		StackPlanDiagnosticUnitState diagnosticBefore;
+		if (diagnose) diagnosticBefore=ReadStackPlanDiagnosticUnitState(pUnit);
 
 		CvUnit* pEnemy = NULL;
 
@@ -14235,7 +14333,10 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			}
 #endif
 			if (bPrecondition)
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pToPlot->getX(), pToPlot->getY(), iMoveflags, false, false, MISSIONAI_OPMOVE);
+			}
 
 			//movement may indeed fail if we stumble upon an invisible unit!
 			bPostcondition = (pUnit->plot() == pToPlot);
@@ -14250,7 +14351,10 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			pUnit->ClearPathCache(); //make sure there's no stale path which coincides with our target
 			bPrecondition = (pUnit->plot() == pFromPlot) && !(pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //no enemy
 			if (bPrecondition)
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_SWAP_UNITS(), pToPlot->getX(), pToPlot->getY(), iMoveflags, false, false, MISSIONAI_OPMOVE);
+			}
 			bPostcondition = (pUnit->plot() == pToPlot); //plot changed
 			break;
 		case A_MOVE_SWAP_REVERSE:
@@ -14261,12 +14365,19 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		case A_RANGEATTACK:
 		{
 			bool bCityBefore = pToPlot->isEnemyCity(*pUnit);
-			if(bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false)) return false;
+			if(bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+			{
+				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
+				return false;
+			}
 			bool bUnitBefore = pToPlot->isEnemyUnit(ePlayer, true, true);
 			bPrecondition = (pUnit->plot() == pFromPlot) && (bCityBefore || bUnitBefore); //enemy present
 			pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
 			if (bPrecondition)
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_RANGE_ATTACK(), pToPlot->getX(), pToPlot->getY());
+			}
 			bPostcondition = (!bCityBefore || pToPlot->isEnemyCity(*pUnit)) && (!bUnitBefore || (pEnemy && !pEnemy->IsDead())); //enemy should survive
 			break;
 		}
@@ -14274,14 +14385,24 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			bPrecondition = (pUnit->plot() == pFromPlot) && pToPlot->isEnemyUnit(ePlayer,true,true); //defending unit present. does not apply to cities
 			pEnemy = pToPlot->getBestDefender(NO_PLAYER, ePlayer, pUnit);
 			if (bPrecondition)
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_RANGE_ATTACK(), pToPlot->getX(), pToPlot->getY());
+			}
 			bPostcondition = pEnemy && pEnemy->IsDead(); //defending unit is gone
 			break;
 		case A_MELEEATTACK:
-			if(pToPlot->isEnemyCity(*pUnit) && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false)) return false;
+			if(pToPlot->isEnemyCity(*pUnit) && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+			{
+				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
+				return false;
+			}
 			bPrecondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //enemy present
 			if (bPrecondition)
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pToPlot->getX(), pToPlot->getY());
+			}
 			bPostcondition = (pUnit->plot() == pFromPlot) && (pToPlot->isEnemyUnit(ePlayer,true,true) || pToPlot->isEnemyCity(*pUnit)); //enemy still present
 			break;
 		case A_MELEEKILL:
@@ -14315,7 +14436,10 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			}
 
 			if (bPrecondition)
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pToPlot->getX(), pToPlot->getY());
+			}
 
 			//because of randomness in previous combat results, it may happen that we cannot actually kill the enemy
 			if (vAssignments[i].eAssignmentType == A_MELEEKILL)
@@ -14333,24 +14457,38 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			break;
 		}
 		case A_PILLAGE:
+			if (diagnose) ++missionOrders;
 			pUnit->PushMission(CvTypes::getMISSION_PILLAGE());
 			bPrecondition = true;
 			bPostcondition = true;
 			break;
 		case A_USE_POWER:
 			if (eOrdo != NO_BUILD && pUnit->canBuild(pUnit->plot(), eOrdo))
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_BUILD(), eOrdo);
+			}
 			else if (eIsibaya != NO_BUILD && pUnit->canBuild(pUnit->plot(), eIsibaya))
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_BUILD(), eIsibaya);
+			}
 			else if (pUnit->canBuild(pUnit->plot(), eCitadel))
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_BUILD(), eCitadel);
+			}
 			else if (pUnit->canRepairFleet(pUnit->plot()))
+			{
+				if (diagnose) ++missionOrders;
 				pUnit->PushMission(CvTypes::getMISSION_REPAIR_FLEET());
+			}
 			else
 				bPrecondition = false;
 			break;
 		case A_HEAL:
 		case A_FINISH:
+			if (diagnose) ++missionOrders;
 			pUnit->PushMission(CvTypes::getMISSION_SKIP());
 			//this is the difference to a blocked unit, we prevent anyone else from moving it unless we want it to heal
 			if (!pUnit->shouldHeal(false) || pUnit->getMoves() == 0 || pUnit->isBarbarian()) //barbarians don't heal
@@ -14360,15 +14498,19 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			bPostcondition = true;
 			break;
 		case A_BLOCKED:
+			if (diagnose) ++missionOrders;
 			pUnit->PushMission(CvTypes::getMISSION_SKIP());
 			//do not mark the unit as processed, it can be reused for other tasks!
 			bPrecondition = true;
 			bPostcondition = true;
 			break;
 		case A_RESTART:
+			if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"visibility_restart",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
 			return false; //the previous move revealed a new enemy (which cause a danger update). restart the combat simulation with the remaining units.
 			break;
 		}
+		if (diagnose && (!bPrecondition || !bPostcondition))
+			RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,!bPrecondition?"precondition":"postcondition",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
 
 #ifdef TACTDEBUG
 		//this can happen sometimes because of randomness or splash damage etc

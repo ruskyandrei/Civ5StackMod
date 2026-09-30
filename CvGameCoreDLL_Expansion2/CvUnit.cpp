@@ -16377,6 +16377,10 @@ static CvStackingStrengthCache::Key MakeStackStrengthKey(int kind, const CvUnit*
 	key.values[18] = extraOtherDamage;
 	key.values[19] = other ? other->GetNumTimesAttackedThisTurn(self->getOwner()) :
 		(city ? city->GetNumTimesAttackedThisTurn(self->getOwner()) : 0);
+	// A city target and known opponent can both contribute multi-attack bonuses.
+	// Keep their counters separate even when both arguments are present.
+	key.values[20] = city ? city->GetNumTimesAttackedThisTurn(self->getOwner()) : 0;
+	key.values[21] = self->GetStrengthThisTurnFromPreviousSamePromotionAttacks();
 	return key;
 }
 
@@ -16730,6 +16734,33 @@ int CvUnit::GetGenericMeleeStrengthModifierUncached(const CvUnit* pOtherUnit, co
 int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender, 
 								bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
 {
+	long generation;
+	// Escape and city-blockade testing can run mod movement events. A cached
+	// result must not skip those callbacks on subsequent queries. Blockade
+	// checks can involve other nearby units, not just the supplied defender.
+	if (!CvStackingStrengthCache::Context(generation) || (MOD_EVENTS_CAN_MOVE_INTO &&
+		((IsCanHeavyCharge() && pDefender && pDefender->getUnitInfo().IsSendCanMoveIntoEvent()) ||
+		(!bQuickAndDirty && pToPlot && pToPlot->isCity()))))
+		return GetMaxAttackStrengthUncached(pFromPlot, pToPlot, pDefender, bIgnoreUnitAdjacencyBoni,
+			bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	VALIDATE_OBJECT();
+	const CvCity* city = pToPlot && pToPlot->isCity() ? pToPlot->getPlotCity() : NULL;
+	// Unlike the generic modifier, full attack strength deliberately retains
+	// NULL origins: its adjacency/river/amphibious/flanking branches skip them.
+	const CvStackingStrengthCache::Key key = MakeStackStrengthKey(2, this, pDefender, city,
+		pFromPlot, pToPlot, true, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	int result;
+	if (CvStackingStrengthCache::Lookup(key, generation, result))
+		return result;
+	result = GetMaxAttackStrengthUncached(pFromPlot, pToPlot, pDefender, bIgnoreUnitAdjacencyBoni,
+		bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	CvStackingStrengthCache::Store(key, generation, result);
+	return result;
+}
+
+int CvUnit::GetMaxAttackStrengthUncached(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender,
+	bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
+{
 	VALIDATE_OBJECT();
 	if(GetBaseCombatStrength() == 0)
 		return 0;
@@ -16939,6 +16970,30 @@ int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot,
 /// What is the max strength of this Unit when defending?
 int CvUnit::GetMaxDefenseStrength(const CvPlot* pInPlot, const CvUnit* pAttacker, const CvPlot* pFromPlot,
 								bool bFromRangedAttack, bool bQuickAndDirty, int iAssumeExtraDamage) const
+{
+	long generation;
+	if (!CvStackingStrengthCache::Context(generation))
+		return GetMaxDefenseStrengthUncached(pInPlot, pAttacker, pFromPlot, bFromRangedAttack,
+			bQuickAndDirty, iAssumeExtraDamage);
+	VALIDATE_OBJECT();
+	const CvCity* city = pInPlot && pInPlot->isCity() ? pInPlot->getPlotCity() : NULL;
+	CvStackingStrengthCache::Key key = MakeStackStrengthKey(3, this, pAttacker, city,
+		pFromPlot, pInPlot, false, false, bQuickAndDirty, iAssumeExtraDamage, 0);
+	// Preserve NULL defense/origin plots and the original embarked shortcut,
+	// including live embark state when the caller supplied no defense plot.
+	key.values[16] |= (bFromRangedAttack ? 8 : 0) | (isEmbarked() ? 16 : 0) |
+		(CanEverEmbark() ? 32 : 0) | (pInPlot && pInPlot->needsEmbarkation(this) ? 64 : 0);
+	int result;
+	if (CvStackingStrengthCache::Lookup(key, generation, result))
+		return result;
+	result = GetMaxDefenseStrengthUncached(pInPlot, pAttacker, pFromPlot, bFromRangedAttack,
+		bQuickAndDirty, iAssumeExtraDamage);
+	CvStackingStrengthCache::Store(key, generation, result);
+	return result;
+}
+
+int CvUnit::GetMaxDefenseStrengthUncached(const CvPlot* pInPlot, const CvUnit* pAttacker, const CvPlot* pFromPlot,
+	bool bFromRangedAttack, bool bQuickAndDirty, int iAssumeExtraDamage) const
 {
 	VALIDATE_OBJECT();
 

@@ -15,6 +15,10 @@ Unlike run-performance-replay.py this is not an exact 275/277 benchmark fixture.
 Its preparation requires an observer save and preserves that observer while
 stopping a restored counter. Expected start/stop/return and save/hash can be
 supplied explicitly. T215 and the return-player switch atT230 are partial turns.
+The explicit --source-mode human alternative verifies a paused, non-autoplay
+return-player source, then enters observer mode. This performs VP's slot-change
+AI decisions; compare only identical human source/preparation pairs, not the
+original uninterrupted campaign or an existing observer-source control.
 Read-only per-player snapshots before/after include unit identity/type/position,
 HP/movement, city name/original owner/HP/strength/population and active wars.
 Per-player calls avoid the tuner's10,000-value result limit for whole campaigns.
@@ -75,6 +79,25 @@ def stopped(status, stop, player):
 def lua_sources(args):
     start, stop, player = args.start_turn, args.stop_turn, args.return_player
     count = stop - start
+    source_mode = getattr(args, "source_mode", "observer")
+    if source_mode not in ("observer", "human"):
+        raise ValueError("Unknown replay source mode")
+    if source_mode == "observer":
+        source_check = """assert(Players[active] and Players[active]:IsObserver(),'Behavior source must be an observer save')
+assert(Game.GetPausePlayer()==active,'Load screen must still pause the original observer')"""
+        stop_restored = """Game.SetAIAutoPlay(0,-1)
+assert(Game.GetActivePlayer()==active and Players[active]:IsObserver() and Game.GetAIAutoPlay()==0,
+ 'Stopping restored autoplay changed the observer')"""
+        after_arm = ""
+    else:
+        source_check = f"""assert(active=={player} and Players[active] and Players[active]:IsHuman()
+ and not Players[active]:IsObserver(),'Explicit human source must be the return player')
+assert(Game.GetPausePlayer()==active and Game.GetAIAutoPlay()==0,'Human source must be paused without autoplay')"""
+        stop_restored = ""
+        after_arm = """active=Game.GetActivePlayer()
+assert(active~=sourceActive and Players[active] and Players[active]:IsObserver(),
+ 'Human source did not switch to an observer')
+Game.SetPausePlayer(active)"""
     status = perf.STATUS.replace("return {", "local result={", 1) + f"""
 result.returnPlayerAlive=Players[{player}] and Players[{player}]:IsAlive() or false
 result.watchCities={{}}
@@ -92,26 +115,26 @@ return result
 assert(not PreGame.IsMultiplayerGame(),'Single-player replay only')
 assert(Game.GetGameTurn()=={start},'Unexpected loaded turn')
 local active=Game.GetActivePlayer()
-assert(Players[active] and Players[active]:IsObserver(),'Behavior source must be an observer save')
-assert(Game.GetPausePlayer()==active,'Load screen must still pause the original observer')
+local sourceActive=active
+{source_check}
 local returning=Players[{player}]
 assert(returning and returning:IsAlive() and not returning:IsMinorCiv() and not returning:IsObserver()
  and not returning:IsBarbarian(),'Return civilization must be alive major')
 assert(Game.SetStackingDiagnosticsLevel and Game.FlushStackingDiagnostics,'Diagnostics APIs unavailable')
 local restored=Game.GetAIAutoPlay()
-Game.SetAIAutoPlay(0,-1)
-assert(Game.GetActivePlayer()==active and Players[active]:IsObserver() and Game.GetAIAutoPlay()==0,
- 'Stopping restored autoplay changed the observer')
+{stop_restored}
 Game.SetStackingDiagnosticsLevel(1)
 Game.SetOption('GAMEOPTION_QUICK_COMBAT',true)
 Game.SetOption('GAMEOPTION_QUICK_MOVEMENT',true)
 Game.SetAIAutoPlay({count},{player})
+{after_arm}
 assert(Game.GetGameTurn()=={start} and Game.GetAIAutoPlay()=={count} and Game.GetActivePlayer()==active
  and Game.GetPausePlayer()==active,'Preparation advanced or changed the original observer')
 assert(PreGame.GetQuickCombat() and PreGame.GetQuickMovement(),'Quick settings did not apply')
 Game.FlushStackingDiagnostics()
 print('BEHAVIOR_READY',Game.GetGameTurn(),Game.GetAIAutoPlay(),Game.GetActivePlayer())
-local ready=(function(){status}end)();ready.restoredAutoplay=restored;return ready
+local ready=(function(){status}end)();ready.restoredAutoplay=restored
+ready.sourceMode='{source_mode}';ready.sourceActivePlayer=sourceActive;return ready
 """
     continuation = f"""
 assert(not Controls.ActivateButton:IsHidden(),'Load screen not ready')
@@ -223,6 +246,8 @@ class BehaviorReplay(perf.Replay):
             expected = {"SaveSHA256": self.args.save_sha, "PID": self.args.game_pid, "StartTicks": self.args.start_ticks,
                         "StartTurn": self.args.start_turn, "StopTurn": self.args.stop_turn, "ReturnPlayer": self.args.return_player,
                         "ExpectedDLLSHA256": self.args.expected_dll_sha}
+            if self.manifest.get("SourceMode", "observer") != self.args.source_mode:
+                raise ValueError("Resume source mode changed")
             if any(self.manifest.get(key) != value for key, value in expected.items()) or Path(self.manifest["Save"]).resolve() != save:
                 raise ValueError("Resume source/process/behavior settings changed")
             if self.manifest.get("ContinuedUTC") or self.manifest.get("Stopped") or self.manifest.get("Status") not in ("preparing", "armed", "failed"):
@@ -250,10 +275,11 @@ class BehaviorReplay(perf.Replay):
         else:
             self.manifest = {"Status": "preparing", "Save": str(save), "SaveSHA256": self.args.save_sha,
                              "StartTurn": self.args.start_turn, "StopTurn": self.args.stop_turn, "TurnLimit": count,
+                             "SourceMode": self.args.source_mode,
                              "ReturnPlayer": self.args.return_player, "DiagnosticLevel": 1, "QuickCombat": True, "QuickMovement": True,
                              "PID": self.args.game_pid, "StartTicks": self.args.start_ticks, "StartedUTC": perf.utc(),
                              "ExpectedDLLSHA256": self.args.expected_dll_sha, "WatchCity": self.args.watch_city,
-                             "Limits": "Observer-save replay; first/return turns partial; no exact campaign-equivalence claim"}
+                             "Limits": "First/return turns partial; human-source mode explicitly performs VP slot-change diplomacy/production/research/policy decisions; compare identical source/preparation only"}
             self.save_manifest()
             if "InGame" in self.states("initial-contexts"):
                 raise ValueError("Begin from a fresh game's main menu")
@@ -416,8 +442,41 @@ Game.SetPausePlayer=function(n) state.pause=n end
         else:
             raise AssertionError("Human source was silently converted/reseeded")
         assert len(lua.globals().calls) == 2
+        # Human normalization is explicit; validate the real generated branch,
+        # including its paused source contract and newly active observer.
+        human_args = argparse.Namespace(start_turn=215, stop_turn=230, return_player=0,
+                                        watch_city="Abernethy", source_mode="human")
+        _, human_prepare, _ = lua_sources(human_args)
+        assert syntax(human_prepare)
+        human_reset = """
+state={turn=215,auto=0,active=0,pause=0,diag=0,quickCombat=false,quickMovement=false};calls={}
+Players[0].IsHuman=function() return true end
+Players[0].IsAlive=function() return true end
+Game.SetStackingDiagnosticsLevel=function(n) calls[#calls+1]={'diag',n};state.diag=n end
+Game.SetOption=function(k,v) calls[#calls+1]={k,v};if k=='GAMEOPTION_QUICK_COMBAT' then state.quickCombat=v else state.quickMovement=v end end
+Game.SetAIAutoPlay=function(n,p)
+ assert(state.active==0 and state.auto==0 and n==15 and p==0)
+ calls[#calls+1]={'auto',n,p};state.auto=n;state.active=8
+ Players[0].IsHuman=function() return false end
+end
+Game.SetPausePlayer=function(n) assert(n==8);calls[#calls+1]={'pause',n};state.pause=n end
+"""
+        lua.execute(human_reset)
+        human_ready = dict(lua.execute(human_prepare).items())
+        assert prepared(human_ready,215,15) and human_ready['sourceMode']=='human'
+        assert human_ready['sourceActivePlayer']==0 and human_ready['restoredAutoplay']==0
+        assert len(lua.globals().calls)==5
+        for invalid in ("state.active=8;state.pause=8", "state.auto=7", "state.pause=-1",
+                        "Players[0].IsHuman=function() return false end",
+                        "Players[0].IsAlive=function() return false end", "state.turn=216"):
+            lua.execute(human_reset+"\n"+invalid)
+            try: lua.execute(human_prepare)
+            except Exception: pass
+            else: raise AssertionError("Invalid human source was normalized")
+            assert len(lua.globals().calls)==0
     print(json.dumps({"ok": True, "offline": True, "gameCommandsSent": 0, "negativeStateCases": 12,
-                      "lua51Validated": runtime.exists(), "snapshotsAndCityWatchValidated": runtime.exists()}))
+                      "lua51Validated": runtime.exists(), "snapshotsAndCityWatchValidated": runtime.exists(),
+                      "explicitHumanSourceValidated": runtime.exists(), "humanSourceNegativeCases": 6}))
 
 
 def main():
@@ -429,6 +488,8 @@ def main():
     parser.add_argument("--start-turn", type=int, default=215)
     parser.add_argument("--stop-turn", type=int, default=230)
     parser.add_argument("--return-player", type=int, default=0)
+    parser.add_argument("--source-mode", choices=("observer", "human"), default="observer",
+                        help="Human explicitly allows the same paused return-player save to switch to observer, including VP slot-change AI decisions")
     parser.add_argument("--watch-city", default="Abernethy")
     parser.add_argument("--logs", type=Path, default=perf.DEFAULT_LOGS)
     parser.add_argument("--game-pid", type=int)

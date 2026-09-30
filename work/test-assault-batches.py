@@ -32,7 +32,10 @@ struct STacticalAssignment{int iUnitID;STacticalAssignment(int i):iUnitID(i){}};
 map<string,int> options;bool enabled=true,capture=false,kill=false,retry=false,reject=false;int extra=0,calls=0,executions=0,dead=0;set<int> gDistanceToTargetPlots,held;
 namespace CvStacking{int GetInt(const char*n,int f){return options.count(n)?options[n]:f;}}
 namespace CvStackingOffensiveAI{bool Enabled(int){return enabled;}bool HoldForAssembly(const CvUnit*u,const CvPlot*){return held.count(u->id)!=0;}bool ConsumeAdditionalTacticalBatch(int){if(extra>=CvStacking::GetInt("AIAssaultExtraBatchesPerTurn",16))return false;++extra;return true;}}
-namespace CvStackingDiagnostics{void Record(int,int,const char*,const char*,...) {}}
+namespace CvStackingDiagnostics{bool EnabledCategory(int,int,const char*){return false;}void Record(int,int,const char*,const char*,...) {}}
+// This scheduling fixture keeps diagnostics disabled. The actual diagnostic
+// helpers/executor have their own source/control fixture with enabled coverage.
+struct StackPlanRetryDiagnostic{StackPlanRetryDiagnostic(int,const CvPlot*,int,int,const vector<CvUnit*>&){}void Failed(size_t)const{}};
 namespace TacticalAIHelpers{
  void UpdatePlotDistanceToTarget(int,CvPlot*){gDistanceToTargetPlots.insert(100);}
  vector<STacticalAssignment> FindBestUnitAssignments(const vector<CvUnit*>&u,CvPlot*,int,set<int>&bad,bool){++calls;vector<STacticalAssignment>r;if(reject){bad.insert(u.front()->id);reject=false;return r;}for(size_t i=0;i<u.size()&&i<13;++i)r.push_back(STacticalAssignment(u[i]->id));return r;}
