@@ -7609,6 +7609,50 @@ static unsigned long gStackInsertBypasses = 0, gStackNestedBypasses = 0;
 static unsigned long gStackDangerEvictions = 0, gStackDefenderEvictions = 0;
 static size_t gStackPeakEntries = 0, gStackPeakKeyBytes = 0, gStackPeakEstimatedBytes = 0;
 static size_t gStackKeyPayloadBytes = 0, gStackKeyPayloadLimit = 0, gStackEntryLimit = 0;
+// Most queries hit. Reuse their temporary vectors rather than allocating a key
+// and two sorting buffers millions of times. A borrower owns the buffer through
+// the leaf calculation; nested callbacks use private fallback vectors.
+static StackForecastKey gStackDangerScratch, gStackDefenderScratch;
+static vector<pair<int,int> > gStackSortScratch;
+static bool gStackDangerScratchBusy=false, gStackDefenderScratchBusy=false, gStackSortScratchBusy=false;
+struct StackForecastQuery
+{
+ StackForecastKey* scratch;
+ bool* busy;
+ StackForecastKey& key;
+ StackForecastQuery(StackForecastKey& buffer,bool& inUse):
+  scratch(gStackForecastsActive && !inUse ? &buffer : NULL),busy(scratch ? &inUse : NULL),
+  key(scratch ? *scratch : *new StackForecastKey)
+ {
+  if(busy) *busy=true;
+  key.state.clear();
+ }
+ ~StackForecastQuery()
+ {
+  if(busy) *busy=false; else delete &key;
+ }
+private:
+ StackForecastQuery(const StackForecastQuery&);
+ StackForecastQuery& operator=(const StackForecastQuery&);
+};
+struct StackForecastPairQuery
+{
+ bool borrowed;
+ vector<pair<int,int> >& entries;
+ StackForecastPairQuery():borrowed(gStackForecastsActive && !gStackSortScratchBusy),
+  entries(borrowed ? gStackSortScratch : *new vector<pair<int,int> >)
+ {
+  if(borrowed) gStackSortScratchBusy=true;
+  entries.clear();
+ }
+ ~StackForecastPairQuery()
+ {
+  if(borrowed) gStackSortScratchBusy=false; else delete &entries;
+ }
+private:
+ StackForecastPairQuery(const StackForecastPairQuery&);
+ StackForecastPairQuery& operator=(const StackForecastPairQuery&);
+};
 
 struct StackForecastScope
 {
@@ -7646,6 +7690,9 @@ struct StackForecastScope
    std::deque<const StackForecastKey*>().swap(gStackDefenderOrder);
    StackDangerForecasts().swap(gStackDangerForecasts);
    StackDefenderForecasts().swap(gStackDefenderForecasts);
+   vector<int>().swap(gStackDangerScratch.state);
+   vector<int>().swap(gStackDefenderScratch.state);
+   vector<pair<int,int> >().swap(gStackSortScratch);
    gStackKeyPayloadBytes = 0;
   }
  }
@@ -7771,7 +7818,8 @@ static void StoreStackDefenderForecast(const StackForecastKey& key, const CvUnit
 
 static void AppendStackCandidates(StackForecastKey& key, const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool canonicalOrder = true)
 {
- vector<pair<int, int> > members;
+ StackForecastPairQuery query;
+ vector<pair<int, int> >& members=query.entries;
  members.reserve(candidates.size());
  for (size_t i = 0; i < candidates.size(); ++i)
   if (candidates[i])
@@ -7790,7 +7838,8 @@ static void AppendStackCandidates(StackForecastKey& key, const vector<const CvUn
 
 static void AppendStackDamage(StackForecastKey& key, const SUnitIDValueContainer& damage)
 {
- vector<pair<int, int> > entries;
+ StackForecastPairQuery query;
+ vector<pair<int, int> >& entries=query.entries;
  for (SUnitIDValueContainer::const_iterator it = damage.begin(); it != damage.end(); ++it)
   if ((*it).second != 0)
    entries.push_back(make_pair((*it).first, (*it).second));
@@ -7806,7 +7855,8 @@ static void AppendStackDamage(StackForecastKey& key, const SUnitIDValueContainer
 static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
 {
- StackForecastKey key;
+ StackForecastQuery query(gStackDangerScratch,gStackDangerScratchBusy);
+ StackForecastKey& key=query.key;
  if (gStackForecastsActive)
  {
   key.state.push_back(unit->GetID());
@@ -7832,7 +7882,8 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
 static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvPlot* from, const CvPlot* target,
  const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool ranged, int attackerDamage)
 {
- StackForecastKey key;
+ StackForecastQuery query(gStackDefenderScratch,gStackDefenderScratchBusy);
+ StackForecastKey& key=query.key;
  if (gStackForecastsActive)
  {
   key.state.push_back(attacker->GetID());

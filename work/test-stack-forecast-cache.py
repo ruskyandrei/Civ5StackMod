@@ -5,7 +5,12 @@ root=Path(__file__).resolve().parents[1]
 out=root/'work/stack-cache-regression';out.mkdir(exist_ok=True)
 source=root/'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp';raw=source.read_bytes();text=raw.decode('utf-8-sig').replace('\r\n','\n')
 actual=text[text.index('struct StackForecastKey\n'):text.index('static int GetCachedStackDanger(')]
+reference=subprocess.check_output(['git','show','6ec8aae26:CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'],cwd=root).decode('utf-8-sig')
+reference=reference[reference.index('static void AppendStackCandidates('):reference.index('static int GetCachedStackDanger(')].replace('AppendStackCandidates','OriginalCandidates').replace('AppendStackDamage','OriginalDamage')
+
 prefix=r'''
+#define _SECURE_SCL 0
+#define _HAS_ITERATOR_DEBUGGING 0
 #include <algorithm>
 #include <cstdio>
 #include <vector>
@@ -13,6 +18,17 @@ prefix=r'''
 #include <unordered_map>
 #include <map>
 #include <cstddef>
+#include <cstdlib>
+#include <new>
+static size_t allocationCalls=0;
+template<class T> struct CountingAllocator:std::allocator<T>{
+ typedef typename std::allocator<T>::pointer pointer;typedef typename std::allocator<T>::size_type size_type;
+ template<class U>struct rebind{typedef CountingAllocator<U> other;};
+ CountingAllocator(){} template<class U>CountingAllocator(const CountingAllocator<U>&){}
+ pointer allocate(size_type n,const void*hint=0){++allocationCalls;return std::allocator<T>::allocate(n,hint);}
+};
+template<class T,class U>bool operator==(const CountingAllocator<T>&,const CountingAllocator<U>&){return true;}
+template<class T,class U>bool operator!=(const CountingAllocator<T>&,const CountingAllocator<U>&){return false;}
 using namespace std;
 struct CvUnit { int id; CvUnit(int v=0):id(v){} int GetID()const{return id;} };
 struct SUnitIDValueContainer {
@@ -98,10 +114,37 @@ int main(){
   SUnitIDValueContainer changed=d;changed.entries[0].second=10;x.state.clear();y.state.clear();AppendStackCandidates(x,left,d,true);AppendStackCandidates(y,left,changed,true);expect("exact1HP difference retained",!(x==y));
   SUnitIDValueContainer perm=d;reverse(perm.entries.begin(),perm.entries.end());x.state.clear();y.state.clear();AppendStackDamage(x,d);AppendStackDamage(y,perm);expect("damage state canonical",x==y);
  }
+
+ {StackForecastScope s;
+  {StackForecastQuery outer(gStackDangerScratch,gStackDangerScratchBusy);outer.key.state.push_back(991);
+   {StackForecastQuery callback(gStackDangerScratch,gStackDangerScratchBusy);callback.key.state.push_back(123);expect("nested query buffer fallback",callback.scratch==NULL&&outer.key.state[0]==991);}
+   {StackForecastScope callbackScope;StackForecastQuery callback(gStackDangerScratch,gStackDangerScratchBusy);expect("nested scope private query",callback.scratch==NULL);}
+   expect("outer query still owned",gStackDangerScratchBusy&&outer.key.state[0]==991);
+  }
+  expect("query buffer returned",!gStackDangerScratchBusy&&gStackDangerScratch.state.size()==1);
+  {StackForecastPairQuery outer;outer.entries.push_back(make_pair(7,9));{StackForecastPairQuery inner;inner.entries.push_back(make_pair(3,2));expect("nested sorting buffer fallback",!inner.borrowed&&outer.entries[0].first==7);}expect("sorting buffer still owned",gStackSortScratchBusy);}
+  expect("sorting buffer returned",!gStackSortScratchBusy);
+ }
+ expect("query scratch storage released",gStackDangerScratch.state.capacity()==0&&gStackDefenderScratch.state.capacity()==0&&gStackSortScratch.capacity()==0);
+ {StackForecastScope s;CvUnit a(4),b(9),c(2);vector<const CvUnit*> candidates;candidates.push_back(&a);candidates.push_back(NULL);candidates.push_back(&b);candidates.push_back(&c);
+  SUnitIDValueContainer wounds;for(int i=0;i<18;++i)wounds.entries.push_back(make_pair(i,(i*17)%100));size_t optimized=0,original=0;
+  for(int i=0;i<20000;++i){wounds.entries[0].second=i%100;if(i%7==0)reverse(wounds.entries.begin(),wounds.entries.end());if(i%3==0)reverse(candidates.begin(),candidates.end());bool canonical=i%2==0;
+   size_t before=allocationCalls;StackForecastQuery query(gStackDangerScratch,gStackDangerScratchBusy);query.key.state.push_back(i%23);AppendStackCandidates(query.key,candidates,wounds,canonical);AppendStackDamage(query.key,wounds);optimized+=allocationCalls-before;
+   before=allocationCalls;StackForecastKey old;old.state.push_back(i%23);OriginalCandidates(old,candidates,wounds,canonical);OriginalDamage(old,wounds);original+=allocationCalls-before;
+   expect("reused key equals original through ordering/wounds",query.key==old);
+  }
+  expect("scratch allocation stays bounded after warmup",optimized<100);expect("reference really allocates per query",original>100000);
+  printf("actual key-build allocation control: reused %u allocations, original %u across20000queries; not a game-speed benchmark\n",(unsigned int)optimized,(unsigned int)original);
+ }
  printf("stack cache source regression: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }
 '''
-cpp=out/'stack-cache-source-test.cpp';cpp.write_text(prefix+actual+suffix,encoding='utf-8')
+cpp=out/'stack-cache-source-test.cpp'
+fixture=prefix+actual+reference+suffix
+# Delegate unchanged std::vector allocation to std::allocator, counting calls;
+# this adapter instruments key/sort buffers in the fixture, not the game DLL.
+fixture=fixture.replace('vector<int>','vector<int, CountingAllocator<int> >').replace('vector<pair<int,int> >','vector<pair<int,int>, CountingAllocator<pair<int,int> > >').replace('vector<pair<int, int> >','vector<pair<int, int>, CountingAllocator<pair<int, int> > >')
+cpp.write_text(fixture,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows'
 env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')
 for name in ('CL','_CL_','LINK'):env.pop(name,None)
