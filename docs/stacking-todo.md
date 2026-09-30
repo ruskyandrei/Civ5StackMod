@@ -190,6 +190,19 @@ The temporary [Lua autoplay observer](../work/AUTOPLAY-OBSERVER.md) remains an e
 - [ ] Request/produce missing ranged defense even when generic melee strength is adequate, while preserving immediate emergency choices, economical rear-city coverage and offensive siege/capture commitments. Avoid treating every occupant as a permanently retained defender.
 - [ ] Make role shares, minima/maxima, reserve/health/readiness margins, priorities and work budgets XML-configurable. Add efficient role/commitment/garrison explanations and validate four-melee/one-ranged versus ranged-heavy defense, ranged garrisons, replacement after death, active melee duties, collateral, healing/transit and city bombardment enabled/disabled.
 
+## Campaign47 follow-ups — performance first
+
+The user stopped this campaign at turn251 because complete late turns took
+37.6–74.5 seconds. Preserve the observer post250 and manual251 saves; the planned
+350-turn run is incomplete. See the separate [performance investigation](late-game-performance-investigation.md),
+[original VP audit](legacy-vp-performance-audit.md), and [decisive-war follow-ups](decisive-war-campaign47-followups.md).
+
+- [ ] Measure and improve complete late turns, including work that predates stacking, while retaining decision/search limits and checking saved-position outcomes.
+- [ ] Reconcile assault core-count/cohesion gates with a feasible first wave and reinforcements; investigate Rome's fourteen-ship fleet waiting for a twenty-two-unit target.
+- [ ] Reconcile desired offensive forces with supply, maintenance, army/navy recommendations and siege-production rejection reasons.
+- [ ] Validate city-healing forecasts against actual fortification and quiet-turn healing, then test early fortified-city balance separately from performance.
+- [ ] Validate reinforcement contribution and voluntary declaration readiness using actual attacks and ten/twenty-turn capture retention.
+
 ## Direct game automation — implemented, 2026-09-30
 
 - [x] Use Civ V's existing debug socket directly with a persistent local Python service, eliminating the FireTuner window and computer-use input for the tested workflow. No DLL changes or new XML mechanics were required. See [detailed protocol, limits, commands and portability notes](game-automation.md).

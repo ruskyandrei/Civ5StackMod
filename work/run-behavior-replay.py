@@ -259,8 +259,8 @@ class BehaviorReplay(perf.Replay):
                 raise ValueError("Begin from a fresh game's main menu")
             self.call("LegalScreen", "UIManager:DequeuePopup(ContextPtr)", "dismiss-legal")
             enabled = self.call("ModsBrowser", "return Modding.GetEnabledModsByActivationOrder()", "enabled-mods")[0]
-            if {mod["ModID"].lower(): int(mod["Version"]) for mod in enabled} != EXPECTED_MODS:
-                raise ValueError("Enabled mods do not match preserved campaign CP151/VP17/EUI1/Squads1")
+            if {mod["ModID"].lower(): int(mod["Version"]) for mod in enabled} != self.args.expected_mods:
+                raise ValueError("Enabled mods do not match the explicitly expected activation set")
             self.manifest["EnabledMods"] = enabled
             self.call("ModsBrowser", "OnNextButtonClicked();return 'activated'", "activate-mods")
             load_deadline = time.monotonic() + self.args.load_timeout
@@ -434,6 +434,8 @@ def main():
     parser.add_argument("--game-pid", type=int)
     parser.add_argument("--start-ticks", type=int)
     parser.add_argument("--expected-dll-sha")
+    parser.add_argument("--expected-mods-json", type=Path,
+                        help="Explicit JSON list of ModID/Version records; default preserves the historical four-mod fixture")
     parser.add_argument("--command-timeout", type=float, default=120)
     parser.add_argument("--load-timeout", type=float, default=240)
     parser.add_argument("--maximum-seconds", type=float, default=1800)
@@ -441,6 +443,19 @@ def main():
     parser.add_argument("--resume-prepared", action="store_true")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
+    args.expected_mods = EXPECTED_MODS.copy()
+    if args.expected_mods_json:
+        records = json.loads(args.expected_mods_json.read_text(encoding="utf-8-sig"))
+        if not isinstance(records, list) or not records:
+            parser.error("Expected mods must be a nonempty JSON list")
+        args.expected_mods = {}
+        for item in records:
+            if (not isinstance(item, dict) or not isinstance(item.get("ModID"), str)
+                    or re.fullmatch(r"[0-9a-fA-F-]{36}", item["ModID"]) is None
+                    or type(item.get("Version")) is not int or item["Version"] < 1
+                    or item["ModID"].lower() in args.expected_mods):
+                parser.error("Expected mods require unique IDs and positive integer versions")
+            args.expected_mods[item["ModID"].lower()] = item["Version"]
     if args.self_test:
         self_test();return 0
     if args.run_dir is None or args.game_pid is None or args.start_ticks is None or args.expected_dll_sha is None:

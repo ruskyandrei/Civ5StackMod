@@ -27,6 +27,18 @@ This measures logger file-output overhead, not game speed. Whole-autoplay perfor
 
 The next autoplay can now distinguish low city health without capture, depleted/incomplete formations, production commitments, support arrivals and logger overhead without full Verbose participant traces. Still useful future additions are target-selection score/rejection explanations from already-computed values, reinforcement losses/arrival gaps tied to persistent objective IDs, and timing split across tactical, homeland and operational work. These are not implemented here; they should be driven by the compact results rather than adding every trace continuously.
 
+## Broader performance timing — 30 September 2026
+
+Sampled `TURN_PHASE` rows now cover original VP economy, diplomacy, military,
+city production, unit maintenance, visibility, tactical orchestration and
+homeland work. They use existing Summary/Verbose activation, performance mask
+bit16, player filter and `DiagnosticsPerformanceInterval` (0 disables these
+timers). Disabled scopes read no timer and write no row. Active rows include
+start/end ticks and explicitly inclusive durations: nested phases and `PLAN`
+overlap and must not all be added together. See the [phase hierarchy and legacy
+audit](legacy-vp-performance-audit.md). These measurements supplement wall-clock
+round timing; they do not replace a CPU profile or a diagnostics-off control.
+
 ## Prepared release
 
 - Source: `ef5f17dc677af7b5083a88f7eac258a11bcdd2a5`; DLL version: `Release-5.4.6-18-gef5f17dc6 Clean`.
