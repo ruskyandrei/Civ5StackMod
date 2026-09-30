@@ -11,7 +11,9 @@
 - [x] Recheck an executable capture after safe gathering fire; cover the 21 HP to 1 HP softening opportunity in actual-source fixtures.
 - [x] Permit immediate fire from a protected existing stack before requiring a new stage; retain conservative singleton movement safety and the existing XML danger threshold.
 - [ ] Native-check the stationary-fire/capture follow-ups and rerun the saved late-game performance regression. Inspect whether Tombouctu's defenders fired at the Moroccan battery and which stack member received damage.
-- [ ] Review adjacent executable capture alternatives when the preferred cached capturer has spent its attacks or is unavailable; preserve deliberate processing and other commitments.
+- [x] Trace Tombouctu defense: eight ranged shots, with melee and siege units receiving primary damage; two shooters retained inside the city before their attacks.
+- [x] Review and implement adjacent executable capture alternatives when a reservation/objective limit hides them; preserve deliberate processing and other commitments.
+- [x] Schedule current protected siege fire and exact weak-city captures before army holds or withdrawal consume units. Reuse existing XML work limits; record `IMMEDIATE_CITY` actions. Offline scheduler checks pass; native coverage is pending.
 - [ ] Track verified route progress toward a stable safe stage through detours around water/borders. Reuse existing path-query results, keep route progress separate from capture/assault progress, and do not renew on a changed stage or a repeated no-op. Avoid adding per-unit pathfinding to the turn refresh.
 - [ ] Validate the larger siege/reinforcement and ranged-defense policy in fresh campaigns after targeted replay checks. Historical unchecked design bullets below include requirements already partially implemented; use the current implementation record to distinguish remaining work.
 

@@ -9,7 +9,7 @@ def function(text,signature):
  start=text.index(signature);end=text.index('{',start)+1;depth=1
  while depth:depth+=(text[end]=='{')-(text[end]=='}');end+=1
  return text[start:end]
-actual='\n'.join(function(tactical,s) for s in ('bool CvTacticalAI::TryReservedCityCapture(', 'int CvTacticalAI::ExecuteMoveToPlot('))
+actual='\n'.join(function(tactical,s) for s in ('bool CvTacticalAI::TryCityCaptureWithUnit(', 'bool CvTacticalAI::TryReservedCityCapture(', 'int CvTacticalAI::ExecuteMoveToPlot('))
 start=unit.index('\t// Added in Civ 5: Destination plots',unit.index('bool CvUnit::canMoveInto('))
 end=unit.index('\n\telse\n\t{',unit.index('\tif (plot.isEnemyCity(*this))',start))
 city_guard=unit[start:end]
@@ -19,16 +19,19 @@ prefix=r'''
 #include <cstdio>
 #include <climits>
 #include <map>
+#include <vector>
+#include <algorithm>
 #include <utility>
 #include <cstdarg>
 using namespace std;
 typedef int PromotionTypes;
-const int NO_PLAYER=-1,DOMAIN_AIR=2,MISSIONAI_TACTMOVE=1;
+const int NO_PLAYER=-1,DOMAIN_AIR=2,MISSIONAI_TACTMOVE=1,RING1_PLOTS=7;
 #define GD_INT_GET(x) 60
 struct CvPlot;struct CvUnit;
 struct CvString{void Format(const char*,...){}const char*GetCString()const{return "fixture";}};
 struct CvCity{int owner,hp,maxHP;CvCity():owner(1),hp(1),maxHP(300){}int getOwner()const{return owner;}int getDamage()const{return maxHP-hp;}int GetMaxHitPoints()const{return maxHP;}};
-struct CvPlot{int id,owner;CvCity*city;CvPlot(int i=0):id(i),owner(0),city(NULL){}bool isCity()const{return city!=NULL;}int getOwner()const{return owner;}CvCity*getPlotCity()const{return city;}int GetPlotIndex()const{return id;}int getX()const{return id;}int getY()const{return 0;}bool isEnemyCity(const CvUnit&)const;CvUnit*getBestDefender(int)const{return NULL;}};
+struct CvPlot{int id,owner;CvCity*city;CvPlot(int i=0):id(i),owner(0),city(NULL){}bool isCity()const{return city!=NULL;}bool isVisible(int)const{return true;}int getOwner()const{return owner;}CvCity*getPlotCity()const{return city;}int GetPlotIndex()const{return id;}int getX()const{return id;}int getY()const{return 0;}bool isEnemyCity(const CvUnit&)const;CvUnit*getBestDefender(int)const{return NULL;}int getNumUnits()const{return 0;}CvUnit*getUnitByIndex(int)const{return NULL;}};
+static CvPlot*iterateRingPlots(CvPlot*,int){return NULL;}
 static int plotDistance(const CvPlot&a,const CvPlot&b){return a.id>b.id?a.id-b.id:b.id-a.id;}
 enum{MISSION_MOVE=1,MISSION_SKIP=2,MISSION_PILLAGE=3};
 namespace CvTypes{int getMISSION_MOVE_TO(){return MISSION_MOVE;}int getMISSION_SKIP(){return MISSION_SKIP;}int getMISSION_PILLAGE(){return MISSION_PILLAGE;}}
@@ -47,13 +50,14 @@ struct CvUnit{
  void SetMissionAI(int,CvPlot*,void*){read();}bool GeneratePath(CvPlot*,int flags,int,int*turns=NULL){read();lastFlags=flags;if(turns)*turns=(flags&MOVEFLAG_IGNORE_STACKING_SELF)&&pushBlock?0:1;return flags&MOVEFLAG_IGNORE_STACKING_SELF?secondPath:firstPath;}
  bool shouldPillage(CvPlot*,bool,bool)const{read();return pillage;}bool hasFreePillageMove()const{read();return false;}int GetMovementPointsAtCachedTarget()const{read();return 60;}
  bool at(int x,int)const{read();return position&&position->id==x;}int getArmyID()const{read();return -1;}bool isDelayedDeath()const{read();return false;}
+ bool isNativeDomain(const CvPlot*)const{read();return true;}bool IsCoveringFriendlyCivilian()const{read();return false;}bool canUseNow()const{read();return !processed&&moves>0;}
  CvUnit*GetPotentialUnitToPushOut(const CvPlot&)const{read();return pushBlock?const_cast<CvUnit*>(this):NULL;}
  bool PushBlockingUnitOutOfPlot(const CvPlot&){read();return pushBlock;}CvPlot*GetLastValidDestinationPlotInCachedPath()const{read();return position;}
  CvString getName()const{read();return CvString();}int getX()const{read();return position->id;}int getY()const{read();return 0;}
  void PushMission(int,int=0,int=0,int=0,bool=false,bool=false,int=0,CvPlot* = NULL);
 };
 bool CvPlot::isEnemyCity(const CvUnit&u)const{return city&&owner!=u.owner;}
-struct CvPlayer{map<int,CvUnit*>units;int GetID()const{return 0;}bool IsAtWarWith(int owner)const{return owner==1;}CvUnit*getUnit(int i){map<int,CvUnit*>::iterator it=units.find(i);return it==units.end()?NULL:it->second;}}player;
+struct CvPlayer{map<int,CvUnit*>units;int GetID()const{return 0;}int getTeam()const{return 0;}bool IsAtWarWith(int owner)const{return owner==1;}CvUnit*getUnit(int i){map<int,CvUnit*>::iterator it=units.find(i);return it==units.end()?NULL:it->second;}}player;
 #define GET_PLAYER(owner) player
 static CvPlot*moveTarget=NULL;static CvUnit*replacement=NULL;
 void CvUnit::PushMission(int mission,int,int,int flags,bool,bool,int,CvPlot*){
@@ -64,7 +68,10 @@ void CvUnit::PushMission(int mission,int,int,int flags,bool,bool,int,CvPlot*){
 }
 struct Globals{bool getLogging()const{return false;}bool getAILogging()const{return false;}}GC;
 namespace CvStackingDiagnostics{void Record(int,int,const char*,const char*,...) {}}
+namespace CvStacking{int GetInt(const char*,int n){return n;}}
+namespace CvStackingAI{bool RetainCityUnit(const CvUnit*){return false;}}
 namespace CvStackingOffensiveAI{
+ bool Enabled(int){return true;}bool IsAssemblyHeld(const CvUnit*){return false;}bool CanCapture(const CvUnit*u,const CvPlot*){return u&&u->hp>0;}bool HasCommitment(const CvUnit*,const CvPlot* = NULL){return false;}
  CvUnit*GetReservedCapturer(int,CvCity*){return player.getUnit(7);}
  CvPlot*GetCaptureApproachNow(CvUnit*u,CvCity*){return approachReady&&u?u->plot():NULL;}
  void ReleaseAssemblyHold(CvUnit*u){++holdReleases;u->processed=false;}
@@ -76,7 +83,7 @@ namespace TacticalAIHelpers{
 }
 struct CvTacticalAI{
  CvPlayer*m_pPlayer;CvTacticalAI():m_pPlayer(&player){}
- bool TryReservedCityCapture(CvPlot*);int ExecuteMoveToPlot(CvUnit*,CvPlot*,bool,int);
+ bool TryReservedCityCapture(CvPlot*);bool TryCityCaptureWithUnit(CvUnit*,CvPlot*);int ExecuteMoveToPlot(CvUnit*,CvPlot*,bool,int);
  void LogTacticalMessage(const CvString&){}void UnitProcessed(int id){processedID=id;CvUnit*u=player.getUnit(id);if(u)u->processed=true;}
 };
 bool CvUnit::canMoveInto(const CvPlot&plot,int iMoveFlags)const{

@@ -12,11 +12,11 @@ def block(text,start):
  return text[start:end]
 def function(text,signature):return block(text,text.index(signature))
 def gathering(text):return block(text,text.index('if(!land.ready && !sea.ready)',text.index('void CvTacticalAI::ExecuteCaptureCityMoves(')))
-actual='\n'.join(function(tactical,s) for s in ('bool CvTacticalAI::TryReservedCityCapture(', 'int CvTacticalAI::ExecuteMoveToPlot('))
+actual='\n'.join(function(tactical,s) for s in ('bool CvTacticalAI::TryCityCaptureWithUnit(', 'bool CvTacticalAI::TryReservedCityCapture(', 'int CvTacticalAI::ExecuteMoveToPlot('))
 stage_start=offensive.index('bool StageUnit(')
-safe=block(offensive,offensive.index('if(unit->IsCanAttackRanged()',stage_start))
+safe='if(TryStationaryCityFire(unit,cityTarget)) return true;'
 hold=block(offensive,offensive.index('if(currentDanger<=dangerLimit',stage_start))
-source_methods='\n'.join(function(offensive,s) for s in ('bool IsAssemblyHeld(', 'void ReleaseAssemblyHold(', 'CvPlot* GetCaptureApproachNow(', 'bool CanCapture('))
+source_methods='\n'.join(function(offensive,s) for s in ('bool TryStationaryCityFire(', 'bool IsAssemblyHeld(', 'void ReleaseAssemblyHold(', 'CvPlot* GetCaptureApproachNow(', 'bool CanCapture('))
 usable=function(offensive,'bool Usable(')
 a=unit.index('\t// Added in Civ 5: Destination plots',unit.index('bool CvUnit::canMoveInto('))
 b=unit.index('\n\telse\n\t{',unit.index('\tif (plot.isEnemyCity(*this))',a));city_guard=unit[a:b]
@@ -25,6 +25,7 @@ b=unit.index('\n\telse\n\t{',unit.index('\tif (plot.isEnemyCity(*this))',a));cit
 tree=ast.parse((root/'work/test-reserved-capture-execution.py').read_text(encoding='utf-8'))
 prefix=next(ast.literal_eval(n.value) for n in tree.body if isinstance(n,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='prefix' for t in n.targets))
 prefix=prefix.replace('#include <map>','#include <map>\n#include <vector>\n#include <algorithm>')
+prefix=prefix.replace('typedef int PromotionTypes;', 'typedef int PlayerTypes;\ntypedef int PromotionTypes;')
 prefix=prefix.replace('const int NO_PLAYER=-1,DOMAIN_AIR=2,', 'const int DOMAIN_LAND=0,DOMAIN_SEA=1;\nconst int NO_PLAYER=-1,DOMAIN_AIR=2,')
 prefix=prefix.replace('bool isCity()const{return city!=NULL;}', 'bool isCoastalLand()const{return true;}bool isCity()const{return city!=NULL;}')
 prefix=prefix.replace('struct CvPlot;struct CvUnit;','struct CvPlot;struct CvUnit;\nstruct CvPathNodeArray{size_t size()const{return 1;}CvPlot*GetPlotByIndex(int)const{return NULL;}};')
@@ -36,10 +37,10 @@ prefix=prefix.replace('CvUnit(int i=7):id(i)','CvUnit(int i=7):ranged(false),id(
 prefix=prefix.replace('void PushMission(int,int=0',r'''
  bool IsCombatUnit()const{read();return true;}bool IsStackingUnit()const{read();return false;}bool isCargo()const{read();return false;}
  bool IsCanAttackWithMove()const{read();return !ranged;}bool IsCanAttackRanged()const{read();return ranged;}
- int GetMaxHitPoints()const{read();return 100;}bool isNativeDomain(const CvPlot*)const{read();return true;}
+ int GetMaxHitPoints()const{read();return 100;}bool TurnProcessed()const{read();return processed;}
  int GetDanger()const{read();return 0;}
  int baseMoves(bool)const{read();return 2;}
- bool canUseNow()const{read();return moves>0&&!processed;}void SetTurnProcessed(bool value){read();processed=value;}
+ void SetTurnProcessed(bool value){read();processed=value;}
  bool canRangeStrikeAt(int,int)const{read();return ranged;}const CvPathNodeArray&GetLastPath()const{read();return path;}
  CvPlot*GetPathEndFirstTurnPlot()const{read();return position;}
  void PushMission(int,int=0''')
@@ -52,9 +53,11 @@ typedef pair<int,int> Key;static map<Key,int>assemblyHolds;static int currentTur
 static int Setting(const char*,int value){return value;}static void Refresh(){}
 namespace CvStackingOffensiveAI{
  struct AssaultPlan{bool ready;AssaultPlan():ready(false){}};
+ bool Enabled(int){return true;}
  CvUnit*GetReservedCapturer(int,CvCity*){return player.getUnit(7);}
  bool IsAssemblyHeld(const CvUnit*);void ReleaseAssemblyHold(CvUnit*);CvPlot*GetCaptureApproachNow(CvUnit*,CvCity*);bool CanCapture(const CvUnit*,const CvPlot*);
- bool ContinueSiege(int,CvCity*){return true;}bool HasCommitment(CvUnit*,const CvPlot*){return true;}void RecordTransfer(CvUnit*,int,int,int){}
+ bool ContinueSiege(int,CvCity*){return true;}bool HasCommitment(const CvUnit*,const CvPlot* = NULL){return true;}void RecordTransfer(CvUnit*,int,int,int){}
+ bool TryStationaryCityFire(CvUnit*,const CvPlot*);
 }
 ''' +prefix[ns_end:]
 prefix=prefix.replace('struct CvTacticalAI{',r'''
@@ -98,7 +101,7 @@ struct Fixture{
 int main(){
  for(int order=0;order<2;++order){Fixture f(order!=0);expect("initial17damage cannot capture21HPcity",!f.tactical.TryReservedCityCapture(&f.target)&&moveCalls==0);
   f.tactical.GatheringCapturePass(&f.target);expect("safe staging shot opens same-turn actualcapture",f.target.owner==0&&moveCalls==1&&focusDeletes==1);
-  expect("actual assemblyhold released only for executablecapture",!f.capturer.processed&&!CvStackingOffensiveAI::IsAssemblyHeld(&f.capturer));expect("no staleunit reads",staleReads==0);
+  expect("actual assemblyhold released and completedcapture processed",f.capturer.processed&&!CvStackingOffensiveAI::IsAssemblyHeld(&f.capturer));expect("no staleunit reads",staleReads==0);
  }
  {Fixture f;softeningDamage=0;f.tactical.GatheringCapturePass(&f.target);expect("no sufficient softening no capture",f.target.owner==1&&moveCalls==0&&focusDeletes==0);expect("insufficientdamage preserves assemblyhold",f.capturer.processed&&CvStackingOffensiveAI::IsAssemblyHeld(&f.capturer));}
  {Fixture f;retaliation=100;f.tactical.GatheringCapturePass(&f.target);expect("lethalcapture retaliation remainsblocked",f.target.owner==1&&moveCalls==0&&focusDeletes==0);expect("lethalcapture leaves hold",CvStackingOffensiveAI::IsAssemblyHeld(&f.capturer));}

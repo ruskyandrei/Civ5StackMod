@@ -278,6 +278,9 @@ void CvTacticalAI::Update()
 
 	//do this after updating the target list!
 	RecruitUnits();
+	// Current legal captures and protected batteries act before healing,
+	// operational assembly or a withdrawing zone consumes their orders.
+	PlotImmediateCityOpportunities();
 
 	// Loop through each dominance zone assigning moves
 	ProcessDominanceZones();
@@ -879,11 +882,11 @@ void CvTacticalAI::AssignBarbarianMoves()
 }
 
 /// Assign a group of units to take down each city we can capture
-bool CvTacticalAI::TryReservedCityCapture(CvPlot* target)
+bool CvTacticalAI::TryCityCaptureWithUnit(CvUnit* unit,CvPlot* target)
 {
-	if(!target || !target->isCity() || target->getOwner()==NO_PLAYER || !m_pPlayer->IsAtWarWith(target->getOwner())) return false;
+	if(!unit || unit->getOwner()!=m_pPlayer->GetID() || !target || !target->isCity() || target->getOwner()==NO_PLAYER ||
+		!target->isVisible(m_pPlayer->getTeam()) || !m_pPlayer->IsAtWarWith(target->getOwner())) return false;
 	CvCity* city=target->getPlotCity();
-	CvUnit* unit=CvStackingOffensiveAI::GetReservedCapturer(m_pPlayer->GetID(),city);
 	CvPlot* approach=CvStackingOffensiveAI::GetCaptureApproachNow(unit,city);
 	if(!approach) return false;
 	int retaliation=0,garrison=0;
@@ -898,7 +901,122 @@ bool CvTacticalAI::TryReservedCityCapture(CvPlot* target)
 	// changed hands. The mission can delete its unit; inspect the stable plot.
 	const bool captured=target->getOwner()==m_pPlayer->GetID();
 	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_RESULT","target=%d unit=%d captured=%d turnsRemaining=%d ownerAfter=%d",target->GetPlotIndex(),unitID,captured,turns,target->getOwner());
+	if(captured) UnitProcessed(unitID);
 	return captured;
+}
+
+bool CvTacticalAI::TryReservedCityCapture(CvPlot* target)
+{
+	if(!CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()) || !target || !target->isCity() || target->getOwner()==NO_PLAYER ||
+		!target->isVisible(m_pPlayer->getTeam()) || !m_pPlayer->IsAtWarWith(target->getOwner())) return false;
+	CvUnit* reserved=CvStackingOffensiveAI::GetReservedCapturer(m_pPlayer->GetID(),target->getPlotCity());
+	const int reservedID=reserved?reserved->GetID():-1;
+	if(TryCityCaptureWithUnit(reserved,target)) return true;
+	// An objective limit, stale reservation or spent capturer must not hide a
+	// surviving adjacent alternative. This scan adds no prospective path work.
+	vector<int> adjacent;
+	const size_t limit=(size_t)max(0,CvStacking::GetInt("AIOffensiveSupportMaximumUnits",32));
+	for(int i=1;i<RING1_PLOTS && adjacent.size()<limit;++i)
+	{
+		CvPlot* plot=iterateRingPlots(target,i);
+		if(!plot) continue;
+		for(int j=0;j<plot->getNumUnits() && adjacent.size()<limit;++j)
+		{
+			CvUnit* unit=plot->getUnitByIndex(j);
+			if(unit && unit->getOwner()==m_pPlayer->GetID() && unit->GetID()!=reservedID && !unit->isDelayedDeath() &&
+				unit->isNativeDomain(plot) && CvStackingOffensiveAI::CanCapture(unit,target) &&
+				unit->canMove() && !unit->isOutOfAttacks() && (unit->canUseNow() || CvStackingOffensiveAI::IsAssemblyHeld(unit)))
+				adjacent.push_back(unit->GetID());
+		}
+	}
+	for(size_t i=0;i<adjacent.size();++i)
+	{
+		CvUnit* unit=m_pPlayer->getUnit(adjacent[i]);
+		if(!unit || unit->isDelayedDeath() || CvStackingAI::RetainCityUnit(unit) || unit->IsCoveringFriendlyCivilian() ||
+			!unit->isNativeDomain(unit->plot()) || !CvStackingOffensiveAI::CanCapture(unit,target) ||
+			(!unit->canUseNow() && !CvStackingOffensiveAI::IsAssemblyHeld(unit)) ||
+			(CvStackingOffensiveAI::HasCommitment(unit) && !CvStackingOffensiveAI::HasCommitment(unit,target))) continue;
+		if(TryCityCaptureWithUnit(unit,target)) return true;
+	}
+	return false;
+}
+
+void CvTacticalAI::PlotImmediateCityOpportunities()
+{
+	if(!CvStackingOffensiveAI::Enabled(m_pPlayer->GetID())) return;
+	ClearCurrentMoveUnits(AI_TACTICAL_SURGICAL_STRIKE);
+	vector<int> units,cityPlots;
+	int loop=0;
+	for(CvUnit* unit=m_pPlayer->firstUnit(&loop);unit;unit=m_pPlayer->nextUnit(&loop)) units.push_back(unit->GetID());
+	const size_t cityLimit=(size_t)max(0,CvStacking::GetInt("AIOffensiveSupportMaximumObjectives",8));
+	const int shotLimit=max(0,CvStacking::GetInt("AIOffensiveSupportMaximumUnits",32));
+	const int weakPercent=CvStacking::GetInt("AIAssaultOpportunityHPPercent",30);
+	for(size_t i=0;i<m_AllTargets.size() && cityPlots.size()<cityLimit;++i)
+	{
+		if(m_AllTargets[i].GetTargetType()!=AI_TACTICAL_TARGET_ENEMY_CITY) continue;
+		CvPlot* plot=GC.getMap().plot(m_AllTargets[i].GetTargetX(),m_AllTargets[i].GetTargetY());
+		if(!plot || !plot->isCity() || !plot->isVisible(m_pPlayer->getTeam()) || !m_pPlayer->IsAtWarWith(plot->getOwner())) continue;
+		if(std::find(cityPlots.begin(),cityPlots.end(),plot->GetPlotIndex())!=cityPlots.end()) continue;
+		CvCity* city=plot->getPlotCity();
+		const bool weak=(city->GetMaxHitPoints()-city->getDamage())*100<=city->GetMaxHitPoints()*weakPercent;
+		bool currentOpportunity=false;
+		for(size_t j=0;j<units.size() && !currentOpportunity;++j)
+		{
+			CvUnit* unit=m_pPlayer->getUnit(units[j]);
+			if(!unit || unit->isDelayedDeath() || !unit->canUseNow() || unit->TurnProcessed() || unit->isOutOfAttacks() ||
+				CvStackingAI::RetainCityUnit(unit) ||
+				(CvStackingOffensiveAI::HasCommitment(unit) && !CvStackingOffensiveAI::HasCommitment(unit,plot))) continue;
+			currentOpportunity=(weak && plotDistance(*unit->plot(),*plot)<=1 && CvStackingOffensiveAI::CanCapture(unit,plot)) ||
+				(!unit->shouldHeal(false) && CvStackingOffensiveAI::IsSiegeUnit(unit) && plotDistance(*unit->plot(),*plot)<=unit->GetRange() &&
+				 unit->canRangeStrikeAt(plot->getX(),plot->getY()));
+		}
+		if(!currentOpportunity) continue;
+		cityPlots.push_back(plot->GetPlotIndex());
+		if(weak)
+		{
+			CvStackingOffensiveAI::ObserveSiege(m_pPlayer->GetID(),city);
+			if(TryReservedCityCapture(plot))
+			{
+				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"IMMEDIATE_CITY","target=%d action=capture_before_fire",plot->GetPlotIndex());
+				DeleteFocusArea(plot);
+			}
+		}
+	}
+	int shots=0;
+	for(size_t i=0;i<units.size() && shots<shotLimit;++i)
+	{
+		CvUnit* unit=m_pPlayer->getUnit(units[i]);
+		if(!unit || unit->isDelayedDeath() || unit->TurnProcessed() || !unit->canUseNow() || unit->isOutOfAttacks() ||
+			unit->shouldHeal(false) || !CvStackingOffensiveAI::IsSiegeUnit(unit)) continue;
+		for(size_t j=0;j<cityPlots.size();++j)
+		{
+			CvPlot* plot=GC.getMap().plotByIndexUnchecked(cityPlots[j]);
+			if(!plot || !plot->isCity() || !m_pPlayer->IsAtWarWith(plot->getOwner())) continue;
+			if(CvStackingOffensiveAI::TryStationaryCityFire(unit,plot))
+			{
+				++shots;
+				unit=m_pPlayer->getUnit(units[i]);
+				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"IMMEDIATE_CITY","target=%d unit=%d action=stationary_range_order after=%d",plot->GetPlotIndex(),units[i],unit&&!unit->isDelayedDeath()?unit->plot()->GetPlotIndex():-1);
+				if(unit && !unit->isDelayedDeath() && !unit->canUseNow()) UnitProcessed(units[i]);
+				break; // A unit uses only its highest-priority eligible city.
+			}
+		}
+	}
+	for(size_t i=0;i<cityPlots.size();++i)
+	{
+		CvPlot* plot=GC.getMap().plotByIndexUnchecked(cityPlots[i]);
+		if(!plot || !plot->isCity() || !m_pPlayer->IsAtWarWith(plot->getOwner())) continue;
+		CvCity* city=plot->getPlotCity();
+		if((city->GetMaxHitPoints()-city->getDamage())*100<=city->GetMaxHitPoints()*weakPercent)
+		{
+			CvStackingOffensiveAI::ObserveSiege(m_pPlayer->GetID(),city);
+			if(TryReservedCityCapture(plot))
+			{
+				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"IMMEDIATE_CITY","target=%d action=capture_after_fire",plot->GetPlotIndex());
+				DeleteFocusArea(plot);
+			}
+		}
+	}
 }
 
 void CvTacticalAI::ExecuteCaptureCityMoves()

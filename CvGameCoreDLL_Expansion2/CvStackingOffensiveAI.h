@@ -70,5 +70,6 @@ namespace CvStackingOffensiveAI
     void UnitProduced(CvCity* city, CvUnit* unit);
     void TacticalForces(PlayerTypes owner, std::vector<TacticalForce>& result);
     bool StageUnit(CvUnit* unit, const CvPlot* cityTarget);
+    bool TryStationaryCityFire(CvUnit* unit, const CvPlot* cityTarget);
     bool PrioritizeExisting(PlayerTypes owner, CvPlot* target, bool naval);
 }

@@ -720,15 +720,17 @@ namespace CvStackingOffensiveAI
         const AssaultPlan plan=AssessAssault(unit->getOwner(),cityTarget->getPlotCity(),unit->getDomainType());
         return !plan.ready && plan.staging>=0?GC.getMap().plotByIndexUnchecked(plan.staging):NULL;
     }
-    bool StageUnit(CvUnit* unit,const CvPlot* cityTarget)
+    bool TryStationaryCityFire(CvUnit* unit,const CvPlot* cityTarget)
     {
-        if(!Usable(unit) || !unit->canUseNow() || !cityTarget || !cityTarget->isCity()) return false;
+        if(!Usable(unit) || !Enabled(unit->getOwner()) || !unit->canUseNow() || unit->TurnProcessed() || unit->isOutOfAttacks() ||
+            !cityTarget || !cityTarget->isCity() || !GET_PLAYER(unit->getOwner()).IsAtWarWith(cityTarget->getOwner()) ||
+            !cityTarget->isVisible(GET_PLAYER(unit->getOwner()).getTeam()) || CvStackingAI::RetainCityUnit(unit) ||
+            (HasCommitment(unit) && !HasCommitment(unit,cityTarget))) return false;
         const PlayerTypes owner=unit->getOwner();CvPlayer& player=GET_PLAYER(owner);
-        const AssaultPlan plan=AssessAssault(owner,cityTarget->getPlotCity(),unit->getDomainType());
-        if(plan.ready) return false;
         const int dangerLimit=unit->GetCurrHitPoints()*Setting("AIAssaultStageDangerPercent",0)/100;
-        // Shooting from the current plot adds no exposure. Its real stack may
-        // protect the battery even when a singleton could not stage here.
+        // This permits current-plot fire without advancing into another attack
+        // footprint. Normal attack/setup/fortification rules still apply; the
+        // real stack may protect a battery a singleton could not stage here.
         if(unit->IsCanAttackRanged() && unit->canRangeStrikeAt(cityTarget->getX(),cityTarget->getY()) &&
             unit->GetDanger()<=dangerLimit &&
             ContinueSiege(owner,cityTarget->getPlotCity()))
@@ -739,7 +741,17 @@ namespace CvStackingOffensiveAI
             if(unit && !unit->isDelayedDeath() && !unit->canUseNow()) unit->SetTurnProcessed(true);
             return true;
         }
+        return false;
+    }
+    bool StageUnit(CvUnit* unit,const CvPlot* cityTarget)
+    {
+        if(!Usable(unit) || !unit->canUseNow() || !cityTarget || !cityTarget->isCity()) return false;
+        const PlayerTypes owner=unit->getOwner();CvPlayer& player=GET_PLAYER(owner);
+        const AssaultPlan plan=AssessAssault(owner,cityTarget->getPlotCity(),unit->getDomainType());
+        if(plan.ready) return false;
+        if(TryStationaryCityFire(unit,cityTarget)) return true;
         if(plan.staging<0) return false;
+        const int dangerLimit=unit->GetCurrHitPoints()*Setting("AIAssaultStageDangerPercent",0)/100;
         CvPlot* stage=GC.getMap().plotByIndexUnchecked(plan.staging);
         const std::vector<const CvUnit*> alone(1,unit);const SUnitIDValueContainer noDamage;
         const int currentDanger=player.GetDangerPlots()->GetStackDanger(*unit->plot(),unit,alone,noDamage,noDamage);

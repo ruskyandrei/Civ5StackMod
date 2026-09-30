@@ -90,6 +90,7 @@ stubs=stubs.replace('CvPlot*position;CvPlot*end;UnitInfo info;','CvPlot*position
 stubs=stubs.replace('position(NULL),end(NULL)','position(NULL),end(NULL),exactDestination(NULL)')
 stubs=stubs.replace('bool canMove()const{return !processed&&!dead;}','bool canMove()const{return moves&&!dead;}')
 stubs=stubs.replace('bool canUseNow()const{return !processed&&!dead;}','bool canUseNow()const{return canMove()&&!processed&&!dead;}')
+stubs=stubs.replace('bool canUseNow()const{return canMove()&&!processed&&!dead;}','bool TurnProcessed()const{return processed;}bool canUseNow()const{return canMove()&&!processed&&!dead;}')
 stubs=stubs.replace('bool GeneratePath(CvPlot*p,int,int,int*turns=NULL){++pathCalls;',
                     'bool GeneratePath(CvPlot*p,int flags,int,int*turns=NULL){++pathCalls;exactDestination=(flags&MOVEFLAG_ATTACK)&&exactCapturePath?p:NULL;')
 stubs=stubs.replace('CvPlot*GetPathEndFirstTurnPlot(){return end;}',
@@ -102,14 +103,16 @@ source=(core/'CvStackingOffensiveAI.cpp').read_text(encoding='utf-8-sig')
 header=clean((core/'CvStackingOffensiveAI.h').read_text(encoding='utf-8-sig'))
 policy=clean((core/'CvStackingAIPolicy.h').read_text(encoding='utf-8-sig'))
 tactical=(core/'CvTacticalAI.cpp').read_text(encoding='utf-8-sig')
-capture_start=tactical.index('bool CvTacticalAI::TryReservedCityCapture(')
-capture_end=tactical.index('\nvoid CvTacticalAI::ExecuteCaptureCityMoves()',capture_start)
+capture_start=tactical.index('bool CvTacticalAI::TryCityCaptureWithUnit(')
+capture_end=tactical.index('\nvoid CvTacticalAI::PlotImmediateCityOpportunities()',capture_start)
 capture_actual=tactical[capture_start:capture_end]
 capture_harness=r'''
 struct CvTacticalAI {
  CvPlayer*m_pPlayer;int commands,result;bool captureOnMove,removeOnMove;
  CvTacticalAI():m_pPlayer(&players[0]),commands(0),result(0),captureOnMove(false),removeOnMove(false){}
+ bool TryCityCaptureWithUnit(CvUnit*,CvPlot*);
  bool TryReservedCityCapture(CvPlot*);
+ void UnitProcessed(int id){CvUnit*unit=m_pPlayer->getUnit(id);if(unit&&!unit->isDelayedDeath())unit->SetTurnProcessed(true);}
  int ExecuteMoveToPlot(CvUnit*u,CvPlot*p,bool,int){++commands;if(removeOnMove){players[0].units.erase(remove(players[0].units.begin(),players[0].units.end(),u),players[0].units.end());u->dead=true;}if(captureOnMove&&result!=INT_MAX){p->owner=0;p->city->owner=0;}return result;}
 };
 '''
@@ -359,9 +362,9 @@ void stagePlacementTests(){
 void captureOrderTests(){
  init();CvPlot target(10,5),adjacent(1,4),far(2,2);CvCity city(10,&target);city.owner=target.owner=1;city.damage=290;GC.map.plots[target.id]=&target;CvUnit unit(1);unit.end=&adjacent;unit.eta=0;put(unit,adjacent);CvStackingOffensiveAI::ContinueSiege(0,&city);CvTacticalAI tactical;
  unit.cityShot=9;check(!tactical.TryReservedCityCapture(&target)&&!tactical.commands,"capture order waits for sufficient actual city damage");
- tactical.captureOnMove=true;unit.cityShot=10;check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1,"actual softening permits reserved capture independently of gathering forecast");city.owner=target.owner=1;
+ tactical.captureOnMove=true;unit.cityShot=10;check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1&&unit.processed,"actual softening permits reserved capture and marks surviving unit processed");city.owner=target.owner=1;unit.processed=false;
  city.damage=300;unit.cityShot=0;check(tactical.TryReservedCityCapture(&target),"zero-HP city still permits legal melee capture with zero further damage");
- city.owner=target.owner=1;
+ city.owner=target.owner=1;unit.processed=false;
  int before=tactical.commands;unit.moveLegal=false;check(!tactical.TryReservedCityCapture(&target)&&tactical.commands==before,"illegal final city entry cannot issue command");unit.moveLegal=true;
  unit.attacks=false;check(!tactical.TryReservedCityCapture(&target),"used attack allowance blocks duplicate capture");unit.attacks=true;
  unit.processed=true;check(!tactical.TryReservedCityCapture(&target),"processed unit cannot be reused for capture");unit.processed=false;
@@ -397,21 +400,22 @@ void captureArrivalRegressionTests(){
  check(!CvStackingOffensiveAI::ContinueSiege(0,&city),"stationary ETA-one capturer cannot permit indefinite low-HP bombardment");
  check(!CvStackingOffensiveAI::GetReservedCapturer(0,&city),"stationary ETA-one candidate enters retry cooldown");
  init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;unit=CvUnit(1);unit.eta=1;unit.end=&adj;put(unit,stage);unit.exactCapturePath=true;unit.lastPath.push_back(&stage);unit.lastPath.push_back(&adj);unit.lastPath.push_back(&target);CvStackingOffensiveAI::ContinueSiege(0,&city);CvTacticalAI tactical;tactical.captureOnMove=true;
- check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1,"fast capturer may move through a legal approach and capture in this turn");
- city.owner=target.owner=1;
+ check(tactical.TryReservedCityCapture(&target)&&tactical.commands==1&&unit.processed,"fast capturer may move through a legal approach and capture in this turn");
+ city.owner=target.owner=1;unit.processed=false;
  unit.exactCapturePath=false;check(!tactical.TryReservedCityCapture(&target),"approximate one-turn arrival cannot substitute for exact current-turn capture reach");
  unit.exactCapturePath=true;unit.lastPath[1]=&stage;check(!tactical.TryReservedCityCapture(&target),"nonadjacent final approach rejected even if mocked exact endpoint is target");unit.lastPath[1]=&adj;
  captureQueries[0]=32;check(!tactical.TryReservedCityCapture(&target),"exact distant capture obeys existing shared path budget");captureQueries[0]=0;
  unit.moves=false;check(!tactical.TryReservedCityCapture(&target),"no remaining movement forbids distant capture");unit.moves=true;
  unit.processed=true;check(!tactical.TryReservedCityCapture(&target),"arbitrarily processed fast unit cannot be reused");
- assemblyHolds[Key(0,unit.id)]=currentTurn;check(tactical.TryReservedCityCapture(&target)&&!unit.processed&&!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"specifically held reserve is released only for verified executable capture");
- city.owner=target.owner=1;
+ assemblyHolds[Key(0,unit.id)]=currentTurn;check(tactical.TryReservedCityCapture(&target)&&unit.processed&&!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"successful held-reserve capture clears assembly hold and marks unit processed");
+ city.owner=target.owner=1;unit.processed=false;
  unit.processed=true;assemblyHolds[Key(0,unit.id)]=currentTurn;unit.cityShot=0;check(!tactical.TryReservedCityCapture(&target)&&unit.processed&&CvStackingOffensiveAI::IsAssemblyHeld(&unit),"insufficient damage leaves reserve hold intact");unit.cityShot=30;
  ++GC.game.turn;check(!CvStackingOffensiveAI::IsAssemblyHeld(&unit),"hold exception expires at next turn");
  unit.processed=false;unit.position=&adj;unit.end=&adj;unit.hp=30;unit.eta=0;++GC.game.turn;
  check(tactical.TryReservedCityCapture(&target),"wounded adjacent unit that survives can capture without the recruitment health minimum");
- city.owner=target.owner=1;
- retaliation=30;check(!tactical.TryReservedCityCapture(&target),"wounded adjacent unit with lethal retaliation still rejected");
+ city.owner=target.owner=1;unit.processed=false;
+ const int commandsBeforeLethal=tactical.commands;
+ retaliation=30;check(!tactical.TryReservedCityCapture(&target)&&tactical.commands==commandsBeforeLethal&&!unit.processed,"wounded adjacent unit with lethal retaliation still rejected before issuing movement");
  init();city.owner=target.owner=1;GC.map.plots[target.id]=&target;options["AIOffensiveSupportMaximumObjectives"]=0;
  const CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(0,&city,DOMAIN_LAND);
  check(!plan.ready&&plan.reason==8,"objective limit returns an unassessed plan instead of inventing assault readiness");

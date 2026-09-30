@@ -7,7 +7,7 @@ def function(text,signature):
  a=text.index(signature);b=text.index('{',a)+1;depth=1
  while depth:depth+=(text[b]=='{')-(text[b]=='}');b+=1
  return text[a:b]
-usable=function(source,'bool Usable(');stage=function(source,'bool StageUnit(')
+usable=function(source,'bool Usable(');stage=function(source,'bool StageUnit(');fire=function(source,'bool TryStationaryCityFire(')
 prefix=r'''
 #define _SECURE_SCL 0
 #define _HAS_ITERATOR_DEBUGGING 0
@@ -26,7 +26,7 @@ static bool allowSiege=true,deleteOnShot=false;
 typedef pair<int,int>Key;static map<Key,int>assemblyHolds;static int assaultQueries[4]={0};static int currentTurn=1;
 static int Setting(const char*name,int value){return !strcmp(name,"AIAssaultStageDangerPercent")?dangerPercent:value;}
 struct CvCity{};struct CvUnit;
-struct CvPlot{int id;CvCity*city;CvPlot(int i=0):id(i),city(NULL){}bool isCity()const{return city!=NULL;}CvCity*getPlotCity()const{return city;}int GetPlotIndex()const{return id;}bool isVisible(int)const{return true;}int getX()const{return id;}int getY()const{return 0;}};
+struct CvPlot{int id;CvCity*city;CvPlot(int i=0):id(i),city(NULL){}bool isCity()const{return city!=NULL;}int getOwner()const{return 1;}CvCity*getPlotCity()const{return city;}int GetPlotIndex()const{return id;}bool isVisible(int)const{return true;}int getX()const{return id;}int getY()const{return 0;}};
 static int plotDistance(const CvPlot&a,const CvPlot&b){return abs(a.id-b.id);}
 static CvPlot*iterateRingPlots(CvPlot*p,int i){return i==0?p:NULL;}
 typedef vector<pair<int,int> >SUnitIDValueContainer;
@@ -37,7 +37,7 @@ struct CvUnit{
  CvUnit():id(7),hp(100),danger(0),moves(120),ranged(true),processed(false),dead(false),canFire(true),setup(true),outOfAttacks(false),stale(false),position(NULL){}
  void read()const{if(stale)++staleReads;}int GetID()const{read();return id;}int getOwner()const{read();return 0;}int getDomainType()const{read();return DOMAIN_LAND;}
  CvPlot*plot()const{read();return position;}int GetCurrHitPoints()const{read();return hp;}bool IsCombatUnit()const{read();return true;}bool IsStackingUnit()const{read();return false;}bool isCargo()const{read();return false;}
- bool isDelayedDeath()const{read();return dead;}bool canUseNow()const{read();return !processed&&!dead&&moves>0;}
+ bool isDelayedDeath()const{read();return dead;}bool canUseNow()const{read();return !processed&&!dead&&moves>0;}bool TurnProcessed()const{return processed;}bool isOutOfAttacks()const{return outOfAttacks;}
  bool IsCanAttackRanged()const{read();return ranged;}bool canRangeStrikeAt(int,int)const{read();return ranged&&canFire&&setup&&!outOfAttacks&&moves>0&&!processed;}
  int GetDanger()const{read();return danger;}void SetTurnProcessed(bool b){read();processed=b;}int baseMoves(bool)const{read();return 2;}
  bool isNativeDomain(const CvPlot*)const{read();return true;}bool canMoveInto(const CvPlot&,int)const{read();return true;}
@@ -45,7 +45,7 @@ struct CvUnit{
  void PushMission(int,int,int,int,bool,bool,int);
 };
 struct Danger{int GetStackDanger(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&){++soloQueries;return soloDanger;}}danger;
-struct CvPlayer{map<int,CvUnit*>units;int getTeam()const{return 0;}CvUnit*getUnit(int id){map<int,CvUnit*>::iterator it=units.find(id);return it==units.end()?NULL:it->second;}Danger*GetDangerPlots(){return &danger;}}players[4];
+struct CvPlayer{map<int,CvUnit*>units;int getTeam()const{return 0;}bool IsAtWarWith(int p)const{return p==1;}CvUnit*getUnit(int id){map<int,CvUnit*>::iterator it=units.find(id);return it==units.end()?NULL:it->second;}Danger*GetDangerPlots(){return &danger;}}players[4];
 #define GET_PLAYER(owner) players[owner]
 void CvUnit::PushMission(int mission,int,int,int,bool,bool,int){read();if(mission==2){++shots;moves=0;outOfAttacks=true;if(deleteOnShot){players[0].units.erase(id);stale=true;}}else ++moveOrders;}
 struct Map{CvPlot stage;CvPlot*plotByIndexUnchecked(int){return &stage;}};
@@ -54,7 +54,8 @@ namespace CvStackingDiagnostics{void Record(int,int,const char*,const char*,...)
 struct AssaultPlan{bool ready;int staging;AssaultPlan():ready(false),staging(-1){}}plan;
 static AssaultPlan AssessAssault(int,CvCity*,int){return plan;}
 static bool ContinueSiege(int,CvCity*){return allowSiege;}
-static bool HasCommitment(CvUnit*,const CvPlot*){return true;}
+static bool Enabled(int){return true;}namespace CvStackingAI{bool RetainCityUnit(const CvUnit*){return false;}}
+static bool HasCommitment(CvUnit*,const CvPlot* = NULL){return true;}
 static void RecordTransfer(CvUnit*,int,int,int){}
 '''
 tests=r'''
@@ -86,7 +87,7 @@ vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0'
 env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')
 for key in ('CL','_CL_','LINK'):env.pop(key,None)
 def run(label,body):
- fixture=prefix+usable+body+tests;cpp=out/(label+'.cpp');cpp.write_text(fixture,encoding='utf-8');exe=out/(label+'.exe')
+ fixture=prefix+usable+fire+body+tests;cpp=out/(label+'.cpp');cpp.write_text(fixture,encoding='utf-8');exe=out/(label+'.exe')
  c=subprocess.run([str(vc/'Vc7/bin/cl.exe'),'/nologo','/EHsc','/MT','/O2','/Z7',str(cpp),'/Fo'+str(out/(label+'.obj')),'/Fe'+str(exe)],cwd=out,env=env,capture_output=True,text=True,timeout=60);(out/(label+'-compile.log')).write_text(c.stdout+c.stderr,encoding='utf-8')
  if c.returncode:print(c.stdout+c.stderr);raise SystemExit(c.returncode)
  r=subprocess.run([str(exe)],cwd=out,capture_output=True,text=True,timeout=30);(out/(label+'-output.log')).write_text(r.stdout+r.stderr,encoding='utf-8');return r,fixture
