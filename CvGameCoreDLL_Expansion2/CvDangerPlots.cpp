@@ -406,6 +406,18 @@ int CvDangerPlots::GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const
  return m_DangerPlots[plot.GetPlotIndex()].GetStackDanger(pUnit, candidates, friendlyDamage, enemyDamage);
 }
 
+// With no known unit or city attacks, virtual membership and wounds cannot
+// affect the result. Keep improvement, fog and unit-specific terrain damage.
+bool CvDangerPlots::TryGetFixedStackDanger(const CvPlot& plot, const CvUnit* pUnit, int& result)
+{
+ if (m_bDirty)
+  UpdateDanger();
+ const int index = plot.GetPlotIndex();
+ if (!pUnit || index < 0 || (size_t)index >= m_DangerPlots.size())
+  return false;
+ return m_DangerPlots[index].TryGetFixedStackDanger(pUnit, result);
+}
+
 int CvDangerPlots::GetDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction)
 {
 	if(m_DangerPlots.empty() || !pUnit)
@@ -1095,6 +1107,15 @@ static int SimulateStackCityThreats(const CvDangerPlotContents& contents, const 
 
 // Simulate each known attack against the surviving virtual stack. Friendly and
 // enemy damage containers remain separate: player-local unit IDs may overlap.
+bool CvDangerPlotContents::TryGetFixedStackDanger(const CvUnit* pUnit, int& result) const
+{
+ if (!pUnit || !m_pPlot || !m_apUnits.empty() || !m_apCities.empty())
+  return false;
+ result = m_iImprovementDamage + m_iFogCount * FOG_DEFAULT_DANGER;
+ result += m_bFlatPlotDamage ? m_pPlot->getTurnDamage(pUnit->ignoreTerrainDamage(), pUnit->ignoreFeatureDamage(), pUnit->extraTerrainDamage(), pUnit->extraFeatureDamage()) : 0;
+ return true;
+}
+
 int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
 {

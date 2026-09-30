@@ -215,11 +215,22 @@ namespace
 		{"AIStackPairRecruitRange", 1, 0, 10},
 		{"UIStackResultDelayMilliseconds", 250, 0, 10000}
 	};
+	// Names stored here are process-lifetime literals from SETTINGS (or the
+	// missing-schema "Enabled" literal). Compare text, never pointer addresses,
+	// so callers can use Lua/database-owned names without temporary strings.
+	struct SettingNameLess
+	{
+		bool operator()(const char* left, const char* right) const
+		{
+			return strcmp(left, right) < 0;
+		}
+	};
+	typedef std::map<const char*, int, SettingNameLess> SettingMap;
 	typedef std::map<std::pair<int, std::string>, int> RoleMap;
 	struct RulesCache
 	{
 		bool loaded;
-		std::map<std::string, int> settings;
+		SettingMap settings;
 		std::vector<std::pair<int, int> > technologies;
 		RoleMap combatRoles;
 		RoleMap classRoles;
@@ -337,7 +348,8 @@ namespace
 					const int value = Clamp(raw, SETTINGS[i].minimum, SETTINGS[i].maximum);
 					if (raw != value)
 						CUSTOMLOG("Stacking: setting %s=%d outside %d..%d; using %d.", name, raw, SETTINGS[i].minimum, SETTINGS[i].maximum, value);
-					cache.settings[name] = value;
+					// SQLite row text may expire on Step(); retain the matching literal.
+					cache.settings[SETTINGS[i].name] = value;
 					recognized = true;
 					break;
 				}
@@ -409,8 +421,8 @@ namespace CvStacking
 		EnsureCache();
 		if (!name)
 			return fallback;
-		const std::map<std::string, int>& settings = Cache().settings;
-		std::map<std::string, int>::const_iterator it = settings.find(name);
+		const SettingMap& settings = Cache().settings;
+		SettingMap::const_iterator it = settings.find(name);
 		return it == settings.end() ? fallback : it->second;
 	}
 	bool IsEnabled()

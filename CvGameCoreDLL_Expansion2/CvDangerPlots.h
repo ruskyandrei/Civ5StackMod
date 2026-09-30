@@ -54,6 +54,7 @@ struct CvDangerPlotContents
 
 	int GetDanger(const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction);
 	int GetStackDanger(const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
+	bool TryGetFixedStackDanger(const CvUnit* pUnit, int& result) const;
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison, const SUnitIDValueContainer& extraUnitDamage, int iExtraSelfDamage = 0);
 	std::vector<CvUnit*> GetPossibleAttackers(TeamTypes eTeamForVisibilityCheck) const;
 
@@ -93,6 +94,7 @@ public:
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison = NULL, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer());
 	int GetDanger(const CvPlot& pPlot, bool bFixedDamageOnly);
 	int GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
+	bool TryGetFixedStackDanger(const CvPlot& plot, const CvUnit* pUnit, int& result);
 
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck) const;
 	bool IsKnownAttacker(const CvUnit* pUnit) const;

@@ -7654,6 +7654,46 @@ private:
  StackForecastPairQuery& operator=(const StackForecastPairQuery&);
 };
 
+// Virtual membership is rebuilt for each query, but its temporary storage can
+// survive between queries. Keep the borrow through all danger/score callbacks;
+// a nested query uses private storage instead of overwriting the outer stack.
+struct VirtualFriendlyStackBuffer
+{
+ vector<const CvUnit*> candidates;
+ SUnitIDValueContainer damage;
+ void release()
+ {
+  vector<const CvUnit*>().swap(candidates);
+  SUnitIDValueContainer empty;
+  damage.swap(empty);
+ }
+};
+static VirtualFriendlyStackBuffer gStackVirtualScratch;
+static bool gStackVirtualScratchBusy = false;
+struct VirtualFriendlyStackQuery
+{
+ bool borrowed;
+ VirtualFriendlyStackBuffer& buffer;
+ vector<const CvUnit*>& candidates;
+ SUnitIDValueContainer& damage;
+ VirtualFriendlyStackQuery():borrowed(gStackForecastsActive && !gStackVirtualScratchBusy),
+  buffer(borrowed ? gStackVirtualScratch : *new VirtualFriendlyStackBuffer),
+  candidates(buffer.candidates),damage(buffer.damage)
+ {
+  if (borrowed) gStackVirtualScratchBusy = true;
+  candidates.clear();
+  damage.clear();
+ }
+ ~VirtualFriendlyStackQuery()
+ {
+  if (borrowed) gStackVirtualScratchBusy = false;
+  else delete &buffer;
+ }
+private:
+ VirtualFriendlyStackQuery(const VirtualFriendlyStackQuery&);
+ VirtualFriendlyStackQuery& operator=(const VirtualFriendlyStackQuery&);
+};
+
 struct StackForecastScope
 {
  StackForecastScope()
@@ -7693,6 +7733,7 @@ struct StackForecastScope
    vector<int>().swap(gStackDangerScratch.state);
    vector<int>().swap(gStackDefenderScratch.state);
    vector<pair<int,int> >().swap(gStackSortScratch);
+   gStackVirtualScratch.release();
    gStackKeyPayloadBytes = 0;
   }
  }
@@ -7855,6 +7896,9 @@ static void AppendStackDamage(StackForecastKey& key, const SUnitIDValueContainer
 static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
 {
+ int fixedDanger = 0;
+ if (CvStacking::IsEnabled() && GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
+  return fixedDanger;
  StackForecastQuery query(gStackDangerScratch,gStackDangerScratchBusy);
  StackForecastKey& key=query.key;
  if (gStackForecastsActive)
@@ -7934,6 +7978,33 @@ static void GetVirtualFriendlyStack(const CvTacticalPosition& position, const Cv
  }
 }
 
+// This is the exact size produced by GetVirtualFriendlyStack, including fixed
+// and movable duplicates. The caller only needs that count, so avoid creating
+// membership/damage vectors and looking up every movable member's HP state.
+static size_t CountVirtualFriendlyStack(const CvTacticalPosition& position, const CvPlot* plot, const CvUnit* arriving)
+{
+ size_t count = 0;
+ bool arrivingPresent = false;
+ const CvTacticalPlot* tactical = position.getTactPlot(plot->GetPlotIndex());
+ if (tactical)
+ {
+  const vector<const CvUnit*>& fixed = tactical->getFixedFriendlyUnits();
+  count = fixed.size();
+  arrivingPresent = arriving && std::find(fixed.begin(), fixed.end(), arriving) != fixed.end();
+  const vector<STacticalUnit>& units = tactical->getUnitsAtPlot();
+  for (size_t i = 0; i < units.size(); ++i)
+  {
+   const CvUnit* unit = GET_PLAYER(position.getPlayer()).getUnit(units[i].iUnitID);
+   if (unit && unit->IsCombatUnit() && !unit->isCargo() && unit->getDomainType() != DOMAIN_AIR)
+   {
+    ++count;
+    arrivingPresent |= unit == arriving;
+   }
+  }
+ }
+ return count + (arriving && !arrivingPresent ? 1 : 0);
+}
+
 // A same-tile escort counts only when removing eligible melee members would
 // expose this unit to more real forecast damage, and those escorts survive.
 // This also rejects a weak defender or a cavalry-bypassed escort that adds no cover.
@@ -7942,6 +8013,9 @@ static bool HasSurvivingStackProtection(const CvUnit* unit, const CvPlot* plot,
  const SUnitIDValueContainer& enemyDamage, int /*callerDanger*/)
 {
  if (!StackPreferencesEnabled() || !unit->IsCombatUnit() || !unit->isNativeDomain(plot))
+  return false;
+ int fixedDanger = 0;
+ if (GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
   return false;
  // Some intermediate callers scale danger by aggression. Protection and survival
  // must compare raw forecasts on both sides, never raw solo against scaled stack.
@@ -8014,8 +8088,9 @@ static bool HasVirtualCityEncirclement(const CvTacticalPosition& position, const
    continue;
   if (plot->isCity())
    return false;
-  vector<const CvUnit*> members;
-  SUnitIDValueContainer damage;
+  VirtualFriendlyStackQuery stack;
+  vector<const CvUnit*>& members = stack.candidates;
+  SUnitIDValueContainer& damage = stack.damage;
   GetVirtualFriendlyStack(position, plot, NULL, 0, members, damage);
   bool occupied = false;
   for (size_t i = 0; i < members.size(); ++i)
@@ -8037,10 +8112,12 @@ static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iS
  int iDanger = 0;
  if (CvStacking::IsEnabled() && pUnit->IsCombatUnit() && pUnit->getDomainType() != DOMAIN_AIR)
  {
-  vector<const CvUnit*> candidates;
-  SUnitIDValueContainer friendlyDamage;
-  GetVirtualFriendlyStack(assumedPosition, pPlot, pUnit, iSelfDamage, candidates, friendlyDamage);
-  iDanger = GetCachedStackDanger(pUnit, pPlot, candidates, friendlyDamage, assumedPosition.GetUnitDamageDealt());
+  if (!GET_PLAYER(pUnit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*pPlot, pUnit, iDanger))
+  {
+   VirtualFriendlyStackQuery stack;
+   GetVirtualFriendlyStack(assumedPosition, pPlot, pUnit, iSelfDamage, stack.candidates, stack.damage);
+   iDanger = GetCachedStackDanger(pUnit, pPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt());
+  }
  }
  else if (!gTactPosStorage.getDangerCache().findDanger(pUnit->GetID(), pPlot->GetPlotIndex(), iSelfDamage, assumedPosition.GetUnitDamageDealt(), iDanger))
  {
@@ -8056,8 +8133,12 @@ static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDa
 {
  if (!StackPreferencesEnabled())
   return 0;
- vector<const CvUnit*> candidates;
- SUnitIDValueContainer damage;
+ int fixedDanger = 0;
+ if (GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
+  return 0;
+ VirtualFriendlyStackQuery stack;
+ vector<const CvUnit*>& candidates = stack.candidates;
+ SUnitIDValueContainer& damage = stack.damage;
  GetVirtualFriendlyStack(position, plot, unit, selfDamage, candidates, damage);
  if (candidates.size() < 2)
   return 0;
@@ -8156,8 +8237,9 @@ static int VirtualFlankPower(const CvTacticalPosition& position, const CvPlot* p
   const CvTacticalPlot* tactical = position.getTactPlot(neighbors[d]->GetPlotIndex());
   if (!tactical)
    continue;
-  vector<const CvUnit*> units;
-  SUnitIDValueContainer damage;
+  VirtualFriendlyStackQuery stack;
+  vector<const CvUnit*>& units = stack.candidates;
+  SUnitIDValueContainer& damage = stack.damage;
   if (friendly)
    GetVirtualFriendlyStack(position, neighbors[d], NULL, 0, units, damage);
   else
@@ -8860,10 +8942,7 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 	int iNumAdjFriendlies = (evalMode==EM_FINAL) ? testPlot->getNumAdjacentFriendliesEndTurn(eRelevantDomain) : testPlot->getNumAdjacentFriendlies(eRelevantDomain, -1);
  if (StackPreferencesEnabled())
  {
-  vector<const CvUnit*> stack;
-  SUnitIDValueContainer damage;
-  GetVirtualFriendlyStack(assumedPosition, pTestPlot, pUnit, iSelfDamage, stack, damage);
-  iNumAdjFriendlies += max(0, (int)stack.size() - 1);
+  iNumAdjFriendlies += max(0, (int)CountVirtualFriendlyStack(assumedPosition, pTestPlot, pUnit) - 1);
  }
 
 	if (bRelaxedCheck) //assume we have friends which might catch up to us later
@@ -8885,10 +8964,9 @@ int ScoreCombatUnitTurnEnd(const CvUnit* pUnit, eUnitAssignmentType eLastAssignm
 		//siege units (with limited visibility) should not move there unless covered (the -1 is important)
 		if (pUnit->visibilityRange() < 2 && testPlot->getNumAdjacentFriendlies(DomainForUnit(pUnit), -1) < 2)
 		{
-			vector<const CvUnit*> stack;
-			SUnitIDValueContainer damage;
-			GetVirtualFriendlyStack(assumedPosition, pTestPlot, pUnit, iSelfDamage, stack, damage);
-			if (!HasSurvivingStackProtection(pUnit, pTestPlot, stack, damage, assumedPosition.GetUnitDamageDealt(), iDanger))
+			VirtualFriendlyStackQuery stack;
+			GetVirtualFriendlyStack(assumedPosition, pTestPlot, pUnit, iSelfDamage, stack.candidates, stack.damage);
+			if (!HasSurvivingStackProtection(pUnit, pTestPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt(), iDanger))
 				return INT_MAX;
 		}
 		
@@ -9286,8 +9364,9 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
   if (bMoving && !pUnit->IsCanAttackRanged())
   {
    const CvPlot* source = GC.getMap().plotByIndexUnchecked(unit.iPlotIndex);
-   vector<const CvUnit*> before;
-   SUnitIDValueContainer damage;
+   VirtualFriendlyStackQuery stack;
+   vector<const CvUnit*>& before = stack.candidates;
+   SUnitIDValueContainer& damage = stack.damage;
    GetVirtualFriendlyStack(assumedPosition, source, pUnit, unit.iSelfDamage, before, damage);
    vector<const CvUnit*> after = before;
    after.erase(std::remove(after.begin(), after.end(), pUnit), after.end());

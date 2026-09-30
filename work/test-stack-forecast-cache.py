@@ -34,6 +34,8 @@ struct CvUnit { int id; CvUnit(int v=0):id(v){} int GetID()const{return id;} };
 struct SUnitIDValueContainer {
  typedef pair<int,int> value_type;typedef vector<value_type>::const_iterator const_iterator;
  vector<value_type> entries;
+ void clear(){entries.clear();}
+ void swap(SUnitIDValueContainer& other){entries.swap(other.entries);}
  const_iterator begin()const{return entries.begin();}const_iterator end()const{return entries.end();}
  int GetValue(int id)const{for(size_t i=0;i<entries.size();++i)if(entries[i].first==id)return entries[i].second;return 0;}
 };
