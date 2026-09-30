@@ -146,14 +146,26 @@ const CvUnit* CvUnitCombat::SelectStackDefender(const CvUnit* pAttacker, const C
 	const bool bCanFlank = bUseStackRules && !bRangedAttack && CvStacking::CanFlank(pAttacker);
 	bool bHasExposedTarget = false;
 	bool bHasInterceptor = false;
+	const CvUnit* pOnlyCandidate = NULL;
+	int iCandidates = 0;
 	for (size_t i = 0; i < candidates.size(); ++i)
 	{
 		const CvUnit* pUnit = candidates[i];
 		if (!IsStackCombatCandidate(pUnit, extraDamage))
 			continue;
-		bHasExposedTarget = bHasExposedTarget || CvStacking::IsFlankTarget(pUnit);
-		bHasInterceptor = bHasInterceptor || CvStacking::IsAntiCavalry(pUnit);
+		if(bCanFlank)
+		{
+			bHasExposedTarget = bHasExposedTarget || CvStacking::IsFlankTarget(pUnit);
+			bHasInterceptor = bHasInterceptor || CvStacking::IsAntiCavalry(pUnit);
+		}
+		if(pUnit!=pAttacker) { pOnlyCandidate=pUnit;++iCandidates; }
 	}
+	// There is no outcome to compare when only one defender is eligible. This
+	// leaf selector is used repeatedly by danger forecasts; the eventual hit is
+	// still calculated normally by the caller. Preserve the flank filter.
+	if(bUseStackRules && iCandidates==1 && (!bCanFlank || !bHasExposedTarget ||
+		(bHasInterceptor?CvStacking::IsAntiCavalry(pOnlyCandidate):CvStacking::IsFlankTarget(pOnlyCandidate))))
+		return pOnlyCandidate;
 
 	const CvUnit* pBest = NULL;
 	bool bBestSurvives = false;
