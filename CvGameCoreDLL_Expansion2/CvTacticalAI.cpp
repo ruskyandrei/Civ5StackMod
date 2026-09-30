@@ -9,6 +9,7 @@
 #include "CvStackingAI.h"
 #include "CvStackingOffensiveAI.h"
 #include "CvStackingRules.h"
+#include "CvStackingStrengthCache.h"
 #include "CvDangerPlots.h"
 #include "CvUnitCombat.h"
 #include "CvTacticalAI.h"
@@ -13289,6 +13290,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	PlayerTypes ePlayer = vUnits.front()->getOwner();
 	TeamTypes ourTeam = GET_PLAYER(ePlayer).getTeam();
 	StackForecastScope stackForecastScope;
+	CvStackingStrengthCache::Scope strengthCacheScope(CvStacking::IsEnabled() && gDLL->HasGameCoreLock() ? CvStacking::GetInt("AITacticalStrengthCacheEntries", 16384) : 0);
 
 	static vector<CvTacticalPosition*> openPositionsHeap;
 	static vector<CvTacticalPosition*> completedPositions;
@@ -13495,6 +13497,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		if (iOldPauseCount!=iNewPauseCount && gDLL->HasGameCoreLock())
 		{
 			const DWORD yieldBegin=GetTickCount();
+			CvStackingStrengthCache::Invalidate();
 			gDLL->ReleaseGameCoreLock();
 			Sleep(1);
 			gDLL->GetGameCoreLock();
@@ -13591,10 +13594,14 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 	const int perfInterval=CvStacking::GetInt("DiagnosticsPerformanceInterval",1);
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+	{
+		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
-			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions);
+			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
+			strength.meleeHits,strength.meleeMisses,strength.rangedHits,strength.rangedMisses,strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations);
+	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,
 		(unsigned int)completedPositions.size(), (unsigned int)result.size(), durationMs);

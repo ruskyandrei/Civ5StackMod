@@ -8,6 +8,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvDangerPlots.h"
 #include "CvStackingRules.h"
+#include "CvStackingStrengthCache.h"
 #include "CvUnitCombat.h"
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
@@ -632,6 +633,7 @@ FDataStream& operator<<(FDataStream& stream, const CvDangerPlots& dangerPlots)
 void CvDangerPlots::SetDirty()
 {
 	m_bDirty = true;
+	CvStackingStrengthCache::Invalidate();
 }
 
 // Get the maximum damage a non-specified unit could receive at this plot in the next turn

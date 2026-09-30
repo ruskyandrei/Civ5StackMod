@@ -35,6 +35,7 @@ namespace
 		{"CollateralEnabled", 1, 0, 1},
 		{"DisableCityRangedAttacks", 1, 0, 1},
 		{"AIEnabled", 1, 0, 1},
+		{"AITacticalStrengthCacheEntries", 16384, 0, 65536},
 		{"AIMilitaryAllocationEnabled", 1, 0, 1},
 		{"CityProtectionScalesWithHP", 1, 0, 1},
 		{"UIStackCombatPreviewGap", 8, 0, 100},

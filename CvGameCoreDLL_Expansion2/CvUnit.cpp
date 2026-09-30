@@ -10,6 +10,7 @@
 #include "CvStackingAI.h"
 #include "CvUnit.h"
 #include "CvStackingRules.h"
+#include "CvStackingStrengthCache.h"
 #include "CvDangerPlots.h"
 
 #include "CvAStar.h"
@@ -16347,7 +16348,56 @@ int CvUnit::GetCombatModifierFromCapitalDistance(const CvPlot* pBattlePlot) cons
 
 //	--------------------------------------------------------------------------------
 /// What are the generic strength modifiers for this Unit?
+// The key covers every varying argument, identities and live health/positions.
+// Other engine modifiers are fixed inside the locked tactical preview scene;
+// dirty danger state and UI yields invalidate that scene's cache.
+static CvStackingStrengthCache::Key MakeStackStrengthKey(int kind, const CvUnit* self, const CvUnit* other,
+	const CvCity* city, const CvPlot* from, const CvPlot* target, bool attacking, bool ignoreAdjacency,
+	bool quick, int extraDamage, int extraOtherDamage)
+{
+	CvStackingStrengthCache::Key key;
+	key.values[0] = kind;
+	key.values[1] = (int)self->getOwner();
+	key.values[2] = self->GetID();
+	key.values[3] = self->plot() ? self->plot()->GetPlotIndex() : -1;
+	key.values[4] = self->getDamage();
+	key.values[5] = self->GetMaxHitPoints();
+	key.values[6] = other ? (int)other->getOwner() : -1;
+	key.values[7] = other ? other->GetID() : -1;
+	key.values[8] = other && other->plot() ? other->plot()->GetPlotIndex() : -1;
+	key.values[9] = other ? other->getDamage() : 0;
+	key.values[10] = other ? other->GetMaxHitPoints() : 0;
+	key.values[11] = city ? (int)city->getOwner() : -1;
+	key.values[12] = city ? city->GetID() : -1;
+	key.values[13] = city ? city->getDamage() : 0;
+	key.values[14] = from ? from->GetPlotIndex() : -1;
+	key.values[15] = target ? target->GetPlotIndex() : -1;
+	key.values[16] = (attacking ? 1 : 0) | (ignoreAdjacency ? 2 : 0) | (quick ? 4 : 0);
+	key.values[17] = extraDamage;
+	key.values[18] = extraOtherDamage;
+	key.values[19] = other ? other->GetNumTimesAttackedThisTurn(self->getOwner()) :
+		(city ? city->GetNumTimesAttackedThisTurn(self->getOwner()) : 0);
+	return key;
+}
+
 int CvUnit::GetGenericMeleeStrengthModifier(const CvUnit* pOtherUnit, const CvPlot* pBattlePlot, bool bAttacking,
+	bool bIgnoreUnitAdjacencyBoni, const CvPlot* pFromPlot, bool bQuickAndDirty) const
+{
+	long generation;
+	if (!CvStackingStrengthCache::Context(generation))
+		return GetGenericMeleeStrengthModifierUncached(pOtherUnit, pBattlePlot, bAttacking, bIgnoreUnitAdjacencyBoni, pFromPlot, bQuickAndDirty);
+	VALIDATE_OBJECT();
+	const CvStackingStrengthCache::Key key = MakeStackStrengthKey(0, this, pOtherUnit, NULL,
+		pFromPlot ? pFromPlot : plot(), pBattlePlot, bAttacking, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, 0, 0);
+	int result;
+	if (CvStackingStrengthCache::Lookup(key, generation, result))
+		return result;
+	result = GetGenericMeleeStrengthModifierUncached(pOtherUnit, pBattlePlot, bAttacking, bIgnoreUnitAdjacencyBoni, pFromPlot, bQuickAndDirty);
+	CvStackingStrengthCache::Store(key, generation, result);
+	return result;
+}
+
+int CvUnit::GetGenericMeleeStrengthModifierUncached(const CvUnit* pOtherUnit, const CvPlot* pBattlePlot, bool bAttacking,
 				bool bIgnoreUnitAdjacencyBoni, const CvPlot* pFromPlot, bool bQuickAndDirty) const
 {
 	VALIDATE_OBJECT();
@@ -17119,6 +17169,26 @@ void CvUnit::SetBaseRangedCombatStrength(int iStrength)
 
 //	--------------------------------------------------------------------------------
 int CvUnit::GetMaxRangedCombatStrength(const CvUnit* pOtherUnit, const CvCity* pCity, bool bAttacking,
+	const CvPlot* pMyPlot, const CvPlot* pOtherPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
+{
+	long generation;
+	if (!CvStackingStrengthCache::Context(generation))
+		return GetMaxRangedCombatStrengthUncached(pOtherUnit, pCity, bAttacking, pMyPlot, pOtherPlot,
+			bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	VALIDATE_OBJECT();
+	const CvPlot* target = pOtherPlot ? pOtherPlot : (pOtherUnit ? pOtherUnit->plot() : (pCity ? pCity->plot() : NULL));
+	const CvStackingStrengthCache::Key key = MakeStackStrengthKey(1, this, pOtherUnit, pCity,
+		pMyPlot ? pMyPlot : plot(), target, bAttacking, bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	int result;
+	if (CvStackingStrengthCache::Lookup(key, generation, result))
+		return result;
+	result = GetMaxRangedCombatStrengthUncached(pOtherUnit, pCity, bAttacking, pMyPlot, pOtherPlot,
+		bIgnoreUnitAdjacencyBoni, bQuickAndDirty, iAssumeExtraDamage, iAssumeExtraOtherDamage);
+	CvStackingStrengthCache::Store(key, generation, result);
+	return result;
+}
+
+int CvUnit::GetMaxRangedCombatStrengthUncached(const CvUnit* pOtherUnit, const CvCity* pCity, bool bAttacking,
 	const CvPlot* pMyPlot, const CvPlot* pOtherPlot, bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
 {
 	VALIDATE_OBJECT();

@@ -3,6 +3,8 @@
      after editing; use identical configuration on every multiplayer peer. -->
 <GameData>
   <Stacking_Settings>
+    <!-- Exact combat-strength reuse during each tactical search; 0 disables. -->
+    <Row Name="AITacticalStrengthCacheEntries" Value="16384"/>
     <!-- Assault roles, gathering and bounded planning. -->
     <Row Name="AIAssaultBaseUnits" Value="6"/>
     <Row Name="AIAssaultUnitsPerCapacity" Value="2"/>

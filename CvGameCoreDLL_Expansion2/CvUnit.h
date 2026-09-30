@@ -934,6 +934,8 @@ public:
 
 	int GetGenericMeleeStrengthModifier(const CvUnit* pOtherUnit, const CvPlot* pBattlePlot, bool bAttacking,
 									bool bIgnoreUnitAdjacencyBoni, const CvPlot* pFromPlot = NULL, bool bQuickAndDirty = false) const;
+	int GetGenericMeleeStrengthModifierUncached(const CvUnit* pOtherUnit, const CvPlot* pBattlePlot, bool bAttacking,
+									bool bIgnoreUnitAdjacencyBoni, const CvPlot* pFromPlot, bool bQuickAndDirty) const;
 	int GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot, const CvUnit* pDefender, 
 									bool bIgnoreUnitAdjacencyBoni = false, bool bQuickAndDirty = false,
 									int iAssumeSelfDamage = 0, int iAssumeExtraOtherDamage = 0) const;
@@ -950,6 +952,10 @@ public:
 									const CvPlot* pMyPlot = NULL, const CvPlot* pOtherPlot = NULL, 
 									bool bIgnoreUnitAdjacencyBoni = false, bool bQuickAndDirty = false,
 									int iAssumeExtraDamage = 0, int iAssumeExtraOtherDamage = 0) const;
+	int GetMaxRangedCombatStrengthUncached(const CvUnit* pOtherUnit, const CvCity* pCity, bool bAttacking,
+									const CvPlot* pMyPlot, const CvPlot* pOtherPlot,
+									bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty,
+									int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const;
 	int GetAirCombatDamage(const CvUnit* pDefender, const CvCity* pCity, int iGarrisonMaxHP, int& iGarrisonDamage, bool bIncludeRand,
 									int iAssumeSelfDamage = 0, int iAssumeExtraDefenderDamage = 0,
 									const CvPlot* pTargetPlot = NULL, const CvPlot* pFromPlot = NULL, bool bQuickAndDirty = false, bool bOverrideGarrison = false, const CvUnit* pGarrisonOverride = NULL) const;
