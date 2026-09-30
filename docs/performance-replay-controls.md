@@ -84,3 +84,26 @@ Correcting an invalid plan or combat postcondition can intentionally change
 actions; validate the corrected rule and remaining legitimate replans instead.
 One fast turn, one seed, or one isolated cache microbenchmark is not a general
 late-game performance result. Retain slow cases and unsuccessful experiments.
+
+## Engine dispatch experiments
+
+work/watch-gamecore-thread.ps1 observes only a native-recorded GameCore thread
+with exact process creation, thread creation, native session and DLL SHA/path
+binding. It never attaches, suspends, calls Lua or changes priority/affinity.
+It stops on completion signal, identity loss or a bounded duration/sample/byte
+limit. Its ThreadState/WaitReason snapshots can be joined to native tick32
+intervals, but do not identify a particular engine synchronization object.
+The first 100ms sample run consumed12.5 seconds of helper CPU over145 seconds,
+so label such runs diagnostic and keep separate quiet timing controls.
+
+work/gamecore-threading-profile.py supports plan/apply/restore/status against
+an explicitly named config.ini and separate work/test-runs profile directory.
+Apply requires its original SHA and game-closed checks. The only modification
+is GameCoreThreadingUsesJobManager0→1; backups retain every other byte. Restore
+requires the exact applied or original bytes and refuses unrelated changes.
+Keep EnableGameCoreThreading1, view, save, DLL, mods and all other options fixed.
+
+Job-manager workers may migrate thread IDs; missing same-thread gap records are
+lost instrumentation coverage, not evidence of zero waits. Compare complete
+native windows and retained behavior/censuses, and inspect thread distributions.
+Always close the exact game normally and restore the config after the test.

@@ -323,3 +323,63 @@ support-fire base and ignored-argument shortcuts, and preserves scripted city
 blockade callbacks by bypassing cache when movement events are enabled. Offline
 actual-source and related regressions8,360,158 checks passed; native equivalence
 against57 and speed remain to be measured. No search or cache capacity increase.
+
+## DLL58 ranged cache and next engine wait test
+
+Commit b977a7a0b built Release-5.4.6-58-gb977a7a0b Clean in
+work/msvc-output/Release/20260930-234959 (72.796s, 179 TUs).
+DLL E53BEC3BECF4B3C2E5633632000370D5AA7B93C543AE8A3AD4F0FB5D39EE4797.
+perf-d58-standard-full-logging completed and quit normally; native
+Stacking-20260930T230011-989-p22880-r1. All 508 retained semantic events
+(333 PLAN, 174 COMBAT_SUMMARY, one CITY_CAPTURE) and before/after censuses
+match DLL57 exactly. T252 44.625s / PLAN14.017s; T253 96.140s / PLAN60.123s.
+The return-adjacent T253 window is heavier; T252 is the steady observer window.
+Neither meets the requested <30s target.
+
+T253 ranged strength misses declined 3,721,776 to 636,315; total strength
+cache evictions 3,376,480 to 54,191. About 63.2 million strength queries and
+21.2 million danger hits remain. T252 PLAN timing is effectively unchanged.
+The exact reuse is validated for this replay, not a universal speed guarantee.
+
+A separate DLL58 run, perf-d58-thread-state-diagnostic, now records bounded
+same-user OS thread-state snapshots. It includes observer-helper overhead and
+must not be mixed with quiet performance control measurements. No attach,
+suspend, Lua, affinity/priority change, or ETW recording is used by that helper.
+Current normal config hash remains 04B4AAA0A9360CADBB8EF0DA277441A11AF95DD50BFA8334D3BC179B29B627F3;
+GameCoreThreadingUsesJobManager is still 0. A backed-up one-setting test is
+being prepared only after understanding the observed dispatch gaps.
+
+The dedicated-thread OS diagnostic has now completed and quit normally. Its
+508 retained events/censuses match quiet58. Across63 pending windows totaling
+27.056s,232 sample points fell inside;228 were Wait/Suspended,4 Running at
+boundaries. Excluding sampling/boundary uncertainty gives211/211 Suspended.
+No inside sample was Ready or ExecutionDelay. This supports actual GameCore
+suspension between updates, not the identity of the suspending caller/policy.
+See perf-d58-thread-state-diagnostic/thread-gap-findings.md and correlation JSON.
+
+A container-only VC9 prototype passed433,010 differential checks with identical
+entry caps, FIFO evictions, full-key equality, values and stats. Synthetic hit
+loops are1.8x faster, but at the observed63.2M strength hits this suggests only
+about2.2s cache-only saving; peak requested allocation rises1.75→2.69MB during
+vector growth. It remains an ignored experiment, not production code. A sampled
+native scorer/danger profile is a better next step than assuming this removes
+the remaining60-second tactical search cost.
+
+## DLL58 job-manager comparison (configuration restored)
+
+One exact byte changed GameCoreThreadingUsesJobManager0→1, with
+EnableGameCoreThreading1 and every other config byte unchanged. Applied SHA
+93525313A52F9C11C29C58069329C6AE9CAB902EFB399CEA3FF071A2F11F3CEE.
+The profile backup is work/test-runs/job-manager-profile-d58. Quiet run
+perf-d58-job-manager, native Stacking-20260930T231633-829-p39792-r1,
+completed254 and quit normally; all508 events and censuses match quiet58.
+T25238.453s/PLAN13.031s; T25384.985s/PLAN55.409s. Compare quiet dedicated-thread
+58:44.625/14.017 and96.140/60.123. Both search and outside-search time differ,
+so one pair does not isolate scheduler benefit from CPU/run variation.
+
+Original config bytes were restored after game39792/service shutdown; SHA
+04B4AAA0A9360CADBB8EF0DA277441A11AF95DD50BFA8334D3BC179B29B627F3.
+No permanent engine setting change has been retained. Thread distribution and
+same-thread timing coverage must be reviewed before attributing the change.
+Next diagnostic build samples tactical scorer/danger costs with fixed per-PLAN
+counters and bounded timing; it does not alter search limits or scoring.
