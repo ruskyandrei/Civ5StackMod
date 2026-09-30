@@ -76,7 +76,7 @@ Forecast maps now isolate the owning thread and discard entries/results across s
 
 The native comparisons on the preserved save are:
 
-| Build | Full turn 276 | Tactical searches | Worst search |
+| Build | Full turn 276 | PLAN timer total | Longest PLAN |
 | --- | ---: | ---: | ---: |
 | DLL31 | 155.687s | 135.557s | 49.302s |
 | DLL35 | 74.938s | 55.141s | 19.566s |
@@ -86,4 +86,6 @@ The native comparisons on the preserved save are:
 
 DLL39 clears the requested 30-second threshold on both runs of this recorded round, about 61% faster than DLL35 and 81% faster than DLL31. Every comparison, including the repeat, retains the same 289 planner/compact-combat/capture records, excluding timing, and the same 766 final unit/city census rows (694 units and 72 cities). This is evidence for one saved position repeated twice, not a guarantee for every later campaign. The original manual save remains unchanged. Both DLL39 runs stopped at turn 277, closed normally and produced no new crash dump; the temperature/progress guards disarmed on completion without a cutoff. Replay sources, results, native logs, health samples and comparisons are retained under `work/test-runs/performance-20260930-dll39` and `work/test-runs/performance-20260930-dll39-repeat`.
 
-Approximately 18.3 seconds of DLL39's full round is outside the recorded tactical searches: 6.3 seconds inside first tactical/homeland passes and 12.0 seconds outside those pass timers. Existing records cannot split that latter time reliably among player preparation, economy/diplomacy, later passes and scheduling. Before broad further optimization, add or use narrow stage timing. The remaining source-protector penalty hoist and path-key copies are possible exact optimizations, but fresh campaign verification of siege/capture/reinforcement behavior is now the recommended priority; retain this replay as a performance regression check.
+The table sums the existing PLAN duration records. The separate finer PLAN_PERF search phase totals can differ slightly; for the repeat, that total is 10.752s. These overlapping timers must not be added together.
+
+Approximately 18.3 seconds of DLL39's full round is outside the recorded PLAN durations: 6.3 seconds inside first tactical/homeland passes and 12.0 seconds outside those pass timers. Existing records cannot split that latter time reliably among player preparation, economy/diplomacy, later passes and scheduling. Before broad further optimization, add or use narrow stage timing. The remaining source-protector penalty hoist and path-key copies are possible exact optimizations, but fresh campaign verification of siege/capture/reinforcement behavior is now the recommended priority; retain this replay as a performance regression check.
