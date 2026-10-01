@@ -17,10 +17,37 @@ namespace CvStackingStrengthCache
 		{
 			size_t operator()(const Key& key) const
 			{
-				size_t result = 0;
-				for (size_t i = 0; i < sizeof(key.values) / sizeof(key.values[0]); ++i)
-					result ^= (size_t)key.values[i] + 0x9e3779b9 + (result << 6) + (result >> 2);
-				return result;
+				// Four independent full-word lanes shorten the serial dependency
+				// chain. Every input bit is mixed; full-key equality is unchanged.
+				unsigned int v1 = 0x9e3779b1u + 0x85ebca77u;
+				unsigned int v2 = 0x85ebca77u, v3 = 0u, v4 = 0u - 0x9e3779b1u;
+				const size_t words = sizeof(key.values) / sizeof(key.values[0]);
+				size_t i = 0;
+				for (; i + 4 <= words; i += 4)
+				{
+					v1 = (v1 + (unsigned int)key.values[i]) * 0x9e3779b1u;
+					v1 = (v1 << 13) | (v1 >> 19);
+					v2 = (v2 + (unsigned int)key.values[i+1]) * 0x85ebca77u;
+					v2 = (v2 << 17) | (v2 >> 15);
+					v3 = (v3 + (unsigned int)key.values[i+2]) * 0xc2b2ae3du;
+					v3 = (v3 << 11) | (v3 >> 21);
+					v4 = (v4 + (unsigned int)key.values[i+3]) * 0x27d4eb2fu;
+					v4 = (v4 << 19) | (v4 >> 13);
+				}
+				unsigned int result = ((v1 << 1) | (v1 >> 31)) + ((v2 << 7) | (v2 >> 25))
+					+ ((v3 << 12) | (v3 >> 20)) + ((v4 << 18) | (v4 >> 14));
+				result += (unsigned int)sizeof(key.values);
+				for (; i < words; ++i)
+				{
+					result += (unsigned int)key.values[i] * 0xc2b2ae3du;
+					result = ((result << 17) | (result >> 15)) * 0x27d4eb2fu;
+				}
+				result ^= result >> 15;
+				result *= 0x85ebca77u;
+				result ^= result >> 13;
+				result *= 0xc2b2ae3du;
+				result ^= result >> 16;
+				return (size_t)result;
 			}
 		};
 		// Indices survive vector growth. The ring replaces only the oldest slot;

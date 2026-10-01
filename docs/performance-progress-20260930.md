@@ -635,3 +635,53 @@ B045482865CB7F1F6CA2F5B8256C9516862AF532AF4C1DBEB6381D8C2882F41A.
 Evidence: `perf-d78-inline-finish-off-251-255/comparison-d77.json`, phase reports
 and normal-exit proof. The target remains unmet; the slower controlled turn
 still takes about74seconds.
+
+## DLL79 shared-packet native result
+
+The corrected `e0d85052b` build completed251→255 with all699 recorded actions
+and nonempty censuses matching78. Interior252 took35.953s (PLAN10.941s),253
+72.891s (PLAN45.266s), versus35.906s/73.969s for78. The slower turn saves
+about1.1s in this pair; repeatable or general benefit is not established.
+
+At253,197,339 shared-result hits coexist with105,176 additional scalar misses
+and333,928 additional evictions. Local-batch reuses decrease41,734→28,187.
+The same table peaks at6000 entries, with maximum payload623,952bytes versus
+623,624. Sharing is real, but added cache pressure limits its gain. Per-search
+counter sums and coarse search timings are not independent exclusive CPU
+measurements. `outcomeBuilds` now includes direct packet builds; it cannot be
+compared as a local-only build counter across79. Missing old packet counters
+remain unknown in the reader.
+
+Full build initially caught the source-owner integer→`PlayerTypes` conversion;
+the explicit cast corrected it. A separate7-check fixture uses the actual enum
+and player accessor signature and rejects the pre-fix helper. The amended local
+commit retains11,784 production-bound numerical/storage checks and100 parser
+checks. Corrected full build66.062s, DLL
+3269ABF3379207808138F0B22B4BF19909B07DF9341CFF61AF1C95F9A290F056,
+under `work/msvc-output/Release/20261001-054342`. The exact game/service closed
+normally at04:52:32 UTC; no crash or safety cutoff occurred.
+
+Evidence: `perf-d79-shared-packets-off-251-255/comparison-d78.json`, phase reports,
+`cache-comparison-d78.json`/`.md`, and normal-exit proof. The next compiler trial
+keeps this source and all controls fixed while enabling the Release project's
+existing whole-program/link-time optimization through the direct builder.
+It has a bounded process/temperature monitor and must pass the same native
+comparison before acceptance. Target below30s remains unmet.
+
+## Bounded same79 compiler experiment
+
+The GL/LTCG trial compiled its source/PCH and reached linking under
+`work/msvc-output/Release/20261001-055519`. The linker accumulated4.766s of CPU
+and about204MB private memory, then made no log/CPU progress. The monitor
+stopped the verified owned launcher/linker at04:57:46 UTC after120s without
+progress (146.609s total). There is no complete candidate DLL/PDB or native
+performance result. No shared PDB service was stopped and no retry was made.
+The process inventory confirms no remaining cl/link/game processes. The later
+read-only thread diagnostic found the linker already exited and records that
+refusal rather than inventing a wait cause.
+
+Evidence: `build-d79-ltcg-trial/monitor-result.json`, `build-monitor.jsonl` and
+builder logs. The earlier Zi hypothesis did not explain or resolve this Z7
+attempt. Normal tested79 remains installed; the next separate source candidate
+changes only strength-cache hashing while retaining full-key equality/FIFO and
+all guards. Native ROI is pending.

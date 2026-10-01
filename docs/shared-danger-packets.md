@@ -67,6 +67,12 @@ and computation, scripted fallbacks, nesting, foreign threads and new packet
 store allocation failure. Legacy scalar allocation-failure behavior is not
 claimed improved.
 
+A separate native type gate uses the actual PlayerTypes enum and
+CvPlayerAI::getPlayer declaration. Seven checks pass; its pre-fix control,
+which omits the raw source owner's enum cast, must fail VC9 compilation with
+C2664. This catches the type distinction intentionally substituted by the
+larger mathematical fixture's engine services.
+
 Strict `--production` mode checks all three adopted whole-file hashes before
 compiling current code. Every control body is taken from frozen DLL77 commit
 `cf8f842e2733841255a1d5bc741e4d95a387299b`; it cannot silently compare the
@@ -83,6 +89,12 @@ observations and cannot be multiplied by the diagnostic stride to predict
 saved time. The formatter check verifies 36 arguments for 36 fields and a
 worst numeric message of 1,046 bytes below the existing 3,072-byte bound.
 
+The existing `outcomeBuilds` field includes direct packet builds from79 onward;
+earlier versions counted local-batch builds only. `packetBuilds` is a subset,
+so these counters must not be added or compared as identical local-only work.
+The comparison helper reports their raw observed fields with that version
+boundary explicit.
+
 ## Reproduction
 
 Run from the repository root. The retained staging helpers reconstruct the
@@ -98,6 +110,7 @@ Required source prerequisites are:
 - `work/stack-danger-cache-descriptor.cpp`
 - `work/stage-shared-danger-packet.py`
 - `work/test-shared-packet-native-stage.py`
+- `work/test-shared-packet-native-types.py`
 - `work/test-shared-danger-packet.py`
 - `work/shared-danger-packet-experiment.h`
 - `work/test-packet-probe.py`
@@ -114,6 +127,7 @@ cache implementation without revisiting its own pinned assertions.
 python -B work/shared-packet-storage-stage.py
 python -B work/stage-shared-danger-packet.py
 python -B work/test-shared-packet-native-stage.py --production
+python -B work/test-shared-packet-native-types.py
 python -B work/test-packet-probe-profile.py
 ```
 
