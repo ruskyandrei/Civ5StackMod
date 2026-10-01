@@ -685,3 +685,19 @@ builder logs. The earlier Zi hypothesis did not explain or resolve this Z7
 attempt. Normal tested79 remains installed; the next separate source candidate
 changes only strength-cache hashing while retaining full-key equality/FIFO and
 all guards. Native ROI is pending.
+
+## DLL80 full-word hash native result
+
+`dc71d1955` completed the same OFF251→255 replay and matched all699 recorded
+actions and nonempty censuses from79. Interior252 took35.750s (PLAN10.886s),
+253 took72.750s (PLAN44.987s), versus35.953s/72.891s for79. These are small
+improvements in one pair; the isolated30% hash improvement does not translate
+into a large whole-turn win. The normal compiler/controls remain unchanged.
+
+Build65.906s under `work/msvc-output/Release/20261001-060242`; DLL
+3A7B4EA2F72F104753D39ED4ADE9B8ABB1D866D3356AC937BCB4DEE955C71E09.
+The exact game/service closed normally at05:11:34 UTC. Evidence:
+`perf-d80-strength-hash-off-251-255/comparison-d79.json`, phase reports and
+normal-exit proof. Best controlled pair is now35.750s/72.750s, still above
+the30s goal. Next work-only candidates reduce packet seeding where a local
+batch already provides reuse, and add opt-in raw path-danger measurements.

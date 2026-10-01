@@ -8611,12 +8611,14 @@ static bool ResolveStackDangerPacket(StackDangerPacketQuery& query,const CvUnit*
  if(outcome)
  {
   computed=outcome->TryGet(unit,plot,roster,friendly,enemy,result);
-  if(computed&&outcome->ready){finalDamage=&outcome->finalDamage;cityCanFall=outcome->cityCanFall;}
-  else if(computed)
+  if(computed)
   {
-   // A computed local ledger was released on invalidation/budget failure.
-   // Retain this one query value; never replay the original callbacks/math.
-   query.scalarValid=ValidateStackDangerPacket(query,unit,plot,revision,scene);++gStackPacketBypasses;return true;
+   // The lexical batch already supplies subsequent member queries. Retain
+   // this one value and its queried scalar entry without seeding a packet.
+   // Released/invalidated builds must never replay their original math.
+   query.scalarValid=ValidateStackDangerPacket(query,unit,plot,revision,scene);
+   if(!outcome->ready||!query.scalarValid)++gStackPacketBypasses;
+   return true;
   }
  }
  if(!computed)
@@ -8857,9 +8859,10 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   ++gStackDangerMisses;
  PacketProbeCall packetProbeCall(unit,plot,candidates,friendlyDamage,enemyDamage,key,cacheable); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
  int result = 0;
- StackDangerPacketQuery packetQuery(cacheable);
+ const bool tryPacket = cacheable && (!outcome || !outcome->ready);
+ StackDangerPacketQuery packetQuery(tryPacket);
  CvStackingDiagnostics::PlanSampleScope leafSample(CvStackingDiagnostics::PLAN_DANGER_LEAF); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
- const bool packetResolved = cacheable && ResolveStackDangerPacket(packetQuery,unit,plot,candidates,friendlyDamage,enemyDamage,key,revision,scene,outcome,result);
+ const bool packetResolved = tryPacket && ResolveStackDangerPacket(packetQuery,unit,plot,candidates,friendlyDamage,enemyDamage,key,revision,scene,outcome,result);
  if (!packetResolved)
  {
  if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
