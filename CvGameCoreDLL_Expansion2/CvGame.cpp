@@ -662,7 +662,7 @@ void CvGame::InitPlayers()
 		const PlayerTypes eLoopPlayer = static_cast<PlayerTypes>(iI);
 		PlayerColorTypes ePlayerColor = NO_PLAYERCOLOR;
 		SlotStatus eStatus = CvPreGame::slotStatus(eLoopPlayer);
-		// Fix Really Advanced Startup mod setting major slots to closed
+		// Fix Really Advanced Setup mod setting unused slots to closed slots without any civilization assigned
 		if (eStatus == SS_CLOSED)
 		{
 			CvPreGame::setTeamType(eLoopPlayer, OBSERVER_TEAM);
@@ -799,6 +799,12 @@ void CvGame::InitPlayers()
 			// Make sure the AI has the proper handicap.
 			if (CvPreGame::slotStatus(eLoopPlayer) == SS_COMPUTER)
 				CvPreGame::setHandicap(eLoopPlayer, eAIHandicap);
+
+			// Fix slot claims not being set to unassigned when a player is removed in Advanced Setup
+			if (CvPreGame::slotStatus(eLoopPlayer) == SS_OBSERVER && CvPreGame::slotClaim(eLoopPlayer) == SLOTCLAIM_ASSIGNED)
+			{
+				CvPreGame::setSlotClaim(eLoopPlayer, SLOTCLAIM_UNASSIGNED);
+			}
 		}
 		// Minor civs
 		else if (iI < MAX_CIV_PLAYERS)
@@ -6523,22 +6529,18 @@ bool CvGame::CanPlayerAttemptDominationVictory(PlayerTypes ePlayer, PlayerTypes 
 				if (pCapitalPlot == NULL || !pCapitalPlot->isCity())
 					continue;
 
+				// Ignore capitals we already have
 				PlayerTypes eCapitalOwner = pCapitalPlot->getPlotCity()->GetOwnerForDominationVictory();
+				if (GET_PLAYER(ePlayer).getTeam() == GET_PLAYER(eCapitalOwner).getTeam())
+					continue;
 
 				// Not already at war?
 				if (!GET_PLAYER(eCapitalOwner).IsAtWarWith(ePlayer))
-				{
 					return false;
-				}
 
 				// Already at war, but making peace with this player would block us from achieving Domination Victory?
-				if (eMakePeacePlayer != NO_PLAYER)
-				{
-					if (GET_PLAYER(eCapitalOwner).getTeam() == GET_PLAYER(eMakePeacePlayer).getTeam())
-					{
-						return false;
-					}
-				}
+				if (eMakePeacePlayer != NO_PLAYER && GET_PLAYER(eCapitalOwner).getTeam() == GET_PLAYER(eMakePeacePlayer).getTeam())
+					return false;
 			}
 		}
 	}
@@ -6577,7 +6579,10 @@ bool CvGame::CanPlayerAttemptDominationVictory(PlayerTypes ePlayer, PlayerTypes 
 				if (pCapitalPlot == NULL || !pCapitalPlot->isCity())
 					continue;
 
+				// Ignore capitals we already have
 				PlayerTypes eCapitalOwner = pCapitalPlot->getPlotCity()->GetOwnerForDominationVictory();
+				if (GET_PLAYER(ePlayer).getTeam() == GET_PLAYER(eCapitalOwner).getTeam())
+					continue;
 
 				// It's only humans we can't make peace with ...
 				if (!GET_PLAYER(eCapitalOwner).isHuman(ISHUMAN_MECHANICS))
@@ -6585,18 +6590,11 @@ bool CvGame::CanPlayerAttemptDominationVictory(PlayerTypes ePlayer, PlayerTypes 
 
 				// Not already at war?
 				if (!GET_PLAYER(eCapitalOwner).IsAtWarWith(ePlayer))
-				{
 					return false;
-				}
 
 				// Already at war, but making peace with this player would block us from achieving Domination Victory?
-				if (eMakePeacePlayer != NO_PLAYER)
-				{
-					if (GET_PLAYER(eCapitalOwner).getTeam() == GET_PLAYER(eMakePeacePlayer).getTeam())
-					{
-						return false;
-					}
-				}
+				if (eMakePeacePlayer != NO_PLAYER && GET_PLAYER(eCapitalOwner).getTeam() == GET_PLAYER(eMakePeacePlayer).getTeam())
+					return false;
 			}
 		}
 	}
@@ -10349,6 +10347,11 @@ void CvGame::debugSyncChecksum()
 					iLoop, pLoopUnit->getX(), pLoopUnit->getY(), pLoopUnit->getDamage(), (pLoopUnit->getExperienceTimes100() / 100), pLoopUnit->getLevel() ).c_str() );
 		}
 	}
+
+	pLog->Close();
+	//the turn number is part of the filename, so this log is never requested again.
+	//without this the manager keeps it - and its grown write buffer - until shutdown.
+	LOGFILEMGR.DeleteLog( pLog );
 }
 
 
@@ -13777,6 +13780,11 @@ void CvGame::SetClosestCityMapDirty()
 
 				pLog->Msg(dump.c_str());
 			}
+
+			pLog->Close();
+			//the turn number is part of the filename, so this log is never requested again.
+			//without this the manager keeps it - and its grown write buffer - until shutdown.
+			LOGFILEMGR.DeleteLog( pLog );
 		}
 	}
 }

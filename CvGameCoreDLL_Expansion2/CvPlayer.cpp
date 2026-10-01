@@ -34524,7 +34524,7 @@ void CvPlayer::CheckForMurder(PlayerTypes ePossibleVictimPlayer)
 		if (bMajorVictim)
 		{
 			// Leader pops up and whines
-			if (isMajorCiv() && !CvPreGame::isNetworkMultiplayerGame() && !kPossibleVictimPlayer.isHuman(ISHUMAN_AI_DIPLOMACY)) // Not humans or in MP
+			if (isMajorCiv() && !CvPreGame::isNetworkMultiplayerGame() && !kPossibleVictimPlayer.isHuman(ISHUMAN_AI_DIPLOMACY) && GC.getGame().getAIAutoPlay() == 0) // Not humans, in MP, or during autoplay
 			{
 				kPossibleVictimPlayer.GetDiplomacyAI()->DoKilledByPlayer(GetID());
 			}
@@ -47809,9 +47809,15 @@ CvPlot* CvPlayer::GetBestSettlePlot(CvUnit* pUnit, CvAIOperation* pOpToIgnore, b
 		std::stringstream ss;
 		ss << "CitySites_" << getCivilizationAdjective() << "_" << std::setfill('0') << std::setw(3) << GC.getGame().getGameTurn() << ".txt";
 		FILogFile* pLog=LOGFILEMGR.GetLog( ss.str().c_str(), FILogFile::kDontTimeStamp );
-		pLog->Msg( "#x,y,terrain,plotype,feature,owner,area,revealed,danger,fertility,distancescale,value,comments\n" );
-		pLog->Msg( dump.str().c_str() );
-		pLog->Close();
+		if (pLog)
+		{
+			pLog->Msg( "#x,y,terrain,plotype,feature,owner,area,revealed,danger,fertility,distancescale,value,comments\n" );
+			pLog->Msg( dump.str().c_str() );
+			pLog->Close();
+			//the turn number is part of the filename, so this log is never requested again.
+			//without this the manager keeps it - and its grown write buffer - until shutdown.
+			LOGFILEMGR.DeleteLog( pLog );
+		}
 	}
 
 	if (vSettlePlots.empty())
