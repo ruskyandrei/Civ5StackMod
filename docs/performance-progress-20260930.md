@@ -469,3 +469,31 @@ unchanged. Allocation counts decrease in isolated repeated-copy fixtures;
 native timing/RSS and retained action comparison remain to be measured.
 See `docs/flat-tactical-plot-scores.md`. Broad nested CoW retention is deferred
 because actor/plot caps do not tightly bound retained history and nested vectors.
+
+## DLL65 native results and rejected DLL66 history trial
+
+DLL65 OFF completed the same251→255 replay with all699 ordered records and
+nonempty before/after world censuses equal to64/60. Turn252 took38.016s
+(PLAN12.718s);253 took81.938s (PLAN54.071s). Its sampling-ON control retained
+the same records/censuses and took38.172s/82.437s (PLAN12.772s/54.151s).
+Both games closed normally. This modest single-pair improvement does not yet
+meet the30s goal or establish performance on other maps and late turns.
+
+The denser ON profiler parsed116/143 plans without schema errors. Turn253's
+known-plan estimates include next assignments51.24s, preferred assignments
+47.34s, danger leaves26.80s and key preparation6.52s. These are overlapping
+inclusive estimates with unsampled work; subtracting parent and child estimates
+does not produce exclusive time. Damage-math instrumentation also has a
+meaningful floor. Computation inside tactical search remains the main target.
+
+DLL66 (`a44557171`) reused shared history prefixes only in the protected main
+search. Its111,472 actual-source regression checks passed; all699 native
+records/censuses again matched65. Native252 took38.250s (PLAN12.784s),253
+82.640s (PLAN54.567s), providing no measured improvement. It was reverted in
+`8aac77ca7` rather than retaining added complexity. The failed trial remains
+available in its commit and `perf-d66-shared-history-off-251-255` evidence.
+
+The next candidate mirrors24 hot XML settings into value/presence arrays,
+preserving string lookup and reentrant loader behavior. Its3,985 production
+checks and24,075 reentrant probes passed. Synthetic savings are modest;
+native performance and699-event/census comparison remain required.

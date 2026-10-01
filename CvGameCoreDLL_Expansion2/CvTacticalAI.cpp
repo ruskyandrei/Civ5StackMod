@@ -2856,14 +2856,14 @@ struct PrSortByUnitId
 // Disabling preferences must not disable occupancy or combat prediction.
 static bool StackPreferencesEnabled()
 {
- return CvStacking::IsEnabled() && CvStacking::GetInt("AIEnabled", 1) != 0;
+ return CvStacking::IsEnabled() && CvStacking::GetIntByKey(CvStacking::HOT_AIEnabled, 1) != 0;
 }
 
 static bool CanApproachInProtectedStack(const CvUnit* unit, const CvPlot* destination, int destinationDanger);
 
 static int StackCollateralWeight()
 {
- return StackPreferencesEnabled() ? CvStacking::GetInt("AIStackCollateralWeight", 100) : 100;
+ return StackPreferencesEnabled() ? CvStacking::GetIntByKey(CvStacking::HOT_AIStackCollateralWeight, 100) : 100;
 }
 
 static int StackCollateralValue(const CvUnit* attacker, const CvPlot* plot, const CvUnit* primary, int primaryHit, int garrisonHit = 0)
@@ -8293,7 +8293,7 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   key.state.push_back(plot->GetPlotIndex());
   key.state.push_back(friendlyDamage.GetValue(unit->GetID()));
   key.state.push_back(CvStacking::GetCityProtection(plot->getPlotCity()));
-  AppendStackCandidates(key, candidates, friendlyDamage, !plot->isCity() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0);
+  AppendStackCandidates(key, candidates, friendlyDamage, !plot->isCity() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0);
   AppendStackDamageProjected(key, enemyDamage, unit, plot);
   cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
   StackDangerForecasts::const_iterator cached = cacheable ? gStackDangerForecasts.find(key) : gStackDangerForecasts.end();
@@ -8331,7 +8331,7 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
   key.state.push_back(target->GetPlotIndex());
   key.state.push_back(ranged ? 1 : 0);
   key.state.push_back(attackerDamage);
-  AppendStackCandidates(key, candidates, damage, CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0);
+  AppendStackCandidates(key, candidates, damage, CvStacking::IsEnabled() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0);
   cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
   StackDefenderForecasts::const_iterator cached = cacheable ? gStackDefenderForecasts.find(key) : gStackDefenderForecasts.end();
   if (cacheable && cached != gStackDefenderForecasts.end())
@@ -8615,7 +8615,7 @@ static unsigned char GetStackAttackThreatFlags(const CvUnit* unit, const CvPlot*
  {
   if (!(flags & 1) && CvStacking::CanFlank(attackers[i]))
    flags |= 1;
-  if (!(flags & 2) && CvStacking::GetCollateralTargetLimit(attackers[i]) > 0 && CvStacking::GetInt("CollateralPercent", 20) > 0)
+  if (!(flags & 2) && CvStacking::GetCollateralTargetLimit(attackers[i]) > 0 && CvStacking::GetIntByKey(CvStacking::HOT_CollateralPercent, 20) > 0)
    flags |= 2;
   if (flags == 3)
    break;
@@ -8667,16 +8667,16 @@ static int ScoreStackPositionMembers(const CvUnit* unit, const CvPlot* plot, con
   alone = min(alone, vulnerable->GetMaxHitPoints());
   protectedDamage = min(protectedDamage, vulnerable->GetMaxHitPoints());
   int saved = max(0, alone - protectedDamage);
-  score += saved * CvStacking::GetInt("AIStackProtectionWeight", 20) / max(1, vulnerable->GetMaxHitPoints());
+  score += saved * CvStacking::GetIntByKey(CvStacking::HOT_AIStackProtectionWeight, 20) / max(1, vulnerable->GetMaxHitPoints());
   if (saved > 0 && ((unit == vulnerable && otherProtectors > 0) || (!unit->IsCanAttackRanged() && otherProtectors == 0)))
-   score += CvStacking::GetInt("AIStackJoinBonus", 12);
+   score += CvStacking::GetIntByKey(CvStacking::HOT_AIStackJoinBonus, 12);
   if (cavalryThreat && antiCavalry)
-   score += CvStacking::GetInt("AIStackAntiFlankBonus", 12);
+   score += CvStacking::GetIntByKey(CvStacking::HOT_AIStackAntiFlankBonus, 12);
  }
  if (collateralThreat)
  {
   int vulnerableCount = 0;
-  const int floorPercent = CvStacking::GetInt("CollateralHPFloorPercent", 50);
+  const int floorPercent = CvStacking::GetIntByKey(CvStacking::HOT_CollateralHPFloorPercent, 50);
   for (size_t i = 0; i < candidates.size(); ++i)
   {
    const CvUnit* member = candidates[i];
@@ -8687,7 +8687,7 @@ static int ScoreStackPositionMembers(const CvUnit* unit, const CvPlot* plot, con
    if (member->GetCurrHitPoints() - damage.GetValue(member->GetID()) > floorHP)
     ++vulnerableCount;
   }
-  int penalty = max(0, vulnerableCount - CvStacking::GetInt("AIStackConcentrationFreeUnits", 2)) * CvStacking::GetInt("AIStackConcentrationPenalty", 10);
+  int penalty = max(0, vulnerableCount - CvStacking::GetIntByKey(CvStacking::HOT_AIStackConcentrationFreeUnits, 2)) * CvStacking::GetIntByKey(CvStacking::HOT_AIStackConcentrationPenalty, 10);
   penalty = penalty * (100 - CvStacking::GetCityProtection(plot->getPlotCity())) / 100;
   score -= penalty;
  }
@@ -9613,7 +9613,7 @@ static int CalculateLeavingStackProtectionScore(const SUnitStats& unit, const Cv
   const int oldDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, before, damage, assumedPosition.GetUnitDamageDealt(), &beforeOutcome));
   const int newDanger = min(ranged->GetMaxHitPoints(), GetCachedStackDanger(ranged, source, after, damage, assumedPosition.GetUnitDamageDealt(), &afterOutcome));
   if (newDanger > oldDanger)
-   score -= (newDanger - oldDanger) * CvStacking::GetInt("AIStackLeaveProtectorPenalty", 30) / max(1, ranged->GetMaxHitPoints());
+   score -= (newDanger - oldDanger) * CvStacking::GetIntByKey(CvStacking::HOT_AIStackLeaveProtectorPenalty, 30) / max(1, ranged->GetMaxHitPoints());
  }
  return score;
 }

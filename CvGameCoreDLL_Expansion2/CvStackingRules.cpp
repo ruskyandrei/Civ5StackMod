@@ -216,6 +216,33 @@ namespace
 		{"AIStackPairRecruitRange", 1, 0, 10},
 		{"UIStackResultDelayMilliseconds", 250, 0, 10000}
 	};
+	const char* const HOT_SETTING_NAMES[CvStacking::HOT_SETTING_COUNT] =
+	{
+		"DefenderSelectionEnabled",
+		"FlankingEnabled",
+		"CollateralEnabled",
+		"DisableCityRangedAttacks",
+		"AIEnabled",
+		"BaseCapacity",
+		"MaximumCapacity",
+		"LandCapacityBonus",
+		"SeaCapacityBonus",
+		"CityCapacityBonus",
+		"MinorCapacityBonus",
+		"BarbarianCapacityBonus",
+		"CollateralPercent",
+		"CollateralHPFloorPercent",
+		"CollateralMinimumDamage",
+		"CityProtectionMaximumPercent",
+		"CityProtectionScalesWithHP",
+		"AIStackCollateralWeight",
+		"AIStackProtectionWeight",
+		"AIStackJoinBonus",
+		"AIStackAntiFlankBonus",
+		"AIStackConcentrationFreeUnits",
+		"AIStackConcentrationPenalty",
+		"AIStackLeaveProtectorPenalty",
+	};
 	// Names stored here are process-lifetime literals from SETTINGS (or the
 	// missing-schema "Enabled" literal). Compare text, never pointer addresses,
 	// so callers can use Lua/database-owned names without temporary strings.
@@ -251,6 +278,9 @@ namespace
 	{
 		bool loaded;
 		bool enabled;
+		bool hotReady;
+		int hotValues[CvStacking::HOT_SETTING_COUNT];
+		bool hotPresent[CvStacking::HOT_SETTING_COUNT];
 		SettingMap settings;
 		std::vector<std::pair<int, int> > technologies;
 		RoleMap combatRoles;
@@ -261,12 +291,27 @@ namespace
 		std::map<int, int> buildings;
 		std::map<int, int> effectiveBuildingProtection;
 		std::map<int, int> targetDomains;
-		RulesCache() : loaded(false), enabled(false) {}
+		RulesCache() : loaded(false), enabled(false), hotReady(false)
+		{
+			for (size_t i = 0; i < CvStacking::HOT_SETTING_COUNT; ++i)
+			{ hotValues[i] = 0; hotPresent[i] = false; }
+		}
 	};
 	RulesCache& Cache()
 	{
 		static RulesCache cache;
 		return cache;
+	}
+	void FinalizeHotSettings(RulesCache& cache)
+	{
+		for (size_t i = 0; i < CvStacking::HOT_SETTING_COUNT; ++i)
+		{
+			SettingMap::const_iterator found = cache.settings.find(HOT_SETTING_NAMES[i]);
+			cache.hotPresent[i] = found != cache.settings.end();
+			cache.hotValues[i] = cache.hotPresent[i] ? found->second : 0;
+		}
+		// Reentrant loader queries keep the original string lookup until here.
+		cache.hotReady = cache.loaded;
 	}
 	int Clamp(int value, int minimum, int maximum)
 	{
@@ -351,6 +396,7 @@ namespace
 		{
 			cache.settings["Enabled"] = 0;
 			cache.enabled = false;
+			FinalizeHotSettings(cache);
 			return;
 		}
 		for (size_t i = 0; i < sizeof(SETTINGS) / sizeof(SETTINGS[0]); ++i)
@@ -406,6 +452,7 @@ namespace
 			cache.effectiveBuildingProtection[it->first] = it->second;
 		LoadValues(db, "Stacking_CollateralDomains", "DomainType", "Domains", "Enabled", cache.targetDomains, 1);
 		CUSTOMLOG("Stacking: loaded XML configuration, enabled=%d, base=%d, maximum=%d, technology rows=%d.", cache.settings["Enabled"], cache.settings["BaseCapacity"], cache.settings["MaximumCapacity"], (int)cache.technologies.size());
+		FinalizeHotSettings(cache);
 	}
 	bool Lookup(const RoleMap& values, int id, StackingRole role, int& result)
 	{
@@ -451,6 +498,15 @@ namespace CvStacking
 		SettingMap::const_iterator it = settings.find(name);
 		return it == settings.end() ? fallback : it->second;
 	}
+	int GetIntByKey(HotSettingKey key, int fallback)
+	{
+		if (key < 0 || key >= HOT_SETTING_COUNT)
+			return GetInt(NULL, fallback);
+		const RulesCache& cache = Cache();
+		if (!cache.hotReady)
+			return GetInt(HOT_SETTING_NAMES[key], fallback);
+		return cache.hotPresent[key] ? cache.hotValues[key] : fallback;
+	}
 	bool IsEnabled()
 	{
 		EnsureCache();
@@ -458,22 +514,22 @@ namespace CvStacking
 	}
 	bool CityRangedAttacksEnabled()
 	{
-		return !IsEnabled() || GetInt("DisableCityRangedAttacks", 1) == 0;
+		return !IsEnabled() || GetIntByKey(HOT_DisableCityRangedAttacks, 1) == 0;
 	}
 	int GetCapacity(PlayerTypes owner, DomainTypes domain, bool inCity)
 	{
 		if (!IsEnabled() || owner == NO_PLAYER || (domain != DOMAIN_LAND && domain != DOMAIN_SEA))
 			return 1;
 		const CvPlayer& player = GET_PLAYER(owner);
-		const int maximum = GetInt("MaximumCapacity", 9);
-		int capacity = GetInt("BaseCapacity", 2);
-		capacity = SaturatingAdd(capacity, GetInt(domain == DOMAIN_LAND ? "LandCapacityBonus" : "SeaCapacityBonus", 0));
+		const int maximum = GetIntByKey(HOT_MaximumCapacity, 9);
+		int capacity = GetIntByKey(HOT_BaseCapacity, 2);
+		capacity = SaturatingAdd(capacity, GetIntByKey(domain == DOMAIN_LAND ? HOT_LandCapacityBonus : HOT_SeaCapacityBonus, 0));
 		if (inCity)
-			capacity = SaturatingAdd(capacity, GetInt("CityCapacityBonus", 0));
+			capacity = SaturatingAdd(capacity, GetIntByKey(HOT_CityCapacityBonus, 0));
 		if (player.isMinorCiv())
-			capacity = SaturatingAdd(capacity, GetInt("MinorCapacityBonus", 0));
+			capacity = SaturatingAdd(capacity, GetIntByKey(HOT_MinorCapacityBonus, 0));
 		if (player.isBarbarian())
-			capacity = SaturatingAdd(capacity, GetInt("BarbarianCapacityBonus", 0));
+			capacity = SaturatingAdd(capacity, GetIntByKey(HOT_BarbarianCapacityBonus, 0));
 		const CvTeamTechs* techs = GET_TEAM(player.getTeam()).GetTeamTechs();
 		const std::vector<std::pair<int, int> >& bonuses = Cache().technologies;
 		for (size_t i = 0; techs && i < bonuses.size(); ++i)
@@ -489,7 +545,7 @@ namespace CvStacking
 	}
 	bool CanFlank(const CvUnit* unit)
 	{
-		return IsEnabled() && GetInt("FlankingEnabled", 1) && unit && unit->IsCombatUnit()
+		return IsEnabled() && GetIntByKey(HOT_FlankingEnabled, 1) && unit && unit->IsCombatUnit()
 			&& unit->getDomainType() == DOMAIN_LAND && !unit->isCargo() && !unit->IsCanAttackRanged() && Role(unit, STACK_ROLE_FLANK) > 0;
 	}
 	bool IsAntiCavalry(const CvUnit* unit)
@@ -502,11 +558,11 @@ namespace CvStacking
 	}
 	int GetCollateralTargetLimit(const CvUnit* unit)
 	{
-		return IsEnabled() && GetInt("CollateralEnabled", 1) && unit ? Role(unit, STACK_ROLE_COLLATERAL_LIMIT) : 0;
+		return IsEnabled() && GetIntByKey(HOT_CollateralEnabled, 1) && unit ? Role(unit, STACK_ROLE_COLLATERAL_LIMIT) : 0;
 	}
 	bool IsCollateralTargetDomain(DomainTypes domain)
 	{
-		if (!IsEnabled() || !GetInt("CollateralEnabled", 1))
+		if (!IsEnabled() || !GetIntByKey(HOT_CollateralEnabled, 1))
 			return false;
 		std::map<int, int>::const_iterator it = Cache().targetDomains.find(domain);
 		return it != Cache().targetDomains.end() && it->second != 0;
@@ -518,7 +574,7 @@ namespace CvStacking
 		// Specific rows replace inherited class values, including zero. Only
 		// database rules are cached: constructed/free/captured buildings are live.
 		int protection = 0;
-		const int maximum = GetInt("CityProtectionMaximumPercent", 90);
+		const int maximum = GetIntByKey(HOT_CityProtectionMaximumPercent, 90);
 		CvCityBuildings* buildings = city->GetCityBuildings();
 		for (std::map<int, int>::const_iterator it = Cache().effectiveBuildingProtection.begin(); it != Cache().effectiveBuildingProtection.end(); ++it)
 		{
@@ -530,6 +586,6 @@ namespace CvStacking
 				break;
 		}
 		return CvStackingAIPolicy::CityProtection(protection, maximum, city->GetMaxHitPoints() - city->getDamage() - max(0,extraCityDamage),
-			city->GetMaxHitPoints(), GetInt("CityProtectionScalesWithHP", 1) != 0);
+			city->GetMaxHitPoints(), GetIntByKey(HOT_CityProtectionScalesWithHP, 1) != 0);
 	}
 }

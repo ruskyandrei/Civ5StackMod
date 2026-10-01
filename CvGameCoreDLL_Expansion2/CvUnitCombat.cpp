@@ -142,7 +142,7 @@ const CvUnit* CvUnitCombat::SelectStackDefender(const CvUnit* pAttacker, const C
 	if (!pFromPlot)
 		pFromPlot = pAttacker->plot();
 
-	const bool bUseStackRules = CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0;
+	const bool bUseStackRules = CvStacking::IsEnabled() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0;
 	const bool bCanFlank = bUseStackRules && !bRangedAttack && CvStacking::CanFlank(pAttacker);
 	bool bHasExposedTarget = false;
 	bool bHasInterceptor = false;
@@ -219,7 +219,7 @@ const CvUnit* CvUnitCombat::SelectStackDefenderForCity(const CvCity* pAttacker, 
 {
  if (!pAttacker || !pTargetPlot)
   return NULL;
- const bool enabled = CvStacking::IsEnabled() && CvStacking::GetInt("DefenderSelectionEnabled", 1) != 0;
+ const bool enabled = CvStacking::IsEnabled() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0;
  const CvUnit* best = NULL;
  bool bestSurvives = false;
  int bestLoss = INT_MAX, bestRemaining = 0, bestMaxHP = 1;
@@ -272,15 +272,15 @@ std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDama
 	int iLimit = min(CvStacking::GetCollateralTargetLimit(pAttacker), MAX_DAMAGE_MEMBER_COUNT);
 	if (iLimit <= 0)
 		return result;
-	int iPercent = max(0, CvStacking::GetInt("CollateralPercent", 20));
+	int iPercent = max(0, CvStacking::GetIntByKey(CvStacking::HOT_CollateralPercent, 20));
 	int iBaseDamage = static_cast<int>((static_cast<int64>(iPrimaryHitDamage) * iPercent) / 100);
 	if (iBaseDamage <= 0)
 		return result;
 	int iProtection = pTargetPlot->isCity() ? CvStacking::GetCityProtection(pTargetPlot->getPlotCity(),iExtraCityDamage) : 0;
 	int iMitigated = static_cast<int>((static_cast<int64>(iBaseDamage) * max(0, 100 - iProtection)) / 100);
 	if (iProtection < 100)
-		iMitigated = max(iMitigated, max(0, CvStacking::GetInt("CollateralMinimumDamage", 1)));
-	int iFloorPercent = min(100, max(0, CvStacking::GetInt("CollateralHPFloorPercent", 50)));
+		iMitigated = max(iMitigated, max(0, CvStacking::GetIntByKey(CvStacking::HOT_CollateralMinimumDamage, 1)));
+	int iFloorPercent = min(100, max(0, CvStacking::GetIntByKey(CvStacking::HOT_CollateralHPFloorPercent, 50)));
 	for (size_t i = 0; i < candidates.size(); ++i)
 	{
 		const CvUnit* pUnit = candidates[i];
