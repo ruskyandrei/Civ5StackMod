@@ -908,3 +908,49 @@ and service20784 closed normally at09:23:12UTC; the session file is absent.
 Temperature/address-space guards stayed within limits. The next candidate is
 the default-off destination-kernel shadow observer mechanically rebased to the
 indexed implementation. It measures repeated work; it does not replace scores.
+
+## DLL91 destination-kernel observation complete
+
+The observer was mechanically rebased against the indexed implementation and
+passed4,026 actual-source checks, with all13 dependent source files bound to the
+control. The83 reader checks and48 phase-reader checks also pass. Original
+numerical kernels and search policy still drive play. No result reuse is active.
+
+Commit `e8b5bd3e6`; build66.890s under
+`work/msvc-output/Release/20261001-103233`. Installed DLL SHA
+`9F6D41D999460B2406C900532257625DB018B4932AE55612DDF5A5054AFD69CE`,
+PDB `E554B556EE5A4D6BD3B11DCA80360504B4BD00C97B1BE881B050A2EC122066DD`.
+Config SHA remains
+`04B4AAA0A9360CADBB8EF0DA277441A11AF95DD50BFA8334D3BC179B29B627F3`.
+
+Both fresh251→255 trials completed normally, with game/service/session absent
+and guards within limits. OFF matched88r2's699 ordered semantic records and
+both censuses; ON matched OFF after explicitly allowing the sampling setting
+difference. OFF252/253 took31.812/58.672s (PLAN8.947/33.812s), compared with
+88r2's31.828/57.531s. That pair does not prove zero disabled-observer overhead.
+ON took31.563/58.719s (PLAN9.030/34.112s); instrumented timing is not a clean
+speed result.
+
+The ON archive contains455 valid probe rows and455 exact SAMPLE joins, no
+invalid records, warnings, segment gaps or truncation. Retained complete unit
+frames repeat635,246 of692,597 footprints (91.7%); stack frames repeat246,130
+of297,087 (82.8%). No result mismatch was observed. Most stack frames take a
+cheap zero-key path:248,685 of297,087. These observations support further work
+but do not predict saved simulations or seconds.
+
+On the slow253 turn, per-row finite-count bounds establish repeated nonzero-key
+unit footprints in165,312–184,581 of194,985 frames (84.8–94.7%). Stack bounds
+are22,281–34,417 of34,523 (64.5–99.7%). They do not identify which repeats
+missed the cache, built outcomes or consumed large amounts of time. Bounded
+metadata eviction, scene clears, whole enemy-ledger overcoverage and incomplete
+mutation-token certification limit interpretation. Timing envelopes overlap;
+no stride multiplication or saved-time estimate is used.
+
+Evidence: `work/test-runs/perf-d91-kernel-probe-off-251-255`, native
+`Stacking-20261001T093926-870-p9560-r1`, normal closure09:42:13UTC;
+`work/test-runs/perf-d91-kernel-probe-on-251-255`, native
+`Stacking-20261001T094727-176-p32544-r1`, normal closure09:50:13UTC.
+Reports include comparisons, phases252/253, `kernel-probes.json`,
+`kernel-repeat-stratification.json/.md` and `normal-exit.json`.
+Next is an actual-source parent-view preparation prototype. The <30s goal
+remains unmet; the best quiet complete heavy-turn result is57.531s.

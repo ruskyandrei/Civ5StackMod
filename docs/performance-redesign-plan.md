@@ -1,11 +1,10 @@
 # Larger DLL performance redesigns
 
 The current objective is below 30 seconds per late-game turn on a standard game,
-then below 20 seconds if practical. It is not achieved. The DLL86 dense-turn253
-control takes about74 seconds, of which about47 seconds are inside tactical
-planning. DLL87 brings those figures to63.5 seconds and39 seconds. Even halving
-the remaining planning would leave roughly44 seconds. Changes outside the
-planner also matter.
+then below 20 seconds if practical. It is not achieved. The quiet DLL88
+dense-turn253 replay takes57.5 seconds, of which about33 seconds are inside
+tactical planning, down from DLL86's74/47 seconds. About24.5 seconds remains
+outside estimated planning. Changes outside the planner also matter.
 
 These timings describe one saved campaign, not all late-game performance. The
 source investigations use DLL86 as a pinned control. DLL87's first matched
@@ -27,12 +26,24 @@ protector can change departure penalties without changing many destinations.
 Policy calls, candidate generation, stable sorting, arithmetic and assignment
 materialization retain their original order.
 
-Start with a bounded, opt-in shadow measurement. The original kernels still
-drive play. Record equal observed input signatures across different states,
-their original results, descriptor cost, invalidations and coverage limits.
-Observed signature equality is an opportunity measurement, not certification
-of a complete dependency contract. Prove dependencies and directed stale-reuse
-tests before activating reuse.
+DLL91's bounded, opt-in shadow measurement completed with the original kernels
+driving play. All699 retained semantic records and both world censuses match its
+OFF control. Across retained complete observations,91.7% of unit-danger and
+82.8% of stack-score evaluations repeat recorded inputs/results, with no observed
+mismatch. Most stack observations take a cheap zero-key path; these percentages
+are not expensive-work fractions or predicted speed gains. On253, per-row count
+bounds establish repeated footprints for84.8–94.7% of nonzero-key unit frames
+and64.5–99.7% of nonzero-key stack frames. Misses and elapsed time are not
+stratified by repeat class. There is no stride extrapolation.
+
+The first implementation shares a sparse lexical parent view of ordered unit
+rosters and first-match health data across candidate evaluations, with exact
+enemy-damage overlays for preview children. It keeps existing key serialization
+and original numerical evaluation initially. Later certified reuse must account
+for arrival versus queried actor, full versus solo rosters, cache scratch loans,
+capacity admission, source refresh and table/slot lifetimes. Observer identity
+tokens do not certify these dependencies. Directed stale-reuse tests and an
+actual-source oracle precede activating any such path.
 
 Projected enemy wounds can affect distant destinations. Interceptors and raw
 unit-ID aliases, city HP/protection, garrison order, live HP versus projected HP,
@@ -75,8 +86,12 @@ An optimized VC9 allocation trace records four owned key copies for a scalar
 admission and three key/output copies for a packet. An18-word scalar drops from
 seven allocations to none in the indexed prototype; a64-word scalar drops from
 seven to one, and a51-word/five-member packet from nine to one. Initial synthetic
-eviction-heavy traces are about4x faster, but native whole-turn benefit remains
-unmeasured. Query preparation and CRT bookkeeping are outside these allocation
+eviction-heavy traces are about4x faster. The complete quiet native88 replay
+improves the heavy turn63.484→57.531 seconds, about9.4%, and planning
+39.010→33.023 seconds; the lighter turn improves32.313→31.828 seconds.
+All699 retained semantic records, both censuses and455 recorded cache-counter
+rows match87. These individual measurements do not establish a general late-game
+guarantee. Query preparation and CRT bookkeeping are outside the allocation
 measurements.
 
 Physical allocated memory is distinct from the original logical payload budget.
