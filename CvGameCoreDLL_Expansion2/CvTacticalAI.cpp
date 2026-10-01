@@ -8879,7 +8879,7 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   return fixedDanger;
  StackForecastQuery query(gStackDangerScratch,gStackDangerScratchBusy);
  StackForecastKey& key=query.key;
- bool cacheable = StackForecastContext();
+ bool cacheable = query.scratch != NULL || StackForecastContext();
  const unsigned long revision = cacheable ? gStackForecastRevision : 0;
  const long scene = cacheable ? gStackForecastSceneEpoch : 0;
  CvStackingDiagnostics::PlanSampleScope keySample(CvStackingDiagnostics::PLAN_DANGER_KEY,cacheable); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
@@ -8936,7 +8936,7 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
 {
  StackForecastQuery query(gStackDefenderScratch,gStackDefenderScratchBusy);
  StackForecastKey& key=query.key;
- bool cacheable = StackForecastContext();
+ bool cacheable = query.scratch != NULL || StackForecastContext();
  const unsigned long revision = cacheable ? gStackForecastRevision : 0;
  const long scene = cacheable ? gStackForecastSceneEpoch : 0;
  if (cacheable)

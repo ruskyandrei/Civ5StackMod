@@ -14,7 +14,10 @@ interceptors with heavy-charge or morale capabilities. Standard zero-base
 ranged aircraft retain cache support when the complete callback graph permits
 it. AIR preview actors and unsupported callback graphs use the original
 calculations. A zero proof flag with no completed scan is unknown support,
-not evidence of eligibility.
+not evidence of eligibility. The scan counter counts attempts, including ones
+whose post-scan validation fails. Zero observed flags with attempted scans
+alone does not prove a published capability result; native cache hits provide
+separate evidence that reuse was admitted.
 
 Danger rebuilding and AIR fallback legality suspend preview caching and
 invalidate before and after execution. This covers legacy CanLoadAt calls,
