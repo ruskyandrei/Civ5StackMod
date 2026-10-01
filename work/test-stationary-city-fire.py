@@ -57,6 +57,8 @@ static bool ContinueSiege(int,CvCity*){return allowSiege;}
 static bool Enabled(int){return true;}namespace CvStackingAI{bool RetainCityUnit(const CvUnit*){return false;}}
 static bool HasCommitment(CvUnit*,const CvPlot* = NULL){return true;}
 static void RecordTransfer(CvUnit*,int,int,int){}
+// Route bookkeeping is independently source-tested; this fixture tests fire/staging legality.
+static void RecordStageRouteProgress(CvUnit*,int,int,int,int,int){}
 '''
 tests=r'''
 static int checks=0,failures=0;static void expect(const char*n,bool ok){++checks;if(!ok){++failures;if(failures<12)printf("FAIL %s\n",n);}}

@@ -293,12 +293,23 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 
 	iNumLandUnits -= iNumExplorers;
 
+	CvStackingOffensiveAI::ProductionIntent stackingIntent;
+    if(bCombat&&!bFree&&!kPlayer.isMinorCiv())
+        CvStackingOffensiveAI::GetProductionIntent(m_pCity,eUnit,stackingIntent,!bForPurchase);
+    const bool stackingQuota=stackingIntent.quotaEligible&&!bFree&&!bForPurchase;
+
 	if (bNeedsSupply)
 	{
 		if (pkUnitEntry->GetDomainType() == DOMAIN_LAND && pkUnitEntry->GetDefaultUnitAIType() != UNITAI_EXPLORE && iNumLandUnits >= kPlayer.GetMilitaryAI()->GetRecommendLandArmySize())
-			return SR_UNITSUPPLY;
+        {
+            if(!stackingQuota||(long long)iNumLandUnits>=(long long)kPlayer.GetMilitaryAI()->GetRecommendLandArmySize()+stackingIntent.quotaUnits)
+            {CvStackingOffensiveAI::RecordProductionRejection(m_pCity,eUnit,stackingIntent,CvStackingOffensiveAI::PRODUCTION_DOMAIN_QUOTA);return SR_UNITSUPPLY;}
+        }
 		else if (pkUnitEntry->GetDomainType() == DOMAIN_SEA && iNumSeaUnits >= kPlayer.GetMilitaryAI()->GetRecommendNavySize())
-			return SR_UNITSUPPLY;
+        {
+            if(!stackingQuota||(long long)iNumSeaUnits>=(long long)kPlayer.GetMilitaryAI()->GetRecommendNavySize()+stackingIntent.quotaUnits)
+            {CvStackingOffensiveAI::RecordProductionRejection(m_pCity,eUnit,stackingIntent,CvStackingOffensiveAI::PRODUCTION_DOMAIN_QUOTA);return SR_UNITSUPPLY;}
+        }
 		else if (pkUnitEntry->GetDefaultUnitAIType() == UNITAI_EXPLORE && iNumExplorers >= kPlayer.GetMilitaryAI()->GetRecommendedExplorers())
 			return SR_UNITSUPPLY;
 	}
@@ -1587,7 +1598,7 @@ int CvUnitProductionAI::CheckUnitBuildSanity(UnitTypes eUnit, bool bForOperation
 
 	// Objective-specific deficits supplement the global ratios only after the
 	// existing economy, supply, resource and training sanity checks have passed.
-	const int iStackingOffensiveBonus=bCombat?CvStackingOffensiveAI::ProductionBonus(m_pCity,eUnit):0;
+	const int iStackingOffensiveBonus=bCombat&&!bFree&&!kPlayer.isMinorCiv()?stackingIntent.bonus:0;
 	iBonus+=iStackingOffensiveBonus;
 	// MOD_AI_UNIT_PRODUCTION - NEW STRATEGIES -- consider if we have too much or too few of a unit
 	if (bCombat && MOD_AI_UNIT_PRODUCTION)

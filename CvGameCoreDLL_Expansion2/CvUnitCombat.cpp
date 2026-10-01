@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingDiagnostics.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvUnit.h"
 #include "CvUnitCombat.h"
 #include "CvUnitMission.h"
@@ -3440,8 +3441,49 @@ int CvUnitCombat::DoDamageMath(int iAttackerStrength100, int iDefenderStrength10
 }
 
 //	---------------------------------------------------------------------------
+namespace
+{
+    // Independent of diagnostic level: capture identities before combat, then
+    // resolve after it. No raw unit/city pointer crosses the combat callbacks.
+    struct OffensiveContributionScope
+    {
+        int owner,unit,target,plot,defenderOwner,defenderID,defenderHP,cityOwner,cityHP;
+        DomainTypes domain; unsigned long generation; bool active;
+        explicit OffensiveContributionScope(const CvCombatInfo& info):owner(-1),unit(-1),target(-1),plot(-1),
+            defenderOwner(-1),defenderID(-1),defenderHP(0),cityOwner(-1),cityHP(0),domain(DOMAIN_LAND),generation(0),active(false)
+        {
+            const CvUnit* attacker=info.getUnit(BATTLE_UNIT_ATTACKER);
+            if(!CvStackingOffensiveAI::GetCombatObjective(attacker,target,domain,generation)) return;
+            const CvPlot* p=info.getPlot(); if(!p) return;
+            owner=attacker->getOwner();unit=attacker->GetID();plot=p->GetPlotIndex();active=true;
+            const CvUnit* defender=info.getUnit(BATTLE_UNIT_DEFENDER);
+            if(defender && p->isVisible(GET_PLAYER((PlayerTypes)owner).getTeam()) && !defender->isInvisible(GET_PLAYER((PlayerTypes)owner).getTeam(),false))
+            { defenderOwner=defender->getOwner();defenderID=defender->GetID();defenderHP=defender->GetCurrHitPoints(); }
+            const CvCity* city=p->getPlotCity();
+            if(city && p->isVisible(GET_PLAYER((PlayerTypes)owner).getTeam()))
+            { cityOwner=city->getOwner();cityHP=city->GetMaxHitPoints()-city->getDamage(); }
+        }
+        ~OffensiveContributionScope()
+        {
+            if(!active || !CvStackingOffensiveAI::IsCombatHistoryCurrent(generation)) return;
+            const CvUnit* defender=defenderOwner>=0?GET_PLAYER((PlayerTypes)defenderOwner).getUnit(defenderID):NULL;
+            // A missing identity is not treated as proof of damage or death.
+            const int fieldDamage=defender?max(0,defenderHP-defender->GetCurrHitPoints()):0;
+            const CvPlot* p=GC.getMap().plotByIndexUnchecked(plot);
+            const CvCity* city=p?p->getPlotCity():NULL;
+            const bool captured=city && cityOwner>=0 && city->getOwner()==owner && cityOwner!=owner;
+            const int cityDamage=city && cityOwner>=0 && !captured && p->isVisible(GET_PLAYER((PlayerTypes)owner).getTeam())?
+                max(0,cityHP-(city->GetMaxHitPoints()-city->getDamage())):0;
+            CvStackingOffensiveAI::RecordCombatContribution((PlayerTypes)owner,unit,target,domain,plot,defenderOwner,fieldDamage,cityDamage,captured);
+        }
+    private:
+        OffensiveContributionScope(const OffensiveContributionScope&);
+        OffensiveContributionScope& operator=(const OffensiveContributionScope&);
+    };
+}
 void CvUnitCombat::ResolveCombat(const CvCombatInfo& kInfo, uint uiParentEventID /* = 0 */)
 {
+	OffensiveContributionScope offensiveContribution(kInfo);
 	CvStackingDiagnostics::CombatScope diagnosticCombat(kInfo, uiParentEventID);
 	PlayerTypes eAttackingPlayer = NO_PLAYER;
 	// Restore visibility

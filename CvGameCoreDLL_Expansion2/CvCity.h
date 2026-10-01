@@ -98,6 +98,8 @@ public:
 	void InitBoost(int iExtraPlots, int iPopChange, int iFoodPercent);
 
 	void doTurn();
+	// Current-state next-owner-turn estimate; false completeness means hidden inputs were omitted.
+	int GetAssaultHealingForecast(PlayerTypes eObserver, int iExpectedCityDamage, bool* pCompleteInformation = NULL) const;
 
 	bool isCitySelected();
 	void updateYield(bool bRecalcPlotYields = true);

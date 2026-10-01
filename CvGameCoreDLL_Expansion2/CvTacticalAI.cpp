@@ -1111,7 +1111,9 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 					int iMaxSiegeTurns = CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()) ? CvStacking::GetInt("AIAssaultDamageHorizon",4) : 13;
 
 					int iCityHealRate = 0;
-					if (!pCity->IsBlockadedWaterAndLand())
+					if (CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()))
+						iCityHealRate = pCity->GetAssaultHealingForecast(m_pPlayer->GetID(), iExpectedDamagePerTurn);
+					else if (!pCity->IsBlockadedWaterAndLand())
 					{
 						iCityHealRate = /*20 in CP, 8 in VP*/ GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN);
 						if (MOD_BALANCE_VP)

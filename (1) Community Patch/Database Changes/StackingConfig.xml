@@ -26,6 +26,15 @@
     <Row Name="AIAssaultDamageHorizon" Value="4"/>
     <Row Name="AIAssaultGatherTurns" Value="6"/>
     <Row Name="AIAssaultAbandonTurns" Value="24"/>
+    <!-- Coherent waves, affordable role repair and measured assault progress. -->
+    <Row Name="AIAssaultEssentialSiegeUnits" Value="2"/>
+    <Row Name="AIAssaultFirstWaveMaximumTurns" Value="1"/>
+    <Row Name="AIAssaultWaveMaximumRecords" Value="64"/>
+    <Row Name="AIAssaultIncompleteDamagePercent" Value="125"/>
+    <Row Name="AIOffensiveProductionRoleRepairUnits" Value="2"/>
+    <Row Name="AIOffensiveProductionRecommendationSlack" Value="2"/>
+    <Row Name="AIOffensiveContributionRadius" Value="2"/>
+    <Row Name="AIAssaultAttackProgressStallTurns" Value="24"/>
     <Row Name="AIAssaultStageRadius" Value="6"/>
     <Row Name="AIAssaultStageCohesionRadius" Value="2"/>
     <Row Name="AIAssaultStagePlacementCandidates" Value="8"/>

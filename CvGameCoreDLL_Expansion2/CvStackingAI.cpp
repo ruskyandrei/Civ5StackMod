@@ -379,6 +379,9 @@ namespace CvStackingAI
             operation->GetEnemy()==NO_PLAYER || !GET_PLAYER(operation->GetOwner()).IsAtWarWith(operation->GetEnemy())) return false;
         CvPlot* target=operation->GetTargetPlot();
         if (!target || !target->isCity() || !target->isVisible(GET_PLAYER(operation->GetOwner()).getTeam())) return false;
+        bool firstWaveReady=false;
+        if(CvStackingOffensiveAI::IsCityAttack(operation)&&Setting("AIAssaultCoordinationEnabled",1)!=0&&
+            CvStackingOffensiveAI::TryReadyCoreForArmy(operation,army,firstWaveReady))return firstWaveReady;
         int present=0,required=0,missing=0,strength=0,support=0; bool capture=false;
         const std::vector<CvArmyFormationSlot>& slots=army->GetSlotStatus();
         for (size_t i=0;i<slots.size();++i)
@@ -535,6 +538,7 @@ namespace CvStackingAI
         }
         const int from=unit->plot()->GetPlotIndex();
         const int unitID=unit->GetID();
+        const int stageIndex=best->GetPlotIndex(),expectedEnd=end->GetPlotIndex();
         unit->PushMission(CvTypes::getMISSION_MOVE_TO(),best->getX(),best->getY(),flags,false,false,MISSIONAI_TACTMOVE);
         unit=player.getUnit(unitID);
         if(!unit || unit->isDelayedDeath())
@@ -550,7 +554,11 @@ namespace CvStackingAI
         }
         Transfer& transfer=transfers[key]; transfer.turn=cacheTurn; transfer.target=best->GetPlotIndex();
         ++transfersThisTurn[player.GetID()];
-        if(bestObjective>=0) CvStackingOffensiveAI::RecordTransfer(unit,bestObjective,bestOperation,bestETA);
+        if(bestObjective>=0)
+        {
+            CvStackingOffensiveAI::RecordTransfer(unit,bestObjective,bestOperation,bestETA);
+            CvStackingOffensiveAI::RecordStageRouteProgress(unit,bestObjective,stageIndex,stageIndex,from,expectedEnd);
+        }
         else CvStackingOffensiveAI::CancelCommitment(unit);
         CvStackingDiagnostics::Record(1,player.GetID(),"REINFORCEMENT","unit=%d from=%d after=%d goal=%d operation=%d eta=%d score=%d status=%s",unit->GetID(),from,after,best->GetPlotIndex(),bestOperation,bestETA,bestScore,plotDistance(*unit->plot(),*best)<=2?"arrived":"moving");
         unit->SetTurnProcessed(true);

@@ -32,6 +32,34 @@ namespace
         { return owner!=b.owner?owner<b.owner:target!=b.target?target<b.target:domain<b.domain; }
         bool operator==(const ObjectiveKey& b) const { return owner==b.owner && target==b.target && domain==b.domain; }
     };
+// Bounded cached first-wave records; no serialized game-object fields.
+struct AssaultWaveUnit
+{
+    int unit, army, eta, damage, sustain, strength, roles, hp, type, range, moves,plot,domain,remaining,available,spent,setup;
+    AssaultWaveUnit(CvUnit* u,int turns,int hit,int retaliation,const CvPlot* target):
+        unit(u->GetID()),army(u->getArmyID()),eta(turns),damage(hit),sustain(0),strength(CvStackingAI::UnitStrength(u)),
+        roles((CvStackingOffensiveAI::CanCapture(u,target)?1:0)|(u->IsCanAttackRanged()?2:0)|
+            ((u->getDomainType()==DOMAIN_SEA?u->IsCanAttackRanged():CvStackingOffensiveAI::IsSiegeUnit(u))?4:0)),
+        hp(u->GetCurrHitPoints()),type(u->getUnitType()),range(u->GetRange()),moves(u->baseMoves(false)),plot(u->plot()->GetPlotIndex()),domain(u->getDomainType()),remaining(u->getMoves()),available(u->canUseNow()),spent(u->isOutOfAttacks()),setup(u->isSetUpForRangedAttack())
+    {
+        // A second-turn damage forecast must not reuse an attacker which its
+        // first attack would leave below the same healthy-force threshold.
+        if((long long)(hp-retaliation)*100>=
+            (long long)u->GetMaxHitPoints()*CvStacking::GetInt("AIAssaultHealthyPercent",65)) sustain=hit;
+    }
+};
+struct AssaultWave
+{
+    int units, siege, ranged, capture, strength, damage, sustain, first, last, own;
+    unsigned failed;
+    AssaultWave():units(0),siege(0),ranged(0),capture(0),strength(0),damage(0),sustain(0),first(INT_MAX),last(0),own(0),failed(0){}
+};
+enum AssaultFailure
+{
+    ASSAULT_CAPTURE=1,ASSAULT_SIEGE=2,ASSAULT_COUNT=4,ASSAULT_STRENGTH=8,
+    ASSAULT_DAMAGE=16,ASSAULT_COHESION=32,ASSAULT_OWN_ARMY=64,ASSAULT_UNKNOWN=128
+};
+
     struct Objective
     {
         int enemy, operation, staging, refreshed, created, coreUnits, coreStrength, captureTurn, captureID, noCaptureSince;
@@ -39,17 +67,26 @@ namespace
         CvStackingOffensiveAI::AssaultPlan assault;
         int assaultTurn, phaseSince, phaseLogged;
         int staffTurn, staffUnits, staffSiege, staffRanged, staffCapture;
+        int productionTurn,productionUnits,productionSiege,productionRanged,productionCapture,productionQueued;
+        unsigned long productionGeneration;
+        std::vector<int> productionCaptureQueues;
         int lastUsefulTurn, lowestHP;
+        int firstReadyTurn, lastCityProgress, lastCityAttack, cityAttempts, fieldContributions;
         bool captureKnown;
+        std::vector<AssaultWaveUnit> waveRows;bool waveComplete,wavePathUnknown;
         Objective():enemy(-1),operation(-1),staging(-1),refreshed(-1),created(-1),coreUnits(0),coreStrength(0),
             captureTurn(-1),captureID(-1),noCaptureSince(-1),captureOwner(-1),captureEta(INT_MAX),captureProgress(-1),capturePlot(-1),captureDistance(INT_MAX),
-            assaultTurn(-1),phaseSince(-1),phaseLogged(-1),staffTurn(-1),staffUnits(0),staffSiege(0),staffRanged(0),staffCapture(0),lastUsefulTurn(-1),lowestHP(INT_MAX),captureKnown(false){}
+            assaultTurn(-1),phaseSince(-1),phaseLogged(-1),staffTurn(-1),staffUnits(0),staffSiege(0),staffRanged(0),staffCapture(0),
+            productionTurn(-1),productionUnits(0),productionSiege(0),productionRanged(0),productionCapture(0),productionQueued(0),productionGeneration(0),
+            lastUsefulTurn(-1),lowestHP(INT_MAX),firstReadyTurn(-1),lastCityProgress(-1),lastCityAttack(-1),cityAttempts(0),fieldContributions(0),
+            captureKnown(false),waveComplete(false),wavePathUnknown(false){}
     };
     struct Commitment
     {
         ObjectiveKey goal; int turn, lastProgress, plot, eta, bestDistance;
+        int routeStage, routeDestination, routeFrom, routeTo, routeProgress;
         bool arrived, capturer, assembly;
-        Commitment():turn(-1),lastProgress(-1),plot(-1),eta(INT_MAX),bestDistance(INT_MAX),arrived(false),capturer(false),assembly(false){}
+        Commitment():turn(-1),lastProgress(-1),plot(-1),eta(INT_MAX),bestDistance(INT_MAX),routeStage(-1),routeDestination(-1),routeFrom(-1),routeTo(-1),routeProgress(-1),arrived(false),capturer(false),assembly(false){}
     };
     struct March
     {
@@ -67,6 +104,21 @@ namespace
         int unit, turns;
         StalledProductionQueue(int u=-1,int t=INT_MAX):unit(u),turns(t){}
     };
+struct OpeningKey
+{
+    int owner,operation,army;
+    OpeningKey(int o,int p,int a):owner(o),operation(p),army(a){}
+    bool operator<(const OpeningKey& b)const{return owner!=b.owner?owner<b.owner:operation!=b.operation?operation<b.operation:army<b.army;}
+};
+struct OpeningForecast
+{
+    int turn,target,enemy,domain,filled,hp,strength;bool visible,ready,complete;
+    std::vector<AssaultWaveUnit> rows;
+    OpeningForecast():turn(-1),target(-1),enemy(-1),domain(-1),filled(-1),hp(-1),strength(-1),visible(false),ready(false),complete(false){}
+};
+static std::map<OpeningKey,OpeningForecast> openingForecasts;
+static int openingForecastTurn=-1;
+
     std::map<ObjectiveKey,Objective> objectives;
     std::map<Key,Commitment> commitments;
     std::map<ObjectiveKey,Failure> failures;
@@ -76,7 +128,10 @@ namespace
     std::map<Key,StalledProductionQueue> stalledProduction;
     std::map<Key,int> assemblyHolds;
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
+    void AdvanceProductionGeneration(PlayerTypes owner);
     bool shuttingDown=false;
+    unsigned long continuityGeneration=1;
+    bool continuityGenerationExhausted=false;
     int Setting(const char* name,int value) { return CvStacking::GetInt(name,value); }
     bool Live(CvAIOperation* op)
     { return op && op->GetOperationState()!=AI_OPERATION_STATE_ABORTED && op->GetOperationState()!=AI_OPERATION_STATE_SUCCESSFUL_FINISH; }
@@ -109,6 +164,14 @@ namespace
         stalled->second.turns=remaining;
         return true;
     }
+    bool EraseCommitment(std::map<Key,Commitment>::iterator i)
+    {
+        if(i==commitments.end())return false;
+        const ObjectiveKey goal=i->second.goal;
+        CvStackingOffensiveAI::InvalidateProductionStaff((PlayerTypes)goal.owner,goal.target,(DomainTypes)goal.domain);
+        commitments.erase(i);return true;
+    }
+    bool EraseCommitment(const Key& key) { return EraseCommitment(commitments.find(key)); }
     void Refresh()
     {
         if(shuttingDown) return;
@@ -178,6 +241,7 @@ namespace
                 if(valid)
                     stalledProduction[i->first]=StalledProductionQueue(i->second.unit,i->second.turns);
                 CvStackingDiagnostics::Record(1,(PlayerTypes)i->first.first,"OFFENSIVE_PRODUCTION","city=%d target=%d unitType=%d action=cancel reason=%s",i->first.second,i->second.goal.target,i->second.unit,valid?"stalled":"queue_or_objective_changed");
+                AdvanceProductionGeneration((PlayerTypes)i->first.first);
                 production.erase(i++);
             }
             else ++i;
@@ -208,7 +272,7 @@ namespace
             if(reason)
             {
                 CvStackingDiagnostics::Record(1,(PlayerTypes)i->first.first,"OFFENSIVE_SUPPORT","unit=%d target=%d action=release_stale reason=%s dispatchAge=%d progressAge=%d eta=%d",i->first.second,i->second.goal.target,reason,turn-i->second.turn,turn-i->second.lastProgress,i->second.eta);
-                commitments.erase(i++);
+                EraseCommitment(i++);
             }
             else ++i;
         }
@@ -295,6 +359,69 @@ namespace
         return city && city->plot()->isVisible(GET_PLAYER(owner).getTeam()) &&
             (city->getStrengthValue()/100>=Setting("AIAssaultStrongCityStrength",25) || CvStacking::GetCityProtection(city)>0);
     }
+    int EssentialSiege(PlayerTypes owner,const CvCity* city,DomainTypes domain)
+    {
+        const int desired=CvStackingOffensiveAI::DesiredSiegeUnits(owner,city,domain);
+        return domain==DOMAIN_SEA?desired:min(desired,Setting("AIAssaultEssentialSiegeUnits",2));
+    }
+    bool WaveRecordStillValid(PlayerTypes owner,const CvPlot* target,const AssaultWaveUnit& row)
+    {
+        const CvUnit* u=GET_PLAYER(owner).getUnit(row.unit);
+        if(!Usable(u)||u->getArmyID()!=row.army||u->GetCurrHitPoints()!=row.hp||u->getUnitType()!=row.type||
+            u->GetRange()!=row.range||u->baseMoves(false)!=row.moves||u->plot()->GetPlotIndex()!=row.plot||u->getDomainType()!=row.domain||u->getMoves()!=row.remaining||
+            u->canUseNow()!=!!row.available||u->isOutOfAttacks()!=!!row.spent||u->isSetUpForRangedAttack()!=!!row.setup) return false;
+        const int roles=(CvStackingOffensiveAI::CanCapture(u,target)?1:0)|(u->IsCanAttackRanged()?2:0)|
+            ((u->getDomainType()==DOMAIN_SEA?u->IsCanAttackRanged():CvStackingOffensiveAI::IsSiegeUnit(u))?4:0);
+        return roles==row.roles;
+    }
+    AssaultWave SelectFirstWave(const std::vector<AssaultWaveUnit>& rows,int minimum,int siege,int ranged,
+        int enemy,int margin,int hp,int captureEta,int maxArrival,int spread,int army=-1,int ownMinimum=0)
+    {
+        AssaultWave best;bool found=false;
+        // The existing XML maximum is bounded to ten; no new paths or search
+        // branches are created. All work uses the already-simulated records.
+        for(int start=0;start<=maxArrival;++start)
+        {
+            const int end=min(maxArrival,start+spread);AssaultWave wave;
+            for(size_t i=0;i<rows.size();++i)
+            {
+                const AssaultWaveUnit& r=rows[i];
+                if(r.eta<start||r.eta>end||(army>=0&&r.army!=-1&&r.army!=army))continue;
+                ++wave.units;wave.siege+=(r.roles&4)!=0;wave.ranged+=(r.roles&2)!=0;wave.capture+=(r.roles&1)!=0;
+                wave.strength+=r.strength;wave.damage+=r.damage;wave.sustain+=r.sustain;
+                wave.first=min(wave.first,r.eta);wave.last=max(wave.last,r.eta);wave.own+=r.army==army;
+            }
+            // An already-arrived reserved capturer may wait for the wave.
+            if(captureEta<0||captureEta==INT_MAX||captureEta>end||(captureEta!=0&&captureEta<start))wave.failed|=ASSAULT_CAPTURE;
+            if(wave.siege<siege||wave.ranged<ranged)wave.failed|=ASSAULT_SIEGE;
+            if(wave.units<minimum)wave.failed|=ASSAULT_COUNT;
+            if(enemy<=0)wave.failed|=ASSAULT_UNKNOWN;
+            else if((long long)wave.strength*100<(long long)enemy*margin)wave.failed|=ASSAULT_STRENGTH;
+            if(wave.own<ownMinimum)wave.failed|=ASSAULT_OWN_ARMY;
+            if(wave.first==INT_MAX||wave.last-wave.first>spread)wave.failed|=ASSAULT_COHESION;
+            const unsigned relevant=ASSAULT_CAPTURE|ASSAULT_SIEGE|ASSAULT_COUNT|ASSAULT_STRENGTH|ASSAULT_OWN_ARMY|ASSAULT_UNKNOWN|ASSAULT_COHESION;
+            const bool valid=(wave.failed&relevant)==0,bestValid=(best.failed&relevant)==0;
+            const bool finish=wave.damage>=hp,bestFinish=best.damage>=hp;
+            const bool betterRank=finish!=bestFinish?finish:wave.sustain!=best.sustain?wave.sustain>best.sustain:
+                wave.damage!=best.damage?wave.damage>best.damage:wave.strength!=best.strength?wave.strength>best.strength:wave.first<best.first;
+            if(!found||(valid&&!bestValid)||(valid==bestValid&&betterRank))
+            {best=wave;found=true;}
+        }
+        return best;
+    }
+    bool WaveCanSustain(AssaultWave& wave,int hp,int healing,int horizon,bool complete)
+    {
+        const int confidence=complete?100:Setting("AIAssaultIncompleteDamagePercent",125);
+        if(wave.damage<hp&&(long long)(wave.sustain-healing)*horizon*100<(long long)hp*confidence)wave.failed|=ASSAULT_DAMAGE;
+        return wave.failed==0;
+    }
+    void CopyWave(CvStackingOffensiveAI::AssaultPlan& plan,const AssaultWave& wave)
+    {
+        plan.waveUnits=wave.units;plan.waveSiege=wave.siege;plan.waveCapturers=wave.capture;
+        plan.waveStrength=wave.strength;plan.waveDamage=wave.damage;plan.waveSustain=wave.sustain;
+        plan.waveFirstETA=wave.first==INT_MAX?-1:wave.first;plan.waveLastETA=wave.last;plan.failedMask=wave.failed;
+    }
+
     bool EntryRanged(const CvUnitEntry* entry)
     { return entry && entry->GetRangedCombat()>0 && entry->GetRange()>0; }
     bool EntrySiege(const CvUnitEntry* entry)
@@ -305,69 +432,259 @@ namespace
         const UnitAITypes role=entry->GetDefaultUnitAIType();
         return role==UNITAI_ATTACK || role==UNITAI_DEFENSE || role==UNITAI_COUNTER || role==UNITAI_FAST_ATTACK || role==UNITAI_ATTACK_SEA;
     }
-    int ProductionChoice(const CvCity* city,UnitTypes unit,ObjectiveKey& chosen)
+    struct ProductionQueueState
     {
-        const PlayerTypes owner=city->getOwner(); CvPlayer& player=GET_PLAYER(owner);
+        int unit,operation,land,sea,supply;bool valid;
+        ProductionQueueState():unit(NO_UNIT),operation(-1),land(0),sea(0),supply(0),valid(true){}
+        bool operator==(const ProductionQueueState& other)const
+        {return unit==other.unit&&operation==other.operation&&land==other.land&&sea==other.sea&&supply==other.supply&&valid==other.valid;}
+    };
+    struct ProductionPolicyState
+    {
+        int turn,cityCount,softCap,land,sea,supply,observedUnits;
+        unsigned long generation;
+        bool ready,busy,softDirty;
+        std::map<int,ProductionQueueState> cities;
+        std::set<std::pair<int,int> > rejections;
+        ProductionPolicyState():turn(-1),cityCount(-1),softCap(0),land(0),sea(0),supply(0),observedUnits(-1),generation(0),ready(false),busy(false),softDirty(false){}
+    };
+    ProductionPolicyState productionPolicy[MAX_PLAYERS];
+    std::vector<PromotionTypes> noCapturePromotions;
+    int noCapturePromotionCount=-1;
+
+    void AdvanceProductionGeneration(PlayerTypes owner)
+    {
+        ProductionPolicyState& state=productionPolicy[owner];
+        if(state.generation==static_cast<unsigned long>(-1))
+        {state.ready=false;state.turn=-1;state.generation=0;}
+        ++state.generation;
+        // At most the configured small objective registry, never the unit/map lists.
+        for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
+            if(i->first.owner==owner)i->second.productionTurn=-1;
+    }
+    ProductionQueueState ReadProductionQueue(const CvCity* city)
+    {
+        ProductionQueueState value;
+        if(!city)return value;
+        value.unit=city->getProductionUnit();
+        value.operation=city->IsBuildingUnitForOperation()?city->GetUnitProductionOperation():-1;
+        const CvUnitEntry* entry=value.unit==NO_UNIT?NULL:GC.getUnitInfo((UnitTypes)value.unit);
+        if(value.unit!=NO_UNIT&&!entry)value.valid=false;
+        if(entry)
+        {
+            // Include ranged-only and military support types, including AIR for
+            // supply. Future free-promotion/trait supply exemptions are not assumed.
+            const bool military=entry->IsMilitarySupport()||entry->GetCombat()>0||entry->GetRangedCombat()>0;
+            value.land=military&&entry->GetDomainType()==DOMAIN_LAND;
+            value.sea=military&&entry->GetDomainType()==DOMAIN_SEA;
+            value.supply=military&&!entry->IsNoSupply();
+        }
+        return value;
+    }
+    bool EnsureProductionPolicy(PlayerTypes owner)
+    {
+        if(owner<0||owner>=MAX_PLAYERS)return false;
+        ProductionPolicyState& state=productionPolicy[owner];
+        if(state.busy)return false;
+        CvPlayer& player=GET_PLAYER(owner);
+        const int turn=GC.getGame().getGameTurn();
+        if(state.ready&&state.turn==turn&&state.cityCount==player.getNumCities())return true;
+        state.busy=true;state.ready=false;
+        try
+        {
+            state.cities.clear();state.rejections.clear();state.land=state.sea=state.supply=0;
+            state.softCap=max(0,player.GetEconomicAI()->GetSoftSupplyCap());
+            state.observedUnits=player.getNumUnits();
+            state.softDirty=false;
+            int loop=0;
+            for(CvCity* city=player.firstCity(&loop);city;city=player.nextCity(&loop))
+            {
+                const ProductionQueueState value=ReadProductionQueue(city);
+                if(!value.valid){state.cities.clear();state.busy=false;return false;}
+                state.cities[city->GetID()]=value;
+                state.land+=value.land;state.sea+=value.sea;state.supply+=value.supply;
+            }
+            state.turn=turn;state.cityCount=player.getNumCities();
+            AdvanceProductionGeneration(owner);
+            state.ready=true;state.busy=false;return true;
+        }
+        catch(const std::bad_alloc&)
+        {state.cities.clear();state.land=state.sea=state.supply=0;state.busy=false;state.ready=false;return false;}
+    }
+    void ReadLiveProductionBudget(PlayerTypes owner,CvStackingOffensiveAI::ProductionBudget& result)
+    {
+        result=CvStackingOffensiveAI::ProductionBudget();
+        if(!EnsureProductionPolicy(owner))return;
+        ProductionPolicyState& state=productionPolicy[owner];CvPlayer& player=GET_PLAYER(owner);
+        // Air/civilian births and losses also change VP's affordable land/sea
+        // budget. Refresh only on a changed live count, never for each candidate.
+        if(state.softDirty||state.observedUnits!=player.getNumUnits())
+        {state.softCap=max(0,player.GetEconomicAI()->GetSoftSupplyCap());state.observedUnits=player.getNumUnits();state.softDirty=false;}
+        result.turn=state.turn;result.generation=state.generation;
+        result.queuedSupply=state.supply;result.queuedLand=state.land;result.queuedSea=state.sea;
+        result.supplyAvailable=player.GetNumUnitsSupplied()-player.GetNumUnitsToSupply()-state.supply;
+        const int budget=state.softCap;
+        result.affordableAvailable=budget-player.getNumMilitaryLandUnits()-player.getNumMilitarySeaUnits()-state.land-state.sea;
+        result.ready=true;
+    }
+    bool BirthCannotCapture(const CvCity* city,UnitTypes unit,const CvUnitEntry* entry)
+    {
+        if(noCapturePromotionCount!=GC.getNumPromotionInfos())
+        {
+            noCapturePromotions.clear();
+            for(int i=0;i<GC.getNumPromotionInfos();++i)
+            {const CvPromotionEntry* p=GC.getPromotionInfo((PromotionTypes)i);if(p&&(p->IsNoCapture()||p->IsOnlyDefensive()))noCapturePromotions.push_back((PromotionTypes)i);}
+            noCapturePromotionCount=GC.getNumPromotionInfos();
+        }
+        if(noCapturePromotions.empty())return false;
+        CvPlayer& player=GET_PLAYER(city->getOwner());
+        // The existing city accessor includes religious birth promotions too.
+        const std::vector<PromotionTypes> cityPromotions=city->getFreePromotions();
+        for(size_t i=0;i<noCapturePromotions.size();++i)
+        {
+            const PromotionTypes promotion=noCapturePromotions[i];const CvPromotionEntry* info=GC.getPromotionInfo(promotion);
+            if(!info)return true; // Unsupported metadata cannot certify a capturer.
+            if(entry->GetFreePromotions(promotion))return true;
+            if(entry->IsUnitEraUpgrade())
+                for(int era=0;era<GC.getNumEraInfos();++era)
+                    if(era<=(int)GET_TEAM(player.getTeam()).GetCurrentEra()&&entry->GetUnitNewEraPromotions(promotion,era)>0)return true;
+            if(entry->GetUnitCombatType()!=NO_UNITCOMBAT&&player.GetPlayerTraits()->HasFreePromotionUnitCombat(promotion,(UnitCombatTypes)entry->GetUnitCombatType()))
+            {const TechTypes tech=(TechTypes)info->GetTechPrereq();if(tech==NO_TECH||player.HasTech(tech))return true;}
+            if(entry->GetUnitClassType()!=NO_UNITCLASS&&player.GetPlayerTraits()->HasFreePromotionUnitClass(promotion,(UnitClassTypes)entry->GetUnitClassType()))return true;
+            if((player.IsFreePromotion(promotion)||std::find(cityPromotions.begin(),cityPromotions.end(),promotion)!=cityPromotions.end())&&
+                (::IsPromotionValidForUnitCombatType(promotion,unit)||::IsPromotionValidForCivilianUnitType(promotion,unit)))return true;
+        }
+        return false;
+    }
+    int ProductionEntryRoles(const CvCity* city,UnitTypes unit)
+    {
+        const CvUnitEntry* entry=GC.getUnitInfo(unit);if(!entry)return 0;
+        const bool ranged=entry->GetRangedCombat()>0&&entry->GetRange()>0;
+        int roles=0;
+        if(ranged)
+        {
+            if(entry->GetDomainType()==DOMAIN_SEA||EntrySiege(entry))roles|=CvStackingOffensiveAI::PRODUCTION_SIEGE;
+            else roles|=CvStackingOffensiveAI::PRODUCTION_RANGED;
+        }
+        else if(EntryCapture(entry)&&!BirthCannotCapture(city,unit,entry))roles|=CvStackingOffensiveAI::PRODUCTION_CAPTURE;
+        return roles;
+    }
+
+    bool ProductionQueueCredits(const Key& city,const ProductionQueueState& queue,const ObjectiveKey& key,const Objective& objective)
+    {
+        const CvUnitEntry* entry=queue.unit==NO_UNIT?NULL:GC.getUnitInfo((UnitTypes)queue.unit);
+        if(!entry||entry->GetDomainType()!=key.domain)return false;
+        if(queue.operation>=0)return queue.operation==objective.operation;
+        std::map<Key,ProductionClaim>::const_iterator claim=production.find(city);
+        return claim!=production.end()&&claim->second.unit==queue.unit&&claim->second.goal==key;
+    }
+    int ProductionChoice(const CvCity* city,UnitTypes unit,ObjectiveKey& chosen,CvStackingOffensiveAI::ProductionIntent* detail=NULL,bool replaceQueue=true)
+    {
+        try
+        {
+        const PlayerTypes owner=city->getOwner();CvPlayer& player=GET_PLAYER(owner);
         const CvUnitEntry* entry=GC.getUnitInfo(unit);
-        if(!entry || (entry->GetCombat()<=0 && entry->GetRangedCombat()<=0) || entry->GetDomainType()==DOMAIN_AIR ||
-            city->getProductionTurnsLeft(unit,0)>Setting("AIOffensiveProductionMaximumTurns",12)) return 0;
-        const Key ownCity(owner,city->GetID());
-        int best=0;
+        if(!entry||(entry->GetCombat()<=0&&entry->GetRangedCombat()<=0)||entry->GetDomainType()==DOMAIN_AIR||
+            city->getProductionTurnsLeft(unit,0)>Setting("AIOffensiveProductionMaximumTurns",12))return 0;
+        CvStackingOffensiveAI::ProductionBudget budget;ReadLiveProductionBudget(owner,budget);
+        if(!budget.ready)return 0; // Unknown optional proof never waives a native limit.
+        ProductionPolicyState& state=productionPolicy[owner];const Key ownCity(owner,city->GetID());
+        const int roles=ProductionEntryRoles(city,unit);int best=0,bestEvidence=INT_MIN;
         for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
         {
-            const ObjectiveKey& key=i->first; Objective& o=i->second;
-            if(key.owner!=owner || key.domain!=entry->GetDomainType()) continue;
+            const ObjectiveKey& key=i->first;Objective& o=i->second;
+            if(key.owner!=owner||key.domain!=entry->GetDomainType())continue;
             CvPlot* target=GC.getMap().plotByIndexUnchecked(key.target);
-            if(!target || !target->isCity() || target->getOwner()!=o.enemy ||
-                CvStackingOffensiveAI::RouteBlocked(owner,target,key.domain==DOMAIN_SEA) ||
-                plotDistance(*city->plot(),*target)>Setting("AIReinforcementMaximumTurns",12)*max(1,entry->GetMoves())) continue;
+            if(!target||!target->isCity()||target->getOwner()!=o.enemy||
+                CvStackingOffensiveAI::RouteBlocked(owner,target,key.domain==DOMAIN_SEA)||
+                plotDistance(*city->plot(),*target)>Setting("AIReinforcementMaximumTurns",12)*max(1,entry->GetMoves()))continue;
             if(o.staffTurn!=currentTurn)
             {
                 o.staffTurn=currentTurn;o.staffUnits=o.staffSiege=o.staffRanged=o.staffCapture=0;
                 int loop=0;
                 for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
                 {
-                    if(!Matches(u,key,o) || u->GetCurrHitPoints()*100<u->GetMaxHitPoints()*Setting("AIAssaultHealthyPercent",65)) continue;
+                    if(!Matches(u,key,o)||u->GetCurrHitPoints()*100<u->GetMaxHitPoints()*Setting("AIAssaultHealthyPercent",65))continue;
                     ++o.staffUnits;o.staffSiege+=key.domain==DOMAIN_SEA?u->IsCanAttackRanged():CvStackingOffensiveAI::IsSiegeUnit(u);
-                    o.staffRanged+=u->IsCanAttackRanged() && !CvStackingOffensiveAI::IsSiegeUnit(u);
+                    o.staffRanged+=key.domain==DOMAIN_LAND&&u->IsCanAttackRanged()&&!CvStackingOffensiveAI::IsSiegeUnit(u);
                     o.staffCapture+=CvStackingOffensiveAI::CanCapture(u,target);
                 }
+                o.productionTurn=-1;
             }
-            int count=o.staffUnits,siege=o.staffSiege,ranged=o.staffRanged,capture=o.staffCapture,queued=0;
-            for(std::map<Key,ProductionClaim>::const_iterator p=production.begin();p!=production.end();++p)
+            if(o.productionTurn!=currentTurn||o.productionGeneration!=state.generation)
             {
-                if(p->first==ownCity || !(p->second.goal==key)) continue;
-                const CvUnitEntry* pending=GC.getUnitInfo((UnitTypes)p->second.unit);
-                if(!pending) continue;
-                ++queued;++count; siege+=key.domain==DOMAIN_SEA?EntryRanged(pending):EntrySiege(pending);
-                ranged+=EntryRanged(pending) && !EntrySiege(pending);capture+=EntryCapture(pending);
+                o.productionUnits=o.staffUnits;o.productionSiege=o.staffSiege;
+                o.productionRanged=o.staffRanged;o.productionCapture=o.staffCapture;o.productionQueued=0;o.productionCaptureQueues.clear();
+                for(std::map<int,ProductionQueueState>::const_iterator q=state.cities.begin();q!=state.cities.end();++q)
+                {
+                    if(!ProductionQueueCredits(Key(owner,q->first),q->second,key,o))continue;
+                    CvCity* factory=player.getCity(q->first);if(!factory)continue;
+                    const CvUnitEntry* pending=GC.getUnitInfo((UnitTypes)q->second.unit);
+                    const bool pendingSiege=key.domain==DOMAIN_SEA?EntryRanged(pending):EntrySiege(pending);
+                    ++o.productionUnits;++o.productionQueued;
+                    o.productionSiege+=pendingSiege;
+                    o.productionRanged+=key.domain==DOMAIN_LAND&&EntryRanged(pending)&&!EntrySiege(pending);
+                    if(EntryCapture(pending))o.productionCaptureQueues.push_back(q->first);
+                }
+                o.productionTurn=currentTurn;o.productionGeneration=state.generation;
             }
-            int cityLoop=0;
-            for(CvCity* factory=player.firstCity(&cityLoop);factory;factory=player.nextCity(&cityLoop))
+            int count=o.productionUnits,siege=o.productionSiege,ranged=o.productionRanged,capture=o.staffCapture,queued=o.productionQueued;
+            // Birth metadata can change without a head/operation change. Only
+            // these sparse already-credited queues need live capture checks.
+            for(size_t q=0;q<o.productionCaptureQueues.size();++q)
             {
-                // Existing formation promises remain owned by VP. Credit their
-                // actual queued role without creating another support claim.
-                if(factory==city || !factory->IsBuildingUnitForOperation() || factory->GetUnitProductionOperation()!=o.operation) continue;
-                const CvUnitEntry* pending=GC.getUnitInfo(factory->getProductionUnit());
-                if(!pending || pending->GetDomainType()!=key.domain) continue;
-                ++queued;++count;siege+=key.domain==DOMAIN_SEA?EntryRanged(pending):EntrySiege(pending);
-                ranged+=EntryRanged(pending) && !EntrySiege(pending);capture+=EntryCapture(pending);
+                const int id=o.productionCaptureQueues[q];if(replaceQueue&&id==city->GetID())continue;
+                CvCity* factory=player.getCity(id);std::map<int,ProductionQueueState>::const_iterator pending=state.cities.find(id);
+                if(factory&&pending!=state.cities.end()&&(ProductionEntryRoles(factory,(UnitTypes)pending->second.unit)&CvStackingOffensiveAI::PRODUCTION_CAPTURE))++capture;
             }
-            if(queued>=Setting("AIOffensiveProductionMaximumUnits",4) || count>=Setting("AIOffensiveSupportMaximumUnits",32)) continue;
+            std::map<int,ProductionQueueState>::const_iterator own=state.cities.find(city->GetID());
+            int supplyCredit=0,affordableCredit=0;
+            if(own!=state.cities.end())
+            {
+                if(replaceQueue){supplyCredit=own->second.supply;affordableCredit=own->second.land+own->second.sea;}
+                if(replaceQueue&&ProductionQueueCredits(ownCity,own->second,key,o))
+                {
+                    const CvUnitEntry* current=GC.getUnitInfo((UnitTypes)own->second.unit);
+                    --count;--queued;siege-=key.domain==DOMAIN_SEA?EntryRanged(current):EntrySiege(current);
+                    ranged-=key.domain==DOMAIN_LAND&&EntryRanged(current)&&!EntrySiege(current);
+                }
+            }
             const int desired=CvStackingOffensiveAI::DesiredAssaultUnits(owner,target->getPlotCity(),(DomainTypes)key.domain)+Setting("AIOffensiveSupportReserveUnits",4);
             const int desiredSiege=CvStackingOffensiveAI::DesiredSiegeUnits(owner,target->getPlotCity(),(DomainTypes)key.domain);
-            const bool neededSiege=desiredSiege>0 && siege<desiredSiege+Setting("AIOffensiveProductionSiegeReserves",2);
-            const bool neededCapture=capture<Setting("AIOffensiveSupportMinimumCapturers",2);
-            const bool neededRanged=ranged<Setting("AIOffensiveSupportMinimumRanged",2);
-            const bool siegeRole=key.domain==DOMAIN_SEA?EntryRanged(entry):EntrySiege(entry);
-            const bool role=(neededSiege && siegeRole) || (neededCapture && EntryCapture(entry)) ||
-                (neededRanged && EntryRanged(entry) && !EntrySiege(entry));
-            if(!role && (count>=desired || neededSiege || neededCapture)) continue;
+            const int missingSiege=max(0,desiredSiege+(desiredSiege>0?Setting("AIOffensiveProductionSiegeReserves",2):0)-siege);
+            const int missingCapture=max(0,Setting("AIOffensiveSupportMinimumCapturers",2)-capture);
+            const int missingRanged=key.domain==DOMAIN_LAND?max(0,Setting("AIOffensiveSupportMinimumRanged",2)-ranged):0;
+            const bool role=(missingSiege&&(roles&CvStackingOffensiveAI::PRODUCTION_SIEGE))||
+                (missingCapture&&(roles&CvStackingOffensiveAI::PRODUCTION_CAPTURE))||(missingRanged&&(roles&CvStackingOffensiveAI::PRODUCTION_RANGED));
+            if(!role&&(count>=desired||missingSiege||missingCapture||missingRanged))continue;
             const int score=Setting("AIOffensiveProductionPriority",400)+(role?Setting("AIOffensiveProductionRolePriority",400):0)-
                 plotDistance(*city->plot(),*target)*Setting("AIReinforcementTravelWeight",15);
-            if(score>best) { best=score;chosen=key; }
+            CvStackingOffensiveAI::ProductionIntent intent;intent.target=key.target;intent.domain=key.domain;intent.roles=roles;
+            intent.units=count;intent.queued=queued;intent.missingSiege=missingSiege;intent.missingRanged=missingRanged;intent.missingCapture=missingCapture;intent.missingRole=role;
+            const int supplyCost=entry->IsNoSupply()?0:1;
+            const int maximum=Setting("AIOffensiveSupportMaximumUnits",32)+(role?Setting("AIOffensiveProductionRoleRepairUnits",2):0);
+            if(city->isUnderSiege())intent.reason=CvStackingOffensiveAI::PRODUCTION_HOME_DEFENSE;
+            else if(queued>=Setting("AIOffensiveProductionMaximumUnits",4))intent.reason=CvStackingOffensiveAI::PRODUCTION_QUEUE_LIMIT;
+            else if(count>=maximum)intent.reason=CvStackingOffensiveAI::PRODUCTION_FORCE_LIMIT;
+            else if(budget.supplyAvailable+supplyCredit<supplyCost)intent.reason=CvStackingOffensiveAI::PRODUCTION_SUPPLY;
+            else if(budget.affordableAvailable+affordableCredit<1)intent.reason=CvStackingOffensiveAI::PRODUCTION_AFFORDABILITY;
+            else
+            {
+                intent.reason=CvStackingOffensiveAI::PRODUCTION_NONE;intent.bonus=max(0,score);
+                intent.quotaUnits=Setting("AIOffensiveProductionRecommendationSlack",2);
+                intent.quotaEligible=role&&intent.bonus>0&&intent.quotaUnits>0;
+                if(score>best){best=score;chosen=key;if(detail)*detail=intent;}
+            }
+            if(best==0&&score>bestEvidence){bestEvidence=score;if(detail)*detail=intent;}
         }
         return max(0,best);
+        }
+        catch(const std::bad_alloc&)
+        {
+            CvStackingOffensiveAI::InvalidateProductionOwner(city->getOwner());
+            if(detail)*detail=CvStackingOffensiveAI::ProductionIntent();
+            return 0;
+        }
     }
     CvPlot* AttackApproach(CvUnit* unit,CvPlot* target,int maximumTurns,int& eta)
     {
@@ -460,7 +777,7 @@ namespace
                 currentTurn-o.captureProgress>=Setting("AICaptureNoProgressTurns",6))
             {
                 captureRetries[unitKey]=std::make_pair(target->GetPlotIndex(),currentTurn+Setting("AICaptureRetryTurns",4));
-                commitments.erase(unitKey);
+                EraseCommitment(unitKey);
                 CvStackingDiagnostics::Record(1,owner,"CAPTURE_COMMITMENT","target=%d unit=%d action=release reason=no_arrival_progress eta=%d progressAge=%d",target->GetPlotIndex(),u->GetID(),eta,currentTurn-o.captureProgress);
                 continue;
             }
@@ -609,6 +926,7 @@ namespace CvStackingOffensiveAI
         o.assaultTurn=currentTurn;
         const ObjectiveKey key(owner,target->GetPlotIndex(),domain);
         const int previousPhase=o.assault.phase;
+        o.waveRows.clear();o.waveComplete=true;o.wavePathUnknown=false;
         CapturePlan(owner,target,o,domain);
         result.captureUnit=o.captureID; result.captureOwner=o.captureOwner;
         result.desiredUnits=DesiredAssaultUnits(owner,city,domain);
@@ -628,7 +946,7 @@ namespace CvStackingOffensiveAI
             { ++result.inbound; continue; }
             int eta=INT_MAX;
             CvPlot* firing=AttackApproach(u,target,approachTurns,eta);
-            if(!firing) { ++result.inbound;continue; }
+            if(!firing) { if(assaultQueries[owner]>=budget)o.wavePathUnknown=true; ++result.inbound;continue; }
             int retaliation=0,garrison=0;
             const int damage=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city,u,firing,retaliation,garrison);
             if(damage<=0 || retaliation>=u->GetCurrHitPoints()) continue;
@@ -638,16 +956,23 @@ namespace CvStackingOffensiveAI
             result.ranged+=u->IsCanAttackRanged();
             result.capturers+=CanCapture(u,target);
             result.cityDamage+=damage;
+            if(o.waveComplete)
+            {
+                if(o.waveRows.size()>=(size_t)Setting("AIAssaultWaveMaximumRecords",64)) {o.waveComplete=false;o.waveRows.clear();}
+                else try{o.waveRows.push_back(AssaultWaveUnit(u,eta,damage,retaliation,target));}
+                catch(const std::bad_alloc&){o.waveComplete=false;o.waveRows.clear();}
+            }
         }
         const int hp=max(1,city->GetMaxHitPoints()-city->getDamage());
+        if(o.lowestHP!=INT_MAX && hp<o.lowestHP) o.lastCityProgress=currentTurn;
         if(hp<o.lowestHP || result.readyUnits>o.assault.readyUnits) o.lastUsefulTurn=currentTurn;
         o.lowestHP=min(o.lowestHP,hp);
-        int healing=0;
-        if(!city->IsBlockadedWaterAndLand())
-        {
-            healing=GD_INT_GET(CITY_HIT_POINTS_HEALED_PER_TURN);
-            if(MOD_BALANCE_VP) healing+=city->getPopulation();
-        }
+        int waveCaptureETA=o.captureOwner!=owner&&o.captureID>=0?o.captureEta:INT_MAX;
+        for(size_t i=0;i<o.waveRows.size();++i)if((o.waveRows[i].roles&1)!=0)waveCaptureETA=min(waveCaptureETA,o.waveRows[i].eta);
+        AssaultWave wave=SelectFirstWave(o.waveRows,Setting("AIAssaultMinimumReadyUnits",4),EssentialSiege(owner,city,domain),
+            domain==DOMAIN_SEA?Setting("AIAssaultNavalMinimumRanged",4):0,result.enemyStrength,Setting("AIAssaultStrengthPercent",125),hp,
+            waveCaptureETA,Setting("AIAssaultFirstWaveMaximumTurns",1),Setting("AIAssaultWaveArrivalSpreadTurns",1));
+        const int healing=city->GetAssaultHealingForecast(owner,o.waveComplete?wave.damage:result.cityDamage,&result.healingComplete);
         const bool captureSoon=o.captureID>=0 && o.captureEta<=approachTurns;
         const bool roles=result.siege>=result.desiredSiege && captureSoon;
         const bool damageEnough=result.cityDamage>=hp ||
@@ -668,11 +993,18 @@ namespace CvStackingOffensiveAI
         const bool cohesive=lastArrival-firstArrival<=Setting("AIAssaultWaveArrivalSpreadTurns",1);
         result.ready=immediateCapture || (roles && damageEnough && cohesive && (strongEnough || result.cityDamage>=hp) &&
             (result.readyUnits>=result.desiredUnits || (strongEnough && result.cityDamage>=hp)));
+        if(o.waveComplete) result.ready=immediateCapture||WaveCanSustain(wave,hp,healing,Setting("AIAssaultDamageHorizon",4),result.healingComplete);
+        else result.failedMask|=ASSAULT_UNKNOWN; // Memory/work uncertainty retains original policy.
+        CopyWave(result,wave);if(!o.waveComplete)result.failedMask|=ASSAULT_UNKNOWN;
         result.reason=immediateCapture?0:!captureSoon?1:!roles?2:!damageEnough?3:!cohesive?6:!result.ready?4:0;
         // Committed waves remain committed while their core and essential roles
         // are still useful. Do not demand that replacements already be present.
-        if(previousPhase==1 && !result.ready && roles && damageEnough &&
+        if(!o.waveComplete && previousPhase==1 && !result.ready && roles && damageEnough &&
             result.readyUnits>=Setting("AIAssaultMinimumReadyUnits",4)) result.ready=true;
+        if(result.ready)result.reason=0;
+        else if(o.waveComplete)result.reason=(wave.failed&ASSAULT_CAPTURE)?1:(wave.failed&ASSAULT_SIEGE)?2:(wave.failed&ASSAULT_DAMAGE)?3:(wave.failed&ASSAULT_COHESION)?6:4;
+        if(!result.ready&&(o.wavePathUnknown||!o.captureKnown))result.failedMask|=ASSAULT_UNKNOWN;
+        if(result.ready && o.firstReadyTurn<0) o.firstReadyTurn=currentTurn;
         result.phase=result.ready?1:0;
         if(o.phaseSince<0 || (previousPhase==1)!=result.ready) o.phaseSince=currentTurn;
         if(!result.ready && currentTurn-o.phaseSince>=Setting("AIAssaultGatherTurns",6)) result.phase=2;
@@ -707,9 +1039,9 @@ namespace CvStackingOffensiveAI
         if(result.ready) result.routeKnown=true;
         if(o.phaseLogged!=result.phase || currentTurn%Setting("AIAssaultObjectiveSummaryInterval",5)==0)
         {
-            CvStackingDiagnostics::Record(1,owner,"ASSAULT_PLAN","target=%d domain=%d phase=%d reason=%d stage=%d ready=%d desired=%d siege=%d desiredSiege=%d ranged=%d capturers=%d inbound=%d damage=%d heal=%d hp=%d enemyStrength=%d captureUnit=%d captureOwner=%d captureEta=%d gatherAge=%d pathQueries=%d firstArrival=%d lastArrival=%d; ready is a route-and-damage forecast, not an executed attack",
+            CvStackingDiagnostics::Record(1,owner,"ASSAULT_PLAN","target=%d domain=%d phase=%d reason=%d stage=%d ready=%d desired=%d siege=%d desiredSiege=%d ranged=%d capturers=%d inbound=%d damage=%d heal=%d hp=%d enemyStrength=%d captureUnit=%d captureOwner=%d captureEta=%d gatherAge=%d pathQueries=%d firstArrival=%d lastArrival=%d waveUnits=%d waveSiege=%d waveCapturers=%d waveStrength=%d waveDamage=%d waveSustain=%d waveFirstETA=%d waveLastETA=%d healingComplete=%d failedMask=%u; readiness forecast only",
                 key.target,domain,result.phase,result.reason,result.staging,result.readyUnits,result.desiredUnits,result.siege,result.desiredSiege,
-                result.ranged,result.capturers,result.inbound,result.cityDamage,healing,hp,result.enemyStrength,o.captureID,o.captureOwner,o.captureEta,currentTurn-o.phaseSince,assaultQueries[owner],firstArrival==INT_MAX?-1:firstArrival,lastArrival);
+                result.ranged,result.capturers,result.inbound,result.cityDamage,healing,hp,result.enemyStrength,o.captureID,o.captureOwner,o.captureEta,currentTurn-o.phaseSince,assaultQueries[owner],firstArrival==INT_MAX?-1:firstArrival,lastArrival,result.waveUnits,result.waveSiege,result.waveCapturers,result.waveStrength,result.waveDamage,result.waveSustain,result.waveFirstETA,result.waveLastETA,result.healingComplete,result.failedMask);
             o.phaseLogged=result.phase;
         }
         o.assault=result; return result;
@@ -742,6 +1074,84 @@ namespace CvStackingOffensiveAI
             return true;
         }
         return false;
+    }
+    // Called only after the existing native path has produced a real move.
+    // A stable stage/destination and its verified first-turn endpoint permit
+    // detours; no new path query or per-turn route search is performed.
+    void RecordStageRouteProgress(CvUnit* unit,int target,int stage,int destination,int from,int expectedEnd)
+    {
+        if(!unit || !unit->plot() || !Enabled(unit->getOwner())) return;
+        Refresh(); const Key key(unit->getOwner(),unit->GetID());
+        std::map<Key,Commitment>::iterator found=commitments.find(key);
+        if(found==commitments.end() || found->second.goal.target!=target) return;
+        Commitment& c=found->second;
+        const int after=unit->plot()->GetPlotIndex();
+        const bool stable=c.routeStage==stage && c.routeDestination==destination;
+        const bool reverse=c.routeFrom==after && c.routeTo==from;
+        const bool progressed=stable && from!=after && after==expectedEnd && !reverse;
+        c.routeStage=stage; c.routeDestination=destination;
+        if(from!=after) { c.routeFrom=from; c.routeTo=after; }
+        if(!progressed) return;
+        c.routeProgress=c.lastProgress=currentTurn;
+        std::map<ObjectiveKey,Objective>::iterator goal=objectives.find(c.goal);
+        if(goal!=objectives.end()) goal->second.refreshed=currentTurn;
+        // Route progress keeps valid support alive, not an ineffective siege.
+        CvStackingDiagnostics::Record(1,unit->getOwner(),"OFFENSIVE_SUPPORT",
+            "unit=%d target=%d stage=%d destination=%d from=%d after=%d action=route_progress; not assault progress",
+            unit->GetID(),target,stage,destination,from,after);
+    }
+    bool IsCombatHistoryCurrent(unsigned long generation)
+    { return !shuttingDown && !continuityGenerationExhausted && generation==continuityGeneration; }
+    bool GetCombatObjective(const CvUnit* unit,int& target,DomainTypes& domain,unsigned long& generation)
+    {
+        if(continuityGenerationExhausted || !Usable(unit) || !Enabled(unit->getOwner())) return false;
+        Refresh(); const PlayerTypes owner=unit->getOwner();
+        std::map<Key,Commitment>::const_iterator c=commitments.find(Key(owner,unit->GetID()));
+        ObjectiveKey goal;
+        if(c!=commitments.end()) goal=c->second.goal;
+        else
+        {
+            CvArmyAI* army=GET_PLAYER(owner).getArmyAI(unit->getArmyID());
+            CvAIOperation* op=army?GET_PLAYER(owner).getAIOperation(army->GetOperationID()):NULL;
+            CvPlot* city=Live(op)?CityTarget(op):NULL;
+            if(!city) return false;
+            goal=ObjectiveKey(owner,city->GetPlotIndex(),unit->getDomainType());
+        }
+        std::map<ObjectiveKey,Objective>::const_iterator o=objectives.find(goal);
+        CvPlot* city=GC.getMap().plotByIndexUnchecked(goal.target);
+        if(o==objectives.end() || !city || !city->isCity() || city->getOwner()!=o->second.enemy ||
+            !GET_PLAYER(owner).IsAtWarWith(city->getOwner())) return false;
+        target=goal.target; domain=(DomainTypes)goal.domain; generation=continuityGeneration; return true;
+    }
+    void RecordCombatContribution(PlayerTypes owner,int unit,int target,DomainTypes domain,
+        int combatPlot,int defenderOwner,int fieldDamage,int cityDamage,bool captured)
+    {
+        if(!Enabled(owner) || shuttingDown) return;
+        Refresh(); const ObjectiveKey key(owner,target,domain);
+        std::map<ObjectiveKey,Objective>::iterator found=objectives.find(key);
+        if(found==objectives.end()) return;
+        Objective& o=found->second;
+        const bool cityAttack=combatPlot==target;
+        CvPlot* p=GC.getMap().plotByIndexUnchecked(combatPlot);
+        CvPlot* goal=GC.getMap().plotByIndexUnchecked(target);
+        const bool relevantField=p && goal && defenderOwner>=0 &&
+            GET_PLAYER(owner).IsAtWarWith((PlayerTypes)defenderOwner) &&
+            plotDistance(*p,*goal)<=Setting("AIOffensiveContributionRadius",2) && fieldDamage>0;
+        if(!cityAttack && !relevantField) return;
+        InvalidateProductionStaff(owner,target,domain); // Actual wounds/losses can expose a replacement-role deficit.
+        if(cityAttack) { ++o.cityAttempts; o.lastCityAttack=currentTurn; }
+        if(relevantField) ++o.fieldContributions;
+        if(cityAttack && (cityDamage>0 || captured) && goal && goal->isCity() && goal->isVisible(GET_PLAYER(owner).getTeam()))
+        {
+            const int hp=goal->getPlotCity()->GetMaxHitPoints()-goal->getPlotCity()->getDamage();
+            if(captured || hp<o.lowestHP) { o.lowestHP=hp; o.lastCityProgress=o.lastUsefulTurn=currentTurn; }
+        }
+        std::map<Key,Commitment>::iterator c=commitments.find(Key(owner,unit));
+        if(c!=commitments.end() && c->second.goal==key && (cityDamage>0 || relevantField || captured))
+            c->second.lastProgress=currentTurn;
+        CvStackingDiagnostics::Record(1,owner,"OFFENSIVE_CONTRIBUTION",
+            "unit=%d target=%d domain=%d plot=%d cityDamage=%d fieldDamage=%d captured=%d cityAttempts=%d fieldActions=%d netProgressTurn=%d",
+            unit,target,domain,combatPlot,cityDamage,fieldDamage,captured,o.cityAttempts,o.fieldContributions,o.lastCityProgress);
     }
     bool StageUnit(CvUnit* unit,const CvPlot* cityTarget)
     {
@@ -783,11 +1193,13 @@ namespace CvStackingOffensiveAI
             CvPlot* end=unit->GetPathEndFirstTurnPlot();
             if(!end || end==unit->plot() || player.GetDangerPlots()->GetStackDanger(*end,unit,alone,noDamage,noDamage)>dangerLimit) continue;
             const int id=unit->GetID(),from=unit->plot()->GetPlotIndex();
+            const int targetIndex=cityTarget->GetPlotIndex(),stageIndex=stage->GetPlotIndex(),destination=p->GetPlotIndex(),expectedEnd=end->GetPlotIndex();
             unit->PushMission(CvTypes::getMISSION_MOVE_TO(),p->getX(),p->getY(),flags,false,false,MISSIONAI_TACTMOVE);
             unit=player.getUnit(id);
             if(!unit || unit->isDelayedDeath()) return true;
             if(unit->plot()->GetPlotIndex()==from) continue;
-            RecordTransfer(unit,cityTarget->GetPlotIndex(),-1,plotDistance(*unit->plot(),*cityTarget)/max(1,unit->baseMoves(false)));
+            RecordTransfer(unit,targetIndex,-1,plotDistance(*unit->plot(),*cityTarget)/max(1,unit->baseMoves(false)));
+            RecordStageRouteProgress(unit,targetIndex,stageIndex,destination,from,expectedEnd);
             assemblyHolds[Key(owner,id)]=currentTurn;
             unit->SetTurnProcessed(true);
             CvStackingDiagnostics::Record(2,owner,"ASSAULT_STAGE","unit=%d target=%d from=%d after=%d stage=%d",id,cityTarget->GetPlotIndex(),from,unit->plot()->GetPlotIndex(),stage->GetPlotIndex());
@@ -885,7 +1297,12 @@ namespace CvStackingOffensiveAI
             if(p && p->isCity() && p->isVisible(GET_PLAYER(owner).getTeam()))
             {
                 const AssaultPlan plan=AssessAssault(owner,p->getPlotCity(),(DomainTypes)i->first.domain);
-                if(plan.phase==2 && currentTurn-i->second.lastUsefulTurn>=Setting("AIAssaultAbandonTurns",24)) stale.push_back(i->first);
+                Objective& o=i->second;
+                if(plan.ready && o.firstReadyTurn<0) o.firstReadyTurn=currentTurn;
+                const int attackClock=max(o.lastCityProgress,o.firstReadyTurn);
+                const int attackStall=Setting("AIAssaultAttackProgressStallTurns",24);
+                const bool noAttackProgress=attackStall>0 && o.firstReadyTurn>=0 && currentTurn-attackClock>=attackStall;
+                if((plan.phase==2 && currentTurn-o.lastUsefulTurn>=Setting("AIAssaultAbandonTurns",24)) || noAttackProgress) stale.push_back(i->first);
             }
         }
         for(size_t i=0;i<stale.size();++i)
@@ -909,11 +1326,93 @@ namespace CvStackingOffensiveAI
             { Failure& f=failures[stale[i]];f.until=currentTurn+cooldown-1;f.enemy=enemy; }
         }
     }
+    void ResetProductionPolicy()
+    {
+        // VC9 empty map/set construction allocates sentinel nodes. Reset also
+        // runs during cleanup and optional-allocation recovery, so retain the
+        // existing container objects and clear their payload without allocating.
+        for(int i=0;i<MAX_PLAYERS;++i)
+        {
+            ProductionPolicyState& state=productionPolicy[i];
+            state.cities.clear();state.rejections.clear();
+            state.turn=state.cityCount=state.observedUnits=-1;
+            state.softCap=state.land=state.sea=state.supply=0;
+            state.generation=0;
+            state.ready=state.busy=state.softDirty=false;
+        }
+        std::vector<PromotionTypes>().swap(noCapturePromotions);noCapturePromotionCount=-1;
+    }
+    void ProductionCitiesChanged(PlayerTypes owner)
+    {
+        if(owner<0||owner>=MAX_PLAYERS)return;
+        productionPolicy[owner].ready=false;AdvanceProductionGeneration(owner);
+    }
+    void InvalidateProductionStaff(PlayerTypes owner,int target,DomainTypes domain)
+    {
+        std::map<ObjectiveKey,Objective>::iterator i=objectives.find(ObjectiveKey(owner,target,domain));
+        if(i!=objectives.end()){i->second.staffTurn=-1;i->second.productionTurn=-1;}
+    }
+    void InvalidateProductionOwner(PlayerTypes owner)
+    {
+        if(shuttingDown||owner<0||owner>=MAX_PLAYERS)return;
+        productionPolicy[owner].softDirty=true;
+        AdvanceProductionGeneration(owner);
+        for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
+            if(i->first.owner==owner){i->second.staffTurn=-1;i->second.productionTurn=-1;}
+    }
+    void ProductionEconomyChanged(PlayerTypes owner)
+    {
+        if(shuttingDown||owner<0||owner>=MAX_PLAYERS)return;
+        productionPolicy[owner].softDirty=true;AdvanceProductionGeneration(owner);
+    }
+    void ProductionQueueChanged(const CvCity* city)
+    {
+        if(!city||city->getOwner()<0||city->getOwner()>=MAX_PLAYERS||!Enabled(city->getOwner()))return;
+        const PlayerTypes owner=city->getOwner();ProductionPolicyState& state=productionPolicy[owner];
+        if(state.busy){state.ready=false;AdvanceProductionGeneration(owner);return;}
+        if(!state.ready||state.turn!=GC.getGame().getGameTurn()||state.cityCount!=GET_PLAYER(owner).getNumCities())
+        {state.ready=false;AdvanceProductionGeneration(owner);return;}
+        const ProductionQueueState value=ReadProductionQueue(city);
+        if(!value.valid){state.ready=false;AdvanceProductionGeneration(owner);return;}
+        std::map<int,ProductionQueueState>::iterator existing=state.cities.find(city->GetID());
+        if(existing!=state.cities.end()&&existing->second==value)return;
+        try
+        {
+            ProductionQueueState& old=state.cities[city->GetID()];
+            state.land+=value.land-old.land;state.sea+=value.sea-old.sea;state.supply+=value.supply-old.supply;
+            old=value;AdvanceProductionGeneration(owner);
+        }
+        catch(const std::bad_alloc&)
+        {state.ready=false;state.cities.clear();state.land=state.sea=state.supply=0;AdvanceProductionGeneration(owner);}
+    }
+    bool GetProductionBudget(PlayerTypes owner,ProductionBudget& result)
+    {
+        result=ProductionBudget();if(owner<0||owner>=MAX_PLAYERS||!Enabled(owner))return false;
+        Sync(owner);ReadLiveProductionBudget(owner,result);return result.ready;
+    }
+    bool GetProductionIntent(const CvCity* city,UnitTypes unit,ProductionIntent& result,bool replaceQueue)
+    {
+        result=ProductionIntent();
+        if(!city||!Enabled(city->getOwner())||Setting("AIOffensiveProductionMaximumUnits",4)==0)return false;
+        Sync(city->getOwner());ProductionQueueChanged(city);
+        ObjectiveKey chosen;ProductionChoice(city,unit,chosen,&result,replaceQueue);
+        return result.target>=0;
+    }
+    void RecordProductionRejection(const CvCity* city,UnitTypes unit,const ProductionIntent& intent,int reason)
+    {
+        if(!city||!intent.missingRole||intent.target<0||!CvStackingDiagnostics::Enabled(1,city->getOwner()))return;
+        ProductionPolicyState& state=productionPolicy[city->getOwner()];
+        if(!state.ready)return;
+        // One already-computed reason per factory per turn, not a row for each type.
+        try {if(!state.rejections.insert(std::make_pair(city->GetID(),reason)).second)return;}
+        catch(const std::bad_alloc&){return;}
+        CvStackingDiagnostics::Record(1,city->getOwner(),"OFFENSIVE_PRODUCTION","city=%d target=%d domain=%d unitType=%d action=reject reason=%d roles=%d units=%d queued=%d missingSiege=%d missingRanged=%d missingCapture=%d",
+            city->GetID(),intent.target,intent.domain,unit,reason,intent.roles,intent.units,intent.queued,intent.missingSiege,intent.missingRanged,intent.missingCapture);
+    }
+
     int ProductionBonus(const CvCity* city,UnitTypes unit)
     {
-        if(!city || !Enabled(city->getOwner()) || Setting("AIOffensiveProductionMaximumUnits",4)==0) return 0;
-        Sync(city->getOwner()); ObjectiveKey chosen;
-        return ProductionChoice(city,unit,chosen);
+        ProductionIntent intent;GetProductionIntent(city,unit,intent);return intent.bonus;
     }
     void RecordProduction(CvCity* city,UnitTypes unit)
     {
@@ -926,17 +1425,20 @@ namespace CvStackingOffensiveAI
         ProductionClaim& claim=production[Key(city->getOwner(),city->GetID())];
         if(claim.started>=0 && claim.unit==unit && claim.goal==chosen) return;
         claim.goal=chosen; claim.unit=unit; claim.started=claim.progress=currentTurn; claim.turns=city->getProductionTurnsLeft();
+        AdvanceProductionGeneration(city->getOwner());
         objectives[chosen].lastUsefulTurn=currentTurn;
         CvStackingDiagnostics::Record(1,city->getOwner(),"OFFENSIVE_PRODUCTION","city=%d target=%d domain=%d unitType=%d remaining=%d action=queued",city->GetID(),chosen.target,chosen.domain,unit,claim.turns);
     }
     void UnitProduced(CvCity* city,CvUnit* unit)
     {
         if(!city || !Usable(unit) || !Enabled(city->getOwner())) return;
+        InvalidateProductionOwner(city->getOwner());
         const Key key(city->getOwner(),city->GetID());
         std::map<Key,ProductionClaim>::iterator claim=production.find(key);
         if(claim==production.end() || claim->second.unit!=unit->getUnitType()) return;
         const ObjectiveKey goal=claim->second.goal;
         production.erase(claim); // completion must replace its pending credit exactly once
+        AdvanceProductionGeneration(city->getOwner());
         if(city->IsBuildingUnitForOperation())
         {
             CvStackingDiagnostics::Record(1,unit->getOwner(),"OFFENSIVE_PRODUCTION","city=%d target=%d unit=%d action=cancel reason=formation_took_ownership",city->GetID(),goal.target,unit->GetID());
@@ -962,8 +1464,48 @@ namespace CvStackingOffensiveAI
             CvPlot* target=GC.getMap().plotByIndexUnchecked(i->first.target);
             if(!target || !target->isCity() || !player.IsAtWarWith(target->getOwner()) || !target->isVisible(player.getTeam())) continue;
             TacticalForce force(i->first.target,i->first.domain);int loop=0;
-            for(CvUnit* u=player.firstUnit(&loop);u && force.units.size()<(size_t)Setting("AIOffensiveSupportMaximumUnits",32);u=player.nextUnit(&loop))
-                if(u->getArmyID()==-1 && u->canUseNow() && !u->shouldHeal(false) && !CvStackingAI::RetainCityUnit(u) && Matches(u,i->first,i->second)) force.units.push_back(u->GetID());
+            const size_t maximum=(size_t)Setting("AIOffensiveSupportMaximumUnits",32);
+            std::vector<int> pool;bool complete=true;
+            for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
+            {
+                if(u->getArmyID()!=-1 || !u->canUseNow() || u->shouldHeal(false) || CvStackingAI::RetainCityUnit(u) || !Matches(u,i->first,i->second)) continue;
+                if(force.units.size()<maximum) force.units.push_back(u->GetID());
+                if(complete)try{pool.push_back(u->GetID());}catch(const std::bad_alloc&){complete=false;std::vector<int>().swap(pool);}
+                if(!complete && force.units.size()>=maximum)break; // Original bounded roster on optional failure.
+            }
+            // A full first-N roster must not hide late-created essential roles.
+            // Select nearby capture/siege/ranged coverage, then retain original
+            // ID enumeration for the remaining unchanged actor budget.
+            if(complete && pool.size()>maximum)
+            try
+            {
+                std::vector<int> selected;selected.reserve(maximum);
+                const int healthy=max(Setting("AIOffensiveProductionHealthyPercent",65),Setting("AIAssaultHealthyPercent",65));
+                int needs[3]={Setting("AIOffensiveSupportMinimumCapturers",2),DesiredSiegeUnits(owner,target->getPlotCity(),(DomainTypes)i->first.domain),Setting("AIOffensiveSupportMinimumRanged",2)};
+                for(int role=0;role<3 && selected.size()<maximum;++role)
+                {
+                    int present=0;
+                    for(size_t j=0;j<selected.size();++j)
+                    {
+                        const CvUnit* u=player.getUnit(selected[j]);
+                        if(u && u->GetCurrHitPoints()*100>=u->GetMaxHitPoints()*healthy &&
+                            (role==0?CanCapture(u,target):role==1?(i->first.domain==DOMAIN_SEA?u->IsCanAttackRanged():IsSiegeUnit(u)):(u->IsCanAttackRanged()&&!IsSiegeUnit(u))))++present;
+                    }
+                    for(size_t j=0;j<pool.size() && present<needs[role] && selected.size()<maximum;++j)
+                    {
+                        const CvUnit* u=player.getUnit(pool[j]);
+                        if(!u || u->GetCurrHitPoints()*100<u->GetMaxHitPoints()*healthy ||
+                            plotDistance(*u->plot(),*target)>Setting("AIOffensiveSupportLocalRadius",4) ||
+                            std::find(selected.begin(),selected.end(),pool[j])!=selected.end())continue;
+                        if(role==0?CanCapture(u,target):role==1?(i->first.domain==DOMAIN_SEA?u->IsCanAttackRanged():IsSiegeUnit(u)):(u->IsCanAttackRanged()&&!IsSiegeUnit(u)))
+                        {selected.push_back(pool[j]);++present;}
+                    }
+                }
+                for(size_t j=0;j<pool.size() && selected.size()<maximum;++j)
+                    if(std::find(selected.begin(),selected.end(),pool[j])==selected.end())selected.push_back(pool[j]);
+                force.units.swap(selected);
+            }
+            catch(const std::bad_alloc&){} // Keep original first-N force; never partial selection.
             if(!force.units.empty()) result.push_back(force);
         }
     }
@@ -1007,9 +1549,14 @@ namespace CvStackingOffensiveAI
             c.arrived=c.bestDistance<=Setting("AIOffensiveSupportLocalRadius",4);
             CvStackingDiagnostics::Record(1,op->GetOwner(),"OFFENSIVE_SUPPORT","unit=%d target=%d operation=%d action=tactical_handoff",u->GetID(),target->GetPlotIndex(),op->GetID());
         }
+        InvalidateProductionOwner(op->GetOwner());
     }
     void Reset()
-    { objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); currentTurn=-1; shuttingDown=false; }
+    {
+        ResetOpeningReadiness(); ResetProductionPolicy();
+        objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); currentTurn=-1; shuttingDown=false;
+        if(continuityGeneration==0xffffffffUL) continuityGenerationExhausted=true; else ++continuityGeneration;
+    }
     void Shutdown()
     {
         // Operation destructors abort armies after earlier player objects have
@@ -1093,7 +1640,8 @@ namespace CvStackingOffensiveAI
             int count=0,strength=0,capturers=0,ranged=0,siege=0,inbound=0,loop=0;
             for(CvUnit* other=player.firstUnit(&loop);other;other=player.nextUnit(&loop))
             {
-                if(other==unit || !Matches(other,key,o)) continue;
+                if(other==unit || !Matches(other,key,o) ||
+                    other->GetCurrHitPoints()*100<other->GetMaxHitPoints()*Setting("AIOffensiveProductionHealthyPercent",65)) continue;
                 ++count; strength+=CvStackingAI::UnitStrength(other);
                 capturers+=CanCapture(other,target); siege+=IsSiegeUnit(other);
                 ranged+=other->IsCanAttackRanged() && !IsSiegeUnit(other);
@@ -1121,7 +1669,8 @@ namespace CvStackingOffensiveAI
             const bool usefulRole=(o.captureOwner==owner && o.captureID==unit->GetID()) ||
                 (missingCapture && CanCapture(unit,target)) || (missingRanged && unit->IsCanAttackRanged() && !IsSiegeUnit(unit)) ||
                 (missingSiege && (key.domain==DOMAIN_LAND?IsSiegeUnit(unit):unit->IsCanAttackRanged()));
-            if(count+training>=maximum || (!usefulRole && count+training>=desiredCount && strength+training*mean>=desiredStrength)) continue;
+            const int repair=usefulRole?Setting("AIOffensiveProductionRoleRepairUnits",2):0;
+            if(count+training>=maximum+repair || (!usefulRole && count+training>=desiredCount && strength+training*mean>=desiredStrength)) continue;
             // Do not send a third ranged reserve while a depleted siege specifically needs capture support.
             if(missingCapture && !CanCapture(unit,target) && !missingSiege && count+training>=desiredCount) continue;
             const int need=max(mean,max((desiredCount-count-training)*mean,desiredStrength-strength-training*mean));
@@ -1139,16 +1688,20 @@ namespace CvStackingOffensiveAI
         CvAIOperation* op=GET_PLAYER(unit->getOwner()).getAIOperation(operation);
         if(!goal || !goal->isCity() || goal->getOwner()==unit->getOwner() ||
             (!GET_PLAYER(unit->getOwner()).IsAtWarWith(goal->getOwner()) && (!Live(op) || CityTarget(op)!=goal)))
-        { commitments.erase(key); return; }
+        { EraseCommitment(key); return; }
         Objective* refreshed=Touch(unit->getOwner(),goal,unit->getDomainType());
-        if(!refreshed) { commitments.erase(key); return; }
+        if(!refreshed) { EraseCommitment(key); return; }
         const int distance=plotDistance(*unit->plot(),*goal);
-        if(c.goal.target!=target || (c.plot!=plot && distance<c.bestDistance) || eta<c.eta) c.lastProgress=currentTurn;
-        if(c.goal.target!=target) { c.arrived=false; c.capturer=false; c.assembly=false; c.bestDistance=distance; }
+        // An ETA estimate alone, without actual movement, is not progress.
+        if(c.goal.target!=target || (c.plot!=plot && distance<c.bestDistance)) c.lastProgress=currentTurn;
+        if(c.goal.target!=target) { c.arrived=false; c.capturer=false; c.assembly=false; c.bestDistance=distance;
+            c.routeStage=c.routeDestination=c.routeFrom=c.routeTo=c.routeProgress=-1; }
         else c.bestDistance=min(c.bestDistance,distance);
+        if(c.goal.target>=0 && !(c.goal==ObjectiveKey(unit->getOwner(),target,unit->getDomainType())))
+            InvalidateProductionStaff((PlayerTypes)c.goal.owner,c.goal.target,(DomainTypes)c.goal.domain);
         c.goal=ObjectiveKey(unit->getOwner(),target,unit->getDomainType()); c.turn=currentTurn; c.plot=plot; c.eta=eta;
         refreshed->refreshed=currentTurn;
-        refreshed->staffTurn=-1;
+        InvalidateProductionStaff(unit->getOwner(),target,unit->getDomainType());
         c.arrived=distance<=Setting("AIOffensiveSupportLocalRadius",4);
         CvStackingDiagnostics::Record(1,unit->getOwner(),"OFFENSIVE_SUPPORT","unit=%d target=%d operation=%d eta=%d action=%s",unit->GetID(),target,operation,eta,
             plotDistance(*unit->plot(),*goal)<=Setting("AIOffensiveSupportLocalRadius",4)?"front_arrival":"travelling");
@@ -1171,7 +1724,7 @@ namespace CvStackingOffensiveAI
         // RecruitUnit/AddUnit may upgrade/delete the unit. Never use its pointer afterwards.
         if(op->RecruitUnit(unit))
         {
-            commitments.erase(key);
+            EraseCommitment(key);
             CvStackingDiagnostics::Record(1,(PlayerTypes)owner,"OFFENSIVE_SUPPORT","unit=%d operation=%d action=joined_formation",id,op->GetID());
             return true;
         }
@@ -1180,7 +1733,7 @@ namespace CvStackingOffensiveAI
     void CancelCommitment(const CvUnit* unit)
     {
         if(!unit || !Enabled(unit->getOwner())) return;
-        if(commitments.erase(Key(unit->getOwner(),unit->GetID())))
+        if(EraseCommitment(Key(unit->getOwner(),unit->GetID())))
             CvStackingDiagnostics::Record(1,unit->getOwner(),"OFFENSIVE_SUPPORT","unit=%d action=reassigned_to_other_demand",unit->GetID());
     }
     bool HoldReserve(CvUnit* unit)
@@ -1243,7 +1796,7 @@ namespace CvStackingOffensiveAI
         CvStackingDiagnostics::Record(1,op->GetOwner(),"OPERATION_ROUTE","operation=%d from=%d waypoint=%d target=%d naval=%d attempts=%d action=failed",op->GetID(),from?from->GetPlotIndex():-1,waypoint->GetPlotIndex(),op->GetTargetPlot()?op->GetTargetPlot()->GetPlotIndex():-1,op->IsNavalOperation(),attempts);
         return NULL;
     }
-    bool OpeningReady(CvAIOperation* op,CvArmyAI* army)
+    static bool LegacyOpeningReady(CvAIOperation* op,CvArmyAI* army)
     {
         if(!IsCityAttack(op) || !Enabled(op->GetOwner()) || Setting("AIWarPreparationEnabled",1)==0) return true;
         if(!army || !op->GetTargetPlot()) return false;
@@ -1272,10 +1825,158 @@ namespace CvStackingOffensiveAI
         CvStackingDiagnostics::Record(1,op->GetOwner(),"WAR_READINESS","operation=%d target=%d total=%d staged=%d capture=%d ranged=%d siege=%d desiredSiege=%d strength=%d ready=%d",op->GetID(),target->GetPlotIndex(),total,healthy,capture,ranged,siege,desiredSiege,strength,ready);
         return ready;
     }
+void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
+    bool TryReadyCoreForArmy(CvAIOperation* op,CvArmyAI* army,bool& ready)
+    {
+        ready=false;
+        if(!IsCityAttack(op)||!Enabled(op->GetOwner())||!army||!CityTarget(op)||
+            !GET_PLAYER(op->GetOwner()).IsAtWarWith(op->GetEnemy()))return false;
+        CvPlot* target=CityTarget(op);const PlayerTypes owner=op->GetOwner();
+        if(target->getOwner()!=op->GetEnemy())return true; // Known ownership change cannot release an attack on the old enemy.
+        if(!target->isVisible(GET_PLAYER(owner).getTeam()))return false;
+        ObserveOperation(op);const AssaultPlan shared=AssessAssault(owner,target->getPlotCity(),army->GetDomainType());
+        std::map<ObjectiveKey,Objective>::iterator found=objectives.find(ObjectiveKey(owner,target->GetPlotIndex(),army->GetDomainType()));
+        if(found==objectives.end()||found->second.operation!=op->GetID()||!found->second.waveComplete)return false;
+        Objective& o=found->second;
+        std::vector<AssaultWaveUnit> eligibleRows;int omitted=0;
+        try
+        {
+            eligibleRows.reserve(o.waveRows.size());
+            for(size_t i=0;i<o.waveRows.size();++i)
+            {
+                const AssaultWaveUnit& row=o.waveRows[i];
+                if(row.army!=-1&&row.army!=army->GetID())continue;
+                if(!WaveRecordStillValid(owner,target,row) ||
+                    (row.army==-1&&!Matches(GET_PLAYER(owner).getUnit(row.unit),found->first,o)))
+                {++omitted;continue;}
+                eligibleRows.push_back(row);
+            }
+        }
+        catch(const std::bad_alloc&){return false;} // Optional metadata uncertainty retains the original policy.
+        int eligibleCapture=INT_MAX;
+        {
+            for(size_t i=0;i<eligibleRows.size();++i)
+                if((eligibleRows[i].roles&1)!=0)eligibleCapture=min(eligibleCapture,eligibleRows[i].eta);
+        }
+        if(eligibleCapture==INT_MAX&&o.captureOwner!=owner&&o.captureOwner!=NO_PLAYER&&o.captureOwner>=0&&o.captureID>=0&&o.captureEta==0)
+        {
+            // Preserve the existing useful-fire policy for a currently visible
+            // adjacent co-belligerent capturer, without crediting its army power.
+            const CvUnit* ally=GET_PLAYER((PlayerTypes)o.captureOwner).getUnit(o.captureID);
+            if(CanCapture(ally,target)&&ally->getDomainType()==army->GetDomainType()&&
+                ally->isNativeDomain(ally->plot())&&plotDistance(*ally->plot(),*target)<=1&&
+                ally->plot()->isVisible(GET_PLAYER(owner).getTeam())&&!ally->isInvisible(GET_PLAYER(owner).getTeam(),false)&&
+                !GET_PLAYER(owner).IsAtWarWith(ally->getOwner())&&GET_PLAYER(ally->getOwner()).IsAtWarWith(target->getOwner()))eligibleCapture=0;
+        }
+        // Earlier safe shots, healing or another army can consume optional
+        // support. Only unchanged eligible rows contribute to this core; an
+        // essential loss still fails the ordinary count/role/power predicates.
+        AssaultWave wave=SelectFirstWave(eligibleRows,Setting("AIAssemblyMinimumCombatUnits",4),
+            EssentialSiege(owner,target->getPlotCity(),army->GetDomainType()),Setting("AIAssemblyMinimumRanged",2),
+            shared.enemyStrength,Setting("AIAssemblyStrengthPercent",150),max(1,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()),
+            eligibleCapture,Setting("AIAssaultFirstWaveMaximumTurns",1),
+            Setting("AIAssaultWaveArrivalSpreadTurns",1),army->GetID(),Setting("AIAssemblyMinimumCombatUnits",4));
+        bool complete=false;const int healing=target->getPlotCity()->GetAssaultHealingForecast(owner,wave.damage,&complete);
+        ready=WaveCanSustain(wave,max(1,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()),
+            healing,Setting("AIAssaultDamageHorizon",4),complete);
+        if(!ready&&!omitted&&(o.wavePathUnknown||!o.captureKnown))return false; // Pure path uncertainty stays unknown; changed insufficient cores cannot leak through count fallback.
+        CvStackingDiagnostics::Record(1,owner,"OPERATION_READINESS","operation=%d army=%d target=%d core=%d ownCore=%d siege=%d capturers=%d strength=%d damage=%d sustained=%d healing=%d healingComplete=%d firstETA=%d lastETA=%d failedMask=%u ready=%d cohortOmitted=%d policy=capability_first_wave",
+            op->GetID(),army->GetID(),target->GetPlotIndex(),wave.units,wave.own,wave.siege,wave.capture,wave.strength,wave.damage,wave.sustain,healing,complete,
+            wave.first==INT_MAX?-1:wave.first,wave.last,wave.failed,ready,omitted);
+        return true;
+    }
+
+    bool OpeningReady(CvAIOperation* op,CvArmyAI* army)
+    {
+        if(!IsCityAttack(op)||!Enabled(op->GetOwner())||Setting("AIWarPreparationEnabled",1)==0)return true;
+        if(!army||!op->GetTargetPlot())return false;
+        CvPlot* target=CityTarget(op);if(!target||target->getOwner()!=op->GetEnemy())return false;
+        const PlayerTypes owner=op->GetOwner();CvPlayer& player=GET_PLAYER(owner);
+        if(player.IsAtWarWith(op->GetEnemy()))
+        {bool ready=false;return TryReadyCoreForArmy(op,army,ready)&&ready;}
+        const int turn=GC.getGame().getGameTurn();
+        if(openingForecastTurn!=turn){openingForecasts.clear();openingForecastTurn=turn;}
+        const OpeningKey key(owner,op->GetID(),army->GetID());
+        std::map<OpeningKey,OpeningForecast>::const_iterator cached=openingForecasts.find(key);
+        const bool visible=target->isVisible(player.getTeam());
+        if(cached!=openingForecasts.end())
+        {
+            const OpeningForecast& f=cached->second;
+            if(!f.complete)return LegacyOpeningReady(op,army);
+            if(f.target!=target->GetPlotIndex()||f.enemy!=target->getOwner()||f.domain!=army->GetDomainType()||
+                f.filled!=(int)army->GetNumSlotsFilled()||f.visible!=visible)return false;
+            if(visible&&(f.hp!=target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()||
+                f.strength!=target->getPlotCity()->getStrengthValue()))return false;
+            for(size_t i=0;i<f.rows.size();++i)if(!WaveRecordStillValid(owner,target,f.rows[i]))return false;
+            return f.ready; // No route retry or hidden reads on a same-turn cache hit.
+        }
+        int cachedForOwner=0;
+        for(std::map<OpeningKey,OpeningForecast>::const_iterator i=openingForecasts.begin();i!=openingForecasts.end();++i)cachedForOwner+=i->first.owner==owner;
+        if(cachedForOwner>=Setting("AIOffensiveSupportMaximumObjectives",8))return false;
+        OpeningForecast forecast;forecast.turn=turn;forecast.target=target->GetPlotIndex();forecast.enemy=target->getOwner();
+        forecast.domain=army->GetDomainType();forecast.filled=(int)army->GetNumSlotsFilled();forecast.visible=visible;
+        if(visible){forecast.hp=target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage();forecast.strength=target->getPlotCity()->getStrengthValue();}
+        int total=0,healthy=0,capture=0,ranged=0,strength=0,siege=0,loop=0,captureEta=INT_MAX;
+        bool complete=true;
+        const int maxTurns=Setting("AIWarOpeningMaximumTurns",3);
+        for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
+        {
+            if(!Usable(u)||u->getDomainType()!=army->GetDomainType()||
+                (u->getArmyID()!=army->GetID()&&!(u->getArmyID()==-1&&HasCommitment(u,target))))continue;
+            ++total;
+            const int healthyPercent=visible?max(GD_INT_GET(AI_OPERATIONAL_PERCENT_HEALTH_FOR_OPERATION),Setting("AIAssaultHealthyPercent",65)):
+                GD_INT_GET(AI_OPERATIONAL_PERCENT_HEALTH_FOR_OPERATION);
+            if((long long)u->GetCurrHitPoints()*100<(long long)u->GetMaxHitPoints()*healthyPercent)continue;
+            const int distance=op->GetStepDistanceBetweenPlots(u->plot(),target);
+            if(distance<0||distance>maxTurns*max(1,u->baseMoves(false))+1)continue;
+            ++healthy;strength+=CvStackingAI::UnitStrength(u);capture+=CanCapture(u,target);ranged+=u->IsCanAttackRanged();
+            siege+=u->getDomainType()==DOMAIN_SEA?u->IsCanAttackRanged():IsSiegeUnit(u);
+            int hit=0,retaliation=0,garrison=0;
+            if(visible)
+            {
+                if(!u->isNativeDomain(u->plot()))continue;
+                // Potential-war operation route is the existing estimate. This
+                // nominal damage forecast does not authorize an actual shot.
+                hit=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(target->getPlotCity(),u,u->plot(),retaliation,garrison);
+                if(hit<=0||retaliation>=u->GetCurrHitPoints())continue;
+            }
+            const int reach=u->IsCanAttackRanged()?u->GetRange():1;
+            const int travel=max(0,distance-reach),moves=max(1,u->baseMoves(false));
+            const int eta=(travel+moves-1)/moves;
+            if(CanCapture(u,target))captureEta=min(captureEta,eta);
+            if(complete)
+            {
+                if(forecast.rows.size()>=(size_t)Setting("AIAssaultWaveMaximumRecords",64)){complete=false;forecast.rows.clear();}
+                else try{forecast.rows.push_back(AssaultWaveUnit(u,eta,hit,retaliation,target));}
+                catch(const std::bad_alloc&){complete=false;forecast.rows.clear();}
+            }
+        }
+        const int enemy=EnemyStrength(owner,target);
+        const int desiredSiege=KnownFortified(owner,target->getPlotCity())?DesiredSiegeUnits(owner,target->getPlotCity(),army->GetDomainType()):0;
+        bool ready=siege>=desiredSiege&&CvStackingAIPolicy::OpeningReady(healthy,total,capture,ranged,strength,enemy,
+            Setting("AIWarOpeningMinimumUnits",4),Setting("AIWarOpeningReadyPercent",75),Setting("AIWarOpeningMinimumRanged",1),Setting("AIWarOpeningStrengthPercent",150));
+        AssaultWave wave;bool healingComplete=false;int healing=0;
+        if(visible&&complete)
+        {
+            wave=SelectFirstWave(forecast.rows,Setting("AIWarOpeningMinimumUnits",4),EssentialSiege(owner,target->getPlotCity(),army->GetDomainType()),
+                Setting("AIWarOpeningMinimumRanged",1),enemy,Setting("AIWarOpeningStrengthPercent",150),max(1,forecast.hp),captureEta,maxTurns,
+                Setting("AIAssaultWaveArrivalSpreadTurns",1),army->GetID(),Setting("AIWarOpeningMinimumUnits",4));
+            healing=target->getPlotCity()->GetAssaultHealingForecast(owner,wave.damage,&healingComplete);
+            ready=WaveCanSustain(wave,max(1,forecast.hp),healing,Setting("AIAssaultDamageHorizon",4),healingComplete);
+        }
+        if(!complete)wave.failed|=ASSAULT_UNKNOWN;
+        forecast.ready=ready;forecast.complete=complete;
+        try{openingForecasts.insert(std::make_pair(key,forecast));}catch(const std::bad_alloc&){} // Optional cache only.
+        CvStackingDiagnostics::Record(1,owner,"WAR_READINESS","operation=%d target=%d total=%d staged=%d capture=%d ranged=%d siege=%d desiredSiege=%d strength=%d ready=%d visible=%d waveUnits=%d ownCore=%d waveSiege=%d waveDamage=%d waveSustain=%d healing=%d healingComplete=%d captureETA=%d firstETA=%d lastETA=%d failedMask=%u known=%d",
+            op->GetID(),target->GetPlotIndex(),total,healthy,capture,ranged,siege,desiredSiege,strength,ready,visible,wave.units,wave.own,wave.siege,wave.damage,wave.sustain,
+            healing,healingComplete,captureEta==INT_MAX?-1:captureEta,wave.first==INT_MAX?-1:wave.first,wave.last,wave.failed,complete);
+        return ready;
+    }
     bool ReadyToDeclare(PlayerTypes owner,PlayerTypes enemy)
     {
         if(!Enabled(owner) || Setting("AIWarPreparationEnabled",1)==0) return true;
         CvPlayer& player=GET_PLAYER(owner);
+        if(player.IsAtWarWith(enemy))return true; // Existing forced/defensive war has no voluntary-opening gate.
         bool ready=false;
         for(size_t i=0;i<player.getNumAIOperations();++i)
         {

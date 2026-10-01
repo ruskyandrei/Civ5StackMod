@@ -128,4 +128,14 @@ class ParserTests(unittest.TestCase):
   self.assertEqual(p['compact_combat_outcomes'],{'events':2,'city_events':1,'unit_events':1,'missing_identities':1})
   self.assertEqual(len(p['city_capture_events']),1);self.assertEqual(p['city_capture_events'][0]['fields']['oldOwner'],2)
   self.assertEqual(p['latest_operations']['8']['fields']['training'],1);self.assertEqual(p['latest_diagnostic_cost']['fields']['dropped'],3)
+ def test_contribution_wave_and_production_evidence(self):
+  text=header()+row('OFFENSIVE_CONTRIBUTION','unit=4 target=20 cityDamage=0 fieldDamage=0 captured=0 cityAttempts=1 fieldActions=0 netProgressTurn=-1')
+  text+=row('OFFENSIVE_CONTRIBUTION','unit=5 target=20 cityDamage=15 fieldDamage=4 captured=0 cityAttempts=2 fieldActions=1 netProgressTurn=10')
+  text+=row('OFFENSIVE_CONTRIBUTION','unit=6 target=20 cityDamage=0 fieldDamage=0 captured=1 cityAttempts=3 fieldActions=1 netProgressTurn=11',turn=11)
+  text+=row('OFFENSIVE_PRODUCTION','city=3 target=20 action=reject reason=4')+row('OFFENSIVE_PRODUCTION','city=3 target=20 action=queued')
+  text+=row('ASSAULT_PLAN','target=20 domain=0 ready=0 failedMask=17')+row('ASSAULT_PLAN','target=20 domain=0 ready=1 failedMask=0',turn=11)
+  self.write('Stacking-contribution.log',text);p=self.parse()['runs'][0]['military']['players']['1']
+  self.assertEqual(p['contributing_units'],[5,6]);self.assertEqual(p['contribution_totals'],{'cityDamage':15,'fieldDamage':4,'captured':1})
+  self.assertEqual(p['production_outcomes'],{'reject:4':1,'queued:unspecified':1})
+  self.assertEqual(p['wave_failure_masks'],{0:1,17:1});self.assertEqual(p['latest_assault_plans']['20:0']['fields']['ready'],1)
 if __name__=='__main__':unittest.main(verbosity=2)

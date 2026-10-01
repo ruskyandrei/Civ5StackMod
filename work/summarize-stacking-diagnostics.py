@@ -44,7 +44,7 @@ def load_segment(path):
 MILITARY_CATEGORIES = frozenset(('CITY_DEFENSE', 'CITY_RETAIN', 'GARRISON_ASSIGN', 'ASSEMBLY_STALL',
     'ASSEMBLY_PROGRESS', 'OPERATION_READINESS', 'OPERATION_ASSEMBLY', 'OPERATION_GATE', 'OPERATION_BUDGET',
     'OP_RECRUIT_FILTER', 'REINFORCEMENT', 'SIEGE_REINFORCE', 'DECISION_SUMMARY', 'UNIT_DECISION',
-    'OFFENSIVE_OBJECTIVE', 'OFFENSIVE_DEMAND', 'OFFENSIVE_SUPPORT', 'OPERATION_ROUTE', 'OPERATION_PROGRESS',
+    'OFFENSIVE_OBJECTIVE', 'OFFENSIVE_DEMAND', 'OFFENSIVE_SUPPORT', 'OFFENSIVE_CONTRIBUTION', 'OFFENSIVE_PRODUCTION', 'ASSAULT_PLAN', 'OPERATION_ROUTE', 'OPERATION_PROGRESS',
     'OPERATION_CONTACT', 'WAR_READINESS', 'WAR_DECLARATION', 'CAPTURE_CANDIDATE', 'CAPTURE_PLAN', 'SIEGE_REASSESS', 'OPERATION_STATUS', 'COMBAT_SUMMARY', 'CITY_CAPTURE', 'DIAGNOSTIC_COST'))
 
 class MilitarySummary:
@@ -61,7 +61,9 @@ class MilitarySummary:
             'offensive_support_actions': Counter(), 'offensive_support_units': set(), 'formation_join_units': set(),
             'route_actions': Counter(), 'capture_plan_outcomes': Counter(), 'siege_reassess_actions': Counter(),
             'war_readiness_outcomes': Counter(), 'maximum_march_idle': 0,
-            'compact_combat_outcomes': Counter(), 'city_capture_events': [], 'latest_diagnostic_cost': None})
+            'compact_combat_outcomes': Counter(), 'city_capture_events': [], 'latest_diagnostic_cost': None,
+            'contribution_totals': Counter(), 'contributing_units': set(), 'production_outcomes': Counter(),
+            'wave_failure_masks': Counter(), 'latest_assault_plans': {}})
         p['counts'][category] += 1
         if category == 'DECISION_SUMMARY': p['decision_samples'].append(detail)
         elif category == 'CITY_DEFENSE' and isinstance(v.get('city'), int):
@@ -102,6 +104,16 @@ class MilitarySummary:
             if isinstance(v.get('unit'), int):
                 p['offensive_support_units'].add(v['unit'])
                 if action == 'joined_formation': p['formation_join_units'].add(v['unit'])
+        elif category == 'OFFENSIVE_CONTRIBUTION':
+            for field in ('cityDamage', 'fieldDamage', 'captured'):
+                if isinstance(v.get(field), int): p['contribution_totals'][field] += max(0, v[field])
+            if isinstance(v.get('unit'), int) and any(v.get(field, 0) > 0 for field in ('cityDamage', 'fieldDamage', 'captured')):
+                p['contributing_units'].add(v['unit'])
+        elif category == 'OFFENSIVE_PRODUCTION':
+            p['production_outcomes'][str(v.get('action', 'unspecified')) + ':' + str(v.get('reason', 'unspecified'))] += 1
+        elif category == 'ASSAULT_PLAN':
+            if isinstance(v.get('failedMask'), int): p['wave_failure_masks'][v['failedMask']] += 1
+            if isinstance(v.get('target'), int): p['latest_assault_plans'][str(v['target']) + ':' + str(v.get('domain', 'unknown'))] = detail
         elif category == 'OPERATION_ROUTE': p['route_actions'][str(v.get('action', 'repaired' if v.get('repaired') == 1 else 'candidate_failed'))] += 1
         elif category == 'CAPTURE_PLAN':
             p['capture_plan_outcomes']['unknown_budget' if v.get('known') == 0 else 'viable' if v.get('unit', -1) >= 0 else 'missing'] += 1

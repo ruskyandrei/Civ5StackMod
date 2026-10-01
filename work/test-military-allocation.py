@@ -290,6 +290,11 @@ namespace CvStackingOffensiveAI {
  vector<int> committed;
  void Reset(){committed.clear();} bool Enabled(int){return false;}bool HasCommitment(const CvUnit*u,const CvPlot*){return u && find(committed.begin(),committed.end(),u->GetID())!=committed.end();}bool JoinArrived(CvUnit*){return false;}bool HoldReserve(CvUnit*){return false;}void CancelCommitment(const CvUnit*){}bool IsCityAttack(const CvAIOperation*){return false;}
  void AddDemands(CvUnit*,vector<Demand>&){}void RecordTransfer(CvUnit*,int,int,int){}
+ // Explicit legacy-test boundary: unknown first-wave evidence keeps the
+ // complete original CoreReady checks active. The composed offensive module
+ // and real route-progress ledger are exercised by integration fixtures.
+ bool TryReadyCoreForArmy(CvAIOperation*,CvArmyAI*,bool&ready){ready=false;return false;}
+ void RecordStageRouteProgress(CvUnit*,int,int,int,int,int){}
 }
 '''
 cpp=out/'allocation-source-test.cpp';cpp.write_text(stubs+offense_stub+header+policy+actual+placement+muster+gather+tests,encoding='utf-8')

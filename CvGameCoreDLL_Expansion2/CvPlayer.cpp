@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvStackingDiagnostics.h"
 #include "CvGlobals.h"
 #include "CvArea.h"
@@ -2928,6 +2929,7 @@ CvCity* CvPlayer::initCity(int iX, int iY, bool bBumpUnits, bool bInitialFoundin
 			pCity->UpdateClosestFriendlyNeighbors();
 	}
 
+	CvStackingOffensiveAI::ProductionCitiesChanged(GetID());
 	return pNewCity;
 }
 
@@ -2948,6 +2950,8 @@ CvCity* CvPlayer::acquireCity(CvCity* pCity, bool bConquest, bool bGift, bool bO
 		return NULL;
 
 	PlayerTypes eOldOwner = pCity->getOwner();
+	CvStackingOffensiveAI::ProductionCitiesChanged(eOldOwner);
+	CvStackingOffensiveAI::ProductionCitiesChanged(GetID());
 	PlayerTypes ePreviousOwner = pCity->getPreviousOwner();
 	PlayerTypes eOriginalOwner = pCity->getOriginalOwner();
 	int iCityX = pCity->getX();
@@ -9210,6 +9214,7 @@ CvUnit* CvPlayer::initUnit(UnitTypes eUnit, int iX, int iY, UnitAITypes eUnitAI,
 	}
 
 	m_kPlayerAchievements.AddUnit(pUnit);
+	CvStackingOffensiveAI::InvalidateProductionOwner(GetID());
 	return pUnit;
 }
 
@@ -9230,6 +9235,7 @@ CvUnit* CvPlayer::initUnitWithNameOffset(UnitTypes eUnit, int nameOffset, int iX
 
 	m_kPlayerAchievements.AddUnit(pUnit);
 
+	CvStackingOffensiveAI::InvalidateProductionOwner(GetID());
 	return pUnit;
 }
 
@@ -9272,6 +9278,7 @@ CvUnit* CvPlayer::initNamedUnit(UnitTypes eUnit, const char* strKey, int iX, int
 
 	m_kPlayerAchievements.AddUnit(pUnit);
 
+	CvStackingOffensiveAI::InvalidateProductionOwner(GetID());
 	return pUnit;
 }
 
@@ -41701,12 +41708,15 @@ CvCity* CvPlayer::addCity()
 {
 	m_iNumUnitsSuppliedCached = -1;
 	m_iNumUnitsSuppliedCachedWarWeariness = -1;
-	return(m_cities.Add());
+	CvCity* city=m_cities.Add();
+	CvStackingOffensiveAI::ProductionCitiesChanged(GetID());
+	return city;
 }
 
 void CvPlayer::deleteCity(int iID)
 {
 	m_cities.Remove(iID);
+	CvStackingOffensiveAI::ProductionCitiesChanged(GetID());
 	m_iNumUnitsSuppliedCached = -1;
 	m_iNumUnitsSuppliedCachedWarWeariness = -1;
 
@@ -42114,6 +42124,7 @@ void CvPlayer::deleteUnit(int iID)
 		}
 	}
 	m_units.Remove(iID);
+	CvStackingOffensiveAI::InvalidateProductionOwner(GetID());
 }
 
 const CvArmyAI* CvPlayer::firstArmyAI(int* pIterIdx, bool bRev) const

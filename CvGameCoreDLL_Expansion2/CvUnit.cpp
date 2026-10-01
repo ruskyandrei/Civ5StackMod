@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 
 #include "CvGameCoreDLLPCH.h"
+#include "CvStackingOffensiveAI.h"
 #include "CvStackingAI.h"
 #include "CvUnit.h"
 #include "CvStackingRules.h"
@@ -30033,7 +30034,9 @@ void CvUnit::setArmyID(int iNewArmyID)
 		OutputDebugString("warning: damaged unit recruited into army!\n");
 	}
 		
+	const bool changed = m_iArmyId != iNewArmyID;
 	m_iArmyId = iNewArmyID;
+	if(changed && m_eOwner != NO_PLAYER) CvStackingOffensiveAI::InvalidateProductionOwner(m_eOwner);
 }
 
 CvString CvUnit::getTacticalZoneInfo() const
