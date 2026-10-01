@@ -29,5 +29,10 @@ overhead; worst allowed growth is about10.748MB. Clearing bucket heads can also
 cost more than the old representation for tiny caches invalidated frequently.
 Native timing, memory and unchanged action/census checks decide adoption.
 
+DLL73's combined native trial with immutable enemy fragments retained all699
+actions and nonempty censuses. The heavy interior turn improved78.703→74.656s;
+this does not isolate the container's contribution. See the progress report
+and `work/test-runs/perf-d73-index-enemy-off-251-255`.
+
 Reproduce with `work/prepare-strength-index-container.py`, then
 `work/test-strength-index-container-prototype.py --production --no-benchmark`.

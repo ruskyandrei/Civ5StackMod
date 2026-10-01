@@ -457,6 +457,25 @@ const std::vector<int>* CvDangerPlots::GetStackDangerDamageIDs(const CvPlot& plo
  return &m_DangerPlots[index].GetStackDangerDamageIDs();
 }
 
+// BEGIN PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+bool CvDangerPlots::AppendStackDangerProbeSources(const CvPlot& plot,int* words,unsigned capacity,unsigned& used) const
+{
+ // Observation never triggers a lazy refresh or changes gameplay-owned data.
+ const int index=plot.GetPlotIndex();
+ if(m_bDirty||!words||used>capacity||index<0||(size_t)index>=m_DangerPlots.size()||!m_DangerPlots[index].m_pPlot)return false;
+ const CvDangerPlotContents& contents=m_DangerPlots[index];
+ const unsigned remaining=capacity-used;
+ if(remaining<2)return false;
+ const unsigned pairs=(remaining-2)/2;
+ if(contents.m_apUnits.size()>pairs||contents.m_apCities.size()>pairs-contents.m_apUnits.size())return false;
+ words[used++]=(int)contents.m_apUnits.size();
+ for(size_t i=0;i<contents.m_apUnits.size();++i){words[used++]=contents.m_apUnits[i].first;words[used++]=contents.m_apUnits[i].second;}
+ words[used++]=(int)contents.m_apCities.size();
+ for(size_t i=0;i<contents.m_apCities.size();++i){words[used++]=contents.m_apCities[i].first;words[used++]=contents.m_apCities[i].second;}
+ return true;
+}
+// END PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+
 int CvDangerPlots::GetDanger(const CvPlot& Plot, const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction)
 {
 	if(m_DangerPlots.empty() || !pUnit)

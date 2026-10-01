@@ -41,6 +41,7 @@ namespace CvStackingDiagnostics
     // Session override resets on load; XML DiagnosticsTacticalSampling defaults off.
     void SetTacticalSamplingEnabled(bool enabled);
     bool GetTacticalSamplingEnabled();
+    bool TryGetPlanSamplingContext(unsigned long& serial, long& epoch); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
     // Inclusive wall samples: sparse parents use denser cadence; each row
     // records its per-part strides/phases. Timing overhead is included.
     // Off entries read only thread-local flags; no clock, lock, settings or log.

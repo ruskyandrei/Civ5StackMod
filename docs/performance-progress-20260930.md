@@ -531,3 +531,20 @@ A separate roster fixture ran during save loading and ended at02:52:37;
 bounded autoplay continued at02:52:50.758. It did not overlap the retained
 252/253 timing intervals. That roster experiment has not passed its runtime
 fixture and is unapplied; its timeout is not a Civ V crash.
+
+## DLL73 combined forecast representation result
+
+The immutable enemy fragment (`84269fd7b`,29,938 production checks) and
+contiguous strength-cache representation (`ddab3d933`,433,070 production checks)
+completed the same OFF replay. All699 native semantic records and nonempty
+censuses match71. Interior252 took36.500s (PLAN11.371s),253 took74.656s
+(PLAN47.002s), versus37.454s/78.703s for71. This paired result supports retaining
+the combined changes; it does not attribute the saving to either one alone or
+establish the30s goal. `perf-d73-index-enemy-off-251-255` preserves comparison,
+native phases, guard logs and acknowledged normal game/service shutdown at
+03:06:37 UTC.
+
+The next diagnostic-only trial measures complete-key overlap among scalar
+danger misses, separately from existing local outcome reuse. Its opt-in,
+bounded metadata cohorts will be used to decide whether broader packet reuse
+has enough native opportunity to justify another representation change.

@@ -178,7 +178,7 @@ namespace
             !strcmp(category,"CITY") || !strncmp(category,"SAMPLE_",7) || !strncmp(category,"DECISION_",9) || !strcmp(category,"UNIT_DECISION")) return 1;
         if(!strncmp(category,"COMBAT_",7) || !strcmp(category,"CITY_CAPTURE")) return 8;
         if(!strcmp(category,"MEMORY")) return 32;
-        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE") || !strcmp(category,"TURN_UPDATE_GAP") || !strcmp(category,"PLAN_SAMPLE")) return 16;
+        if(!strcmp(category,"DIAGNOSTIC_COST") || !strcmp(category,"PLAN_PERF") || !strcmp(category,"TURN_PHASE") || !strcmp(category,"TURN_UPDATE_GAP") || !strcmp(category,"PLAN_SAMPLE") || !strcmp(category,"PLAN_PACKET_PROBE")) return 16; // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
         if(!strncmp(category,"PLAN",4) || !strncmp(category,"RECRUIT",7) || !strcmp(category,"LONG_PLAN") || !strcmp(category,"ATTACK_GATE")) return 4;
         return 2;
     }
@@ -515,6 +515,14 @@ namespace CvStackingDiagnostics
         Lock lock;
         return tacticalSamplingOverride>=0 ? tacticalSamplingOverride!=0 : setting("DiagnosticsTacticalSampling",0)!=0;
     }
+    // BEGIN PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+    bool TryGetPlanSamplingContext(unsigned long& serial,long& epoch)
+    {
+        // TLS/epoch reads only; no settings, lock, clock or thread-ID syscall.
+        if(!planSamples.enabled||planSamples.depth!=1||planSamples.epoch!=ReadPlanSampleEpoch())return false;
+        serial=planSamples.serial;epoch=planSamples.epoch;return true;
+    }
+    // END PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
     PlanSampleSession::PlanSampleSession(PlayerTypes player,int targetPlotIndex):entered(true),outer(false),serial(0),threadState(&planSamples)
     {
         if(planSamples.depth++)
