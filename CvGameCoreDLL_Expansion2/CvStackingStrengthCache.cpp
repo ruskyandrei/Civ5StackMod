@@ -1,7 +1,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingStrengthCache.h"
-#include <unordered_map>
-#include <deque>
+#include <algorithm>
+#include <vector>
 #include <cstring>
 #include "LintFree.h"
 
@@ -23,10 +23,35 @@ namespace CvStackingStrengthCache
 				return result;
 			}
 		};
-		typedef std::tr1::unordered_map<Key, int, Hash> Table;
-		Table table;
-		// Node references survive rehash. FIFO stores references, not duplicate keys.
-		std::deque<const Key*> order;
+		// Indices survive vector growth. The ring replaces only the oldest slot;
+		// bucket links retain full-key equality and never depend on addresses.
+		struct Node { Key key; int value, next, previous; size_t hash; };
+		std::vector<Node> nodes;
+		std::vector<int> buckets;
+		unsigned int oldest = 0;
+		size_t Find(const Key& key, size_t hash)
+		{
+			if (buckets.empty()) return (size_t)-1;
+			for (int i = buckets[hash & (buckets.size() - 1)]; i != -1; i = nodes[i].next)
+				if (nodes[i].hash == hash && nodes[i].key == key) return (size_t)i;
+			return (size_t)-1;
+		}
+		void Link(unsigned int index)
+		{
+			Node& node = nodes[index];
+			const size_t bucket = node.hash & (buckets.size() - 1);
+			node.previous = -1;
+			node.next = buckets[bucket];
+			if (node.next != -1) nodes[node.next].previous = index;
+			buckets[bucket] = index;
+		}
+		void Unlink(unsigned int index)
+		{
+			Node& node = nodes[index];
+			if (node.previous != -1) nodes[node.previous].next = node.next;
+			else buckets[node.hash & (buckets.size() - 1)] = node.next;
+			if (node.next != -1) nodes[node.next].previous = node.previous;
+		}
 		__declspec(align(4)) volatile LONG owner = 0;
 		__declspec(align(4)) volatile LONG epoch = 0;
 		LONG cachedEpoch = 0;
@@ -46,8 +71,9 @@ namespace CvStackingStrengthCache
 		bool IsOwner() { return Read(owner) == (LONG)GetCurrentThreadId(); }
 		void Clear()
 		{
-			order.clear();
-			table.clear();
+			nodes.clear();
+			std::fill(buckets.begin(), buckets.end(), -1);
+			oldest = 0;
 		}
 	}
 
@@ -69,6 +95,24 @@ namespace CvStackingStrengthCache
 		Clear();
 		stats = Stats();
 		stats.limit = entries > 65536 ? 65536 : entries;
+		size_t bucketCount = 1;
+		while (bucketCount < stats.limit * 2) bucketCount <<= 1;
+		try
+		{
+			buckets.assign(bucketCount, -1);
+		}
+		catch (...)
+		{
+			// A throwing constructor has no destructor. Release the claimed cache
+			// before propagating allocation failure to the existing caller.
+			std::vector<Node>().swap(nodes);
+			std::vector<int>().swap(buckets);
+			depth = 0;
+			entered = false;
+			stats = Stats();
+			InterlockedExchange(&owner, 0);
+			throw;
+		}
 		cachedEpoch = Read(epoch);
 	}
 
@@ -82,8 +126,8 @@ namespace CvStackingStrengthCache
 			return;
 		}
 		// Queries from other threads bypass throughout destruction too.
-		std::deque<const Key*>().swap(order);
-		Table().swap(table); // Also release retained buckets in the 32-bit game.
+		std::vector<Node>().swap(nodes);
+		std::vector<int>().swap(buckets); // Release both retained allocations in the 32-bit game.
 		InterlockedExchange(&owner, 0);
 	}
 
@@ -106,18 +150,18 @@ namespace CvStackingStrengthCache
 		long current;
 		if (!Context(current) || generation != current)
 			return false;
-		Table::const_iterator found = table.find(key);
+		const size_t found = Find(key, Hash()(key));
 		unsigned long& hits = key.values[0] == 0 ? stats.meleeHits : key.values[0] == 1 ? stats.rangedHits :
 			key.values[0] == 2 ? stats.attackHits : stats.defenseHits;
 		unsigned long& misses = key.values[0] == 0 ? stats.meleeMisses : key.values[0] == 1 ? stats.rangedMisses :
 			key.values[0] == 2 ? stats.attackMisses : stats.defenseMisses;
-		if (found == table.end())
+		if (found == (size_t)-1)
 		{
 			++misses;
 			return false;
 		}
 		++hits;
-		value = found->second;
+		value = nodes[found].value;
 		return true;
 	}
 
@@ -125,19 +169,33 @@ namespace CvStackingStrengthCache
 	{
 		long current;
 		// Do not admit a result calculated across an invalidation.
-		if (!Context(current) || generation != current || table.find(key) != table.end())
+		if (!Context(current) || generation != current)
 			return;
-		if (table.size() >= stats.limit)
+		const size_t hash = Hash()(key);
+		if (Find(key, hash) != (size_t)-1)
+			return;
+		unsigned int index;
+		if (nodes.size() >= stats.limit)
 		{
-			Table::iterator victim = table.find(*order.front());
-			order.pop_front();
-			table.erase(victim);
+			index = oldest;
+			Unlink(index);
+			oldest = (oldest + 1) % stats.limit;
 			++stats.evictions;
 		}
-		std::pair<Table::iterator, bool> added = table.insert(std::make_pair(key, value));
-		order.push_back(&added.first->first);
-		if (table.size() > stats.peakEntries)
-			stats.peakEntries = (unsigned int)table.size();
+		else
+		{
+			if (nodes.size() == nodes.capacity())
+				nodes.reserve(std::min(stats.limit, std::max(256u, (unsigned int)nodes.size() * 2)));
+			index = (unsigned int)nodes.size();
+			nodes.push_back(Node());
+		}
+		Node& node = nodes[index];
+		node.key = key;
+		node.value = value;
+		node.hash = hash;
+		Link(index);
+		if (nodes.size() > stats.peakEntries)
+			stats.peakEntries = (unsigned int)nodes.size();
 	}
 
 	void Invalidate() { InterlockedIncrement(&epoch); }
@@ -147,7 +205,7 @@ namespace CvStackingStrengthCache
 		if (!IsOwner())
 			return Stats();
 		Stats result = stats;
-		result.entries = (unsigned int)table.size();
+		result.entries = (unsigned int)nodes.size();
 		return result;
 	}
 }
