@@ -24,10 +24,12 @@ PARTS = (
 )
 ARRAYS = ("calls", "selected", "samples", "ticks", "maxTicks")
 STRIDE = 4096
+CADENCE_STRIDES = (4096,4096,4096,4096,4096,256,256,4096,64,4096,4096,4096,4096)
 MAX_U64 = (1 << 64)-1
 SEMANTICS = "inclusive_same_thread_wall_samples"
 NOTES = [
     "Times are inclusive same-thread WALL QPC samples, not CPU time.",
+    "Timing envelopes include sampler/Finish overhead and QPC granularity; tiny helpers can be dominated by this floor. No calibrated subtraction is applied.",
     "Parts overlap. Do not sum estimates from different parts or subtract parent/child estimates as exclusive cost.",
     "Systematic stride selection can alias periodic work; low sample counts have especially uncertain estimates.",
     "Selected outer scopes can include suppressed nested-search or callback wall time.",
@@ -83,10 +85,30 @@ def decode(record):
             errors.append(str(error))
     if errors:
         return None, errors
+    cadence = value.get("cadenceVersion", 1)
+    if cadence == 1 and not any(key in value for key in ("strides", "phases")):
+        strides = [STRIDE]*len(PARTS)
+        phases = [(value["phase"]+index*97) & (STRIDE-1) for index in range(len(PARTS))]
+    elif cadence == 2:
+        try:
+            strides = csv_integers(value.get("strides"), "strides")
+            phases = csv_integers(value.get("phases"), "phases")
+        except ValueError as error:
+            return None, [str(error)]
+        if tuple(strides) != CADENCE_STRIDES:
+            errors.append("unsupported_v2_part_strides")
+        if any(not 0 <= phase < stride for stride,phase in zip(strides,phases)):
+            errors.append("v2_part_phase_out_of_bounds")
+        if not errors and any(phase != ((value["phase"]+index*97) & (strides[index]-1)) for index,phase in enumerate(phases)):
+            errors.append("v2_part_phase_disagrees_with_base_phase")
+    else:
+        return None, ["unsupported_cadence_version_or_unversioned_metadata"]
+    if errors:
+        return None, errors
     for index, name in enumerate(PARTS):
         calls, selected, samples, ticks, maximum = (arrays[key][index] for key in ARRAYS)
-        phase = (value["phase"]+index*97) & (STRIDE-1)
-        expected_selected = (calls+phase)//STRIDE
+        phase, stride = phases[index], strides[index]
+        expected_selected = (calls+phase)//stride
         if not samples <= selected <= calls:
             errors.append(f"{name}: sample_counts_out_of_order")
         if selected != expected_selected:
@@ -118,7 +140,7 @@ def decode(record):
             part_warnings.append("Completed samples measured zero ticks; zero-resolution measurements do not establish zero cost.")
         if chosen != samples:
             part_warnings.append("Selected sample completion is incomplete.")
-        parts.append(dict(part=name, calls=calls, selected=chosen, samples=samples,
+        parts.append(dict(part=name, stride=strides[index], phase=phases[index], calls=calls, selected=chosen, samples=samples,
             sampling_fraction=samples/calls if calls else None,
             selected_completion_fraction=samples/chosen if chosen else None,
             sampled_ticks=ticks, max_ticks=maximum, sampled_wall_ms=milliseconds,
@@ -128,6 +150,7 @@ def decode(record):
             warnings=part_warnings))
     return dict(turn=record["turn"], player=record["player"], targetPlot=value["targetPlot"],
         serial=value["serial"], thread=value["thread"], stride=STRIDE, phase=value["phase"],
+        cadenceVersion=cadence, strides=strides, phases=phases,
         qpcFrequency=value["qpcFrequency"], qpcFrequencyCalls=value["qpcFrequencyCalls"],
         qpcReads=value["qpcReads"], clockFailures=value["clockFailures"],
         tick=record["tick"], origin=record.get("origin"), parts=parts, warnings=warnings), []
@@ -239,7 +262,7 @@ def analyze(records, quality=None, turn=None, player=None, map_width=None):
         warnings.append("Native archive is partial. Counts describe retained complete records only.")
     if quality.get("clock_reversals"):
         warnings.append("Native clock order contains reversals; candidate time adjacency is not reliable evidence of shared search identity.")
-    return dict(schema="native_PLAN_SAMPLE_v1", filters=dict(turn=turn, player=player, map_width=map_width),
+    return dict(schema="native_PLAN_SAMPLE_v1_v2", filters=dict(turn=turn, player=player, map_width=map_width),
         measurement_notes=NOTES, warnings=warnings, archive_quality=quality,
         valid_sample_rows=len(plans), invalid_sample_rows=len(invalid), invalid_rows=invalid,
         association_counts=dict(Counter(row["plan_association"]["status"] for row in plans)),

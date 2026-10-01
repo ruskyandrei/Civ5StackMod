@@ -41,7 +41,8 @@ namespace CvStackingDiagnostics
     // Session override resets on load; XML DiagnosticsTacticalSampling defaults off.
     void SetTacticalSamplingEnabled(bool enabled);
     bool GetTacticalSamplingEnabled();
-    // Sparse inclusive wall-time samples inside one owned tactical search.
+    // Inclusive wall samples: sparse parents use denser cadence; each row
+    // records its per-part strides/phases. Timing overhead is included.
     // Off entries read only thread-local flags; no clock, lock, settings or log.
     enum PlanSamplePart
     {

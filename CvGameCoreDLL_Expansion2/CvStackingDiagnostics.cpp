@@ -49,6 +49,10 @@ namespace
     unsigned long phaseGeneration = 0;
     // BEGIN PLAN_SAMPLE_DIAGNOSTIC_ONLY
     const unsigned long PLAN_SAMPLE_STRIDE = 4096;
+    // Sparse expensive parents need denser samples; dense leaf/key/math probes
+    // retain their existing cadence. These values only affect diagnostics.
+    const unsigned long PLAN_SAMPLE_STRIDES[CvStackingDiagnostics::PLAN_SAMPLE_PARTS] =
+        {4096,4096,4096,4096,4096,256,256,4096,64,4096,4096,4096,4096};
     int tacticalSamplingOverride = -1;
     struct PlanSampleCounter
     {
@@ -537,7 +541,8 @@ namespace CvStackingDiagnostics
         planSamples.turn=GC.getGame().getGameTurn();
         planSamples.target=targetPlotIndex;
         planSamples.epoch=ReadPlanSampleEpoch();
-        planSamples.phase=((unsigned long)targetPlotIndex*1664525UL+1013904223UL)&(PLAN_SAMPLE_STRIDE-1);
+        // Rotate repeated targets by the outer TLS serial, without gameplay RNG.
+        planSamples.phase=((unsigned long)targetPlotIndex*1664525UL+serial*2246822519UL+1013904223UL)&(PLAN_SAMPLE_STRIDE-1);
         planSamples.frequency=(unsigned __int64)frequency.QuadPart;
         planSamples.clockReads=planSamples.clockFailures=0;
         planSamples.enabled=true;
@@ -555,19 +560,23 @@ namespace CvStackingDiagnostics
             !categoryEnabledUnlocked(1,planSamples.actor,"PLAN_SAMPLE")) return;
         // One bounded row per outer search, including early returns/unwinding.
         // Lists share the fixed part ordering below; durations overlap.
-        char calls[384]="",selected[384]="",samples[384]="",ticks[384]="",maximum[384]="";
-        size_t a=0,b=0,c=0,d=0,e=0;
+        char calls[384]="",selected[384]="",samples[384]="",ticks[384]="",maximum[384]="",strides[96]="",phases[96]="";
+        size_t a=0,b=0,c=0,d=0,e=0,f=0,g=0;
         for(int i=0;i<PLAN_SAMPLE_PARTS;++i)
         {
             const PlanSampleCounter& part=planSamples.counter[i];
+            const unsigned long stride=PLAN_SAMPLE_STRIDES[i];
+            const unsigned long phase=(planSamples.phase+(unsigned long)i*97UL)&(stride-1);
+            f+=sprintf_s(strides+f,sizeof(strides)-f,"%s%lu",i?",":"",stride);
+            g+=sprintf_s(phases+g,sizeof(phases)-g,"%s%lu",i?",":"",phase);
             a+=sprintf_s(calls+a,sizeof(calls)-a,"%s%I64u",i?",":"",part.calls);
             b+=sprintf_s(selected+b,sizeof(selected)-b,"%s%I64u",i?",":"",part.selected);
             c+=sprintf_s(samples+c,sizeof(samples)-c,"%s%I64u",i?",":"",part.samples);
             d+=sprintf_s(ticks+d,sizeof(ticks)-d,"%s%I64u",i?",":"",part.ticks);
             e+=sprintf_s(maximum+e,sizeof(maximum)-e,"%s%I64u",i?",":"",part.maximum);
         }
-        Record(1,planSamples.actor,"PLAN_SAMPLE","targetPlot=%d serial=%lu thread=%lu stride=%lu phase=%lu qpcFrequency=%I64u qpcFrequencyCalls=1 qpcReads=%I64u clockFailures=%I64u parts=combatMove,turnEnd,stackScore,unitDanger,dangerKey,dangerLeaf,preferred,moveUpdate,nextAssignments,citySimulation,unitSimulation,damageMath,randomDamageMath calls=%s selected=%s samples=%s ticks=%s maxTicks=%s semantics=inclusive_same_thread_wall_samples overlap=parent_child_not_additive lifecycle=outer_return_or_unwind; raw ticks require frequency conversion; stride estimates are approximate and systematic samples can alias work; dangerKey includes lookup, dangerLeaf is scalar-miss/outcome-resolution excluding admission; no native CPU-share claim",
-            planSamples.target,serial,planSamples.thread,PLAN_SAMPLE_STRIDE,planSamples.phase,planSamples.frequency,
+        Record(1,planSamples.actor,"PLAN_SAMPLE","targetPlot=%d serial=%lu thread=%lu stride=%lu phase=%lu cadenceVersion=2 strides=%s phases=%s qpcFrequency=%I64u qpcFrequencyCalls=1 qpcReads=%I64u clockFailures=%I64u parts=combatMove,turnEnd,stackScore,unitDanger,dangerKey,dangerLeaf,preferred,moveUpdate,nextAssignments,citySimulation,unitSimulation,damageMath,randomDamageMath calls=%s selected=%s samples=%s ticks=%s maxTicks=%s semantics=inclusive_same_thread_wall_samples overlap=parent_child_not_additive lifecycle=outer_return_or_unwind; raw ticks require frequency conversion; stride estimates are approximate and systematic samples can alias work; dangerKey includes lookup, dangerLeaf is scalar-miss/outcome-resolution excluding admission; no native CPU-share claim",
+            planSamples.target,serial,planSamples.thread,PLAN_SAMPLE_STRIDE,planSamples.phase,strides,phases,planSamples.frequency,
             planSamples.clockReads,planSamples.clockFailures,calls,selected,samples,ticks,maximum);
     }
     PlanSampleScope::PlanSampleScope(PlanSamplePart value,bool eligible):sampled(false),part(value),serial(0),epoch(0),started(0),threadState(NULL)
@@ -575,8 +584,9 @@ namespace CvStackingDiagnostics
         if(!eligible || !planSamples.enabled || planSamples.depth!=1 || value<0 || value>=PLAN_SAMPLE_PARTS) return;
         PlanSampleCounter& count=planSamples.counter[value];
         ++count.calls;
-        const unsigned long phase=(planSamples.phase+(unsigned long)value*97UL)&(PLAN_SAMPLE_STRIDE-1);
-        if((count.calls+phase)&(PLAN_SAMPLE_STRIDE-1)) return;
+        const unsigned long stride=PLAN_SAMPLE_STRIDES[value];
+        const unsigned long phase=(planSamples.phase+(unsigned long)value*97UL)&(stride-1);
+        if((count.calls+phase)&(stride-1)) return;
         if(planSamples.epoch!=ReadPlanSampleEpoch()) { planSamples.enabled=false; return; }
         ++count.selected;
         LARGE_INTEGER now;
