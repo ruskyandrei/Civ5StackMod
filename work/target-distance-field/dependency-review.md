@@ -1,7 +1,7 @@
 # Target-distance field: measurement and future reuse boundary
 
 This stage adds measurement only. It does not skip either flood or retain fields
-across calls. Control is DLL91 e8b5bd3e6; source bytes, full helper reversal and
+across calls. Current control is DLL93 e38b19798; source bytes, full helper reversal and
 existing emitter/reader behavior are recorded in source-proof.json and the
 32-check light test-result.json. C++ compilation has not been performed here.
 
@@ -88,3 +88,7 @@ classification delta. Root may compose/apply it later. Candidate copies preserve
 the current BOM and CRLF convention. `stage.py` only emits ignored artifacts;
 `test.py` performs light source-binding/reversal/emitter-gate/parser checks.
 Neither tool opens the game, connects to a controller or compiles the DLL.
+`test.py --production` derives the entire expected timer candidate from pinned
+DLL93, verifies both complete live files and seven unchanged dependencies,
+then runs the32 checks against those actual live source/reader files. It saves
+separate production-source-proof.json and production-test-result.json.

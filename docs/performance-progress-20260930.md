@@ -987,3 +987,35 @@ and address space stayed within thresholds. Evidence:
 `Stacking-20261001T103155-765-p28004-r1`, comparison-d91, native-counter comparison,
 phases252/253 and normal-exit proof. Next are the exact resident-key shortcut and
 a separate bounded timer for repeated legacy land/naval target-distance floods.
+
+## DLL94 target-distance field measurement
+
+Commit `3601cc10c` adds one existing Summary phase around the original helper,
+plus reader family recognition. Exact full-source reversal to93 is verified;
+rebased production checks32/0 bind both full candidates and seven unchanged
+files, and the phase reader passes48 checks. No fields are reused or queries
+skipped. Build68.171s under `work/msvc-output/Release/20261001-114416`;
+DLL `56F41E5452DF606E87FB2D6E808D2BDA009C9FBEC7B128CE7318CB81C78002FD`,
+PDB `A478B103BEB9FD1FA8CBF138E293C4E50B9112263AD22AF297B8FA3FB8D077AA`.
+Stage/deploy2368 verified, backup
+`deployment-replaced-20261001-114803-9b57b316`. Graphics/saves unchanged.
+
+The251→255 replay matches93's699 records, both nonempty censuses and all34
+recorded non-timing cache fields across455 searches; physical estimates also
+match. Interior252/253 took31.515/58.047s (PLAN8.997/33.331s), versus
+93's31.765/58.157s. Instrumented timing is not a clean speed result.
+The distance helper's72/100 calls sum79/218ms inclusive. Coarse GetTickCount
+resolution means zero rows are not zero work; this is not exact CPU cost.
+The observed cost does not support a multi-second field redesign priority.
+Estimated outside-PLAN spans69/205ms overlap its approximate boundary slightly.
+
+Exact normal closure10:55:13UTC, game22752/start639264485501072543 and service
+36800 absent, guards disarmed on completion. Source/test evidence remains in
+`work/target-distance-field`; native evidence is
+`work/test-runs/perf-d94-distance-field-timing-251-255`, run
+`Stacking-20261001T105227-071-p22752-r1`, comparison/counter/phases reports and
+`distance-field-summary.json`. Next: actual-source resident even-key reuse and
+a separately reviewed packet-miss outline. DLL94 object assembly confirms the
+existing hit function reserves2,272 local bytes and pays GS/EH setup before its
+first fixed-danger gate. Native savings remain unmeasured. Goal <30s remains
+unmet; best complete dense-turn measurement remains57.531s.
