@@ -7950,6 +7950,33 @@ public:
   if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration!=handle.generation)return false;
   result=value.scalar;return true; // Only the copied integer escapes.
  }
+// Owner-only APIs copy data before callbacks; no key/slot reference escapes.
+ bool TryCopyScalarPrefix(const ScalarHandle& handle,const int* fixed,int* out,size_t capacity,
+  size_t warmedCapacity,size_t& prefixWords)const
+ {
+  if(handle.table!=this||!scalarHandlesEnabled||scalarLifetimeExhausted||handle.lifetime!=scalarLifetime||
+   !slots||handle.slot<0||static_cast<size_t>(handle.slot)>=slotCapacity||handle.generation==0)return false;
+  const Slot& value=slots[handle.slot];
+  if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration!=handle.generation||
+   value.keyWords<6||value.keyWords>warmedCapacity||!fixed||!out)return false;
+  const int* data=value.Data();if(!std::equal(fixed,fixed+4,data))return false;
+  const int members=data[4];
+  if(members<0||static_cast<size_t>(members)>(value.keyWords-6)/2)return false;
+  const size_t count=5+2*static_cast<size_t>(members);if(count>capacity)return false;
+  std::copy(data,data+count,out);prefixWords=count;return true;
+ }
+ bool TryMatchScalarSuffix(const ScalarHandle& handle,const int* suffix,size_t suffixWords,
+  size_t prefixWords,int& result)const
+ {
+  if(handle.table!=this||!scalarHandlesEnabled||scalarLifetimeExhausted||handle.lifetime!=scalarLifetime||
+   !slots||handle.slot<0||static_cast<size_t>(handle.slot)>=slotCapacity||handle.generation==0)return false;
+  const Slot& value=slots[handle.slot];
+  if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration!=handle.generation||
+   prefixWords>value.keyWords||suffixWords!=value.keyWords-prefixWords||!suffix)return false;
+  if(!std::equal(suffix,suffix+suffixWords,value.Data()+prefixWords))return false;
+  result=value.scalar;return true;
+ }
+
  // Stable handle. The caller copies scalar/pointer/member data before Context.
  const Slot& At(int handle)const{return slots[handle];}
  int Insert(const StackForecastKey& key,Pending& pending,int kind,bool& inserted)
@@ -9495,20 +9522,20 @@ ResidentArrivalRequest::ResidentArrivalRequest(const CvUnit* u,const CvPlot* p,i
 ResidentArrivalRequest::~ResidentArrivalRequest(){gResidentArrivalRequest=previous;}
 struct ResidentScalarCertificate
 {
- vector<int> key;const CvUnit* unit;int extra;bool canonical,valid;
+ const CvUnit* unit;int extra;bool canonical,valid;
  IndexedStore::ScalarHandle handle;
  ResidentScalarCertificate():unit(NULL),extra(0),canonical(false),valid(false){}
- size_t Bytes()const{return key.capacity()*sizeof(int);}
- void Release(){valid=false;vector<int>().swap(key);}
+ size_t Bytes()const{return 0;} // The resident table already owns the exact key.
+ void Release(){valid=false;}
 };
 struct ParentStackPreparationView;
 struct ResidentScalarKeyWork
 {
  enum { MAX_PREFIX_WORDS=128 }; // Optional shortcut only; oversized keys use original path.
- int prefix[MAX_PREFIX_WORDS];size_t count;
+ int prefix[MAX_PREFIX_WORDS];size_t count;unsigned long revision;long scene;
  ResidentScalarCertificate* certificate;ParentStackPreparationView* view;
  ResidentArrivalRequest* request;IndexedStore::ScalarHandle handle;
- ResidentScalarKeyWork():count(0),certificate(NULL),view(NULL),request(NULL){}
+ ResidentScalarKeyWork():count(0),revision(0),scene(0),certificate(NULL),view(NULL),request(NULL){}
 };
 // The original owned danger-key loan protects this scratch through projection.
 // Private/nested/foreign callers never touch it; no Slot reference is retained.
@@ -9786,46 +9813,49 @@ static ParentStackPreparationCell* ResidentArrivalCell(const CvUnit* unit,const 
  if(lo==storage.count||storage.lookup[lo].first!=index)return NULL;
  return &storage.cells[storage.lookup[lo].second];
 }
+static bool ResidentScalarLexicalProof()
+{
+ const ResidentScalarKeyWork& work=gResidentScalarKeyWork;
+ return work.certificate&&work.request&&gResidentArrivalRequest==work.request&&gParentStackPreparationView==work.view&&
+  work.view&&work.view->borrowed&&!work.view->disabled&&gParentStackPreparationStorage.busy&&
+  work.revision==gStackForecastRevision&&work.scene==gStackForecastSceneEpoch;
+}
 static bool HasResidentScalarCaptureContext(const CvUnit* unit,const CvPlot* plot,
  const vector<const CvUnit*>& candidates,const SUnitIDValueContainer& damage,bool ownedLoan)
-{return ResidentArrivalCell(unit,plot,candidates,damage,ownedLoan)!=NULL;}
+{
+ if(!ownedLoan||!ResidentScalarLexicalProof())return false;
+ const ResidentArrivalRequest& request=*gResidentScalarKeyWork.request;
+ return request.unit==unit&&request.plot==plot&&&request.candidates==&candidates&&&request.damage==&damage;
+}
 static bool PrepareResidentScalarKey(const CvUnit* unit,const CvPlot* plot,const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& damage,const SUnitIDValueContainer& enemy,const int* fixed,bool canonical,bool ownedLoan,StackForecastKey& key)
 {
- ParentStackPreparationCell* cell=ResidentArrivalCell(unit,plot,candidates,damage,ownedLoan);
- if(!cell)return false;
- ResidentScalarCertificate& certificate=cell->resident;int ignored=0;
- if(!certificate.valid||certificate.unit!=unit||certificate.extra!=gResidentArrivalRequest->extra||certificate.canonical!=canonical||
-  certificate.key.size()<6||!std::equal(fixed,fixed+4,certificate.key.begin())||
-  !gIndexed.TryReadScalarHandle(certificate.handle,ignored)) {++gResidentRejects;return false;}
- const int members=certificate.key[4];
- if(members<0||static_cast<size_t>(members)>(certificate.key.size()-6)/2) {++gResidentRejects;return false;}
- const size_t prefix=5+2*static_cast<size_t>(members);
- if(prefix>ResidentScalarKeyWork::MAX_PREFIX_WORDS||key.state.capacity()<certificate.key.size()) {++gResidentRejects;return false;}
+ if(!ownedLoan)return false; // Private/foreign calls cannot disturb the owner's scratch.
  ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- work.count=prefix;std::copy(certificate.key.begin(),certificate.key.begin()+prefix,work.prefix);
- work.certificate=&certificate;work.handle=certificate.handle;work.view=gParentStackPreparationView;work.request=gResidentArrivalRequest;
- // Exactly the original source reader/refresh/NULL fallback, once. Captured
- // prefix is copied before it can invalidate/release optional parent metadata.
+ work.certificate=NULL;work.view=NULL;work.request=NULL;
+ ParentStackPreparationCell* cell=ResidentArrivalCell(unit,plot,candidates,damage,true);
+ if(!cell)return false;
+ work.certificate=&cell->resident;work.view=gParentStackPreparationView;work.request=gResidentArrivalRequest;
+ work.revision=gStackForecastRevision;work.scene=gStackForecastSceneEpoch;
+ ResidentScalarCertificate& certificate=cell->resident;
+ if(!certificate.valid||certificate.unit!=unit||certificate.extra!=work.request->extra||certificate.canonical!=canonical||
+  !gIndexed.TryCopyScalarPrefix(certificate.handle,fixed,work.prefix,ResidentScalarKeyWork::MAX_PREFIX_WORDS,key.state.capacity(),work.count))
+ {++gResidentRejects;return false;}
+ work.handle=certificate.handle;
+ // No retained slot/key pointer spans this original refreshing/callback seam.
  AppendStackDamageProjected(key,enemy,unit,plot);
  return true;
 }
 static bool ReadPreparedResidentScalar(int& result)
 {
  ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- if(gResidentArrivalRequest!=work.request||gParentStackPreparationView!=work.view||!work.view||work.view->disabled||
-  !work.certificate||!work.certificate->valid)return false;
- const vector<int>& saved=work.certificate->key;
- if(saved.size()<work.count||saved.size()-work.count!=gStackDangerScratch.state.size()||
-  !std::equal(saved.begin()+work.count,saved.end(),gStackDangerScratch.state.begin()))return false;
- if(!gIndexed.TryReadScalarHandle(work.handle,result))return false;
+ if(!ResidentScalarLexicalProof()||!work.certificate->valid||gStackDangerScratch.state.empty())return false;
+ if(!gIndexed.TryMatchScalarSuffix(work.handle,&gStackDangerScratch.state[0],gStackDangerScratch.state.size(),work.count,result))return false;
  ++gResidentHits;return true;
 }
 static void CompletePreparedResidentScalarKey(StackForecastKey& key)
 {
  const size_t suffix=key.state.size();ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- // Individual push_back preserves VC9 growth/admission capacity. Bulk front
- // insertion would choose a different capacity on some suffix mismatches.
  for(size_t i=0;i<work.count;++i)key.state.push_back(work.prefix[i]);
  std::rotate(key.state.begin(),key.state.begin()+suffix,key.state.end());
  ++gResidentRejects;
@@ -9834,33 +9864,13 @@ static void CaptureResidentScalarKey(const CvUnit* unit,const CvPlot* plot,const
  const SUnitIDValueContainer& damage,const int* fixed,bool canonical,bool ownedLoan,const StackForecastKey& key,
  const IndexedStore::ScalarHandle& handle)
 {
- ParentStackPreparationCell* cell=ResidentArrivalCell(unit,plot,candidates,damage,ownedLoan);int ignored=0;
- if(!cell||!gIndexed.TryReadScalarHandle(handle,ignored)||key.state.size()<6)return;
+ // The original post-key Context and existing full-key lookup precede this
+ // allocation-free publication. No engine getters or callbacks intervene.
+ if(!HasResidentScalarCaptureContext(unit,plot,candidates,damage,ownedLoan)||handle.table!=&gIndexed||handle.generation==0||key.state.size()<6)return;
  const int members=key.state[4];
  if(members<0||static_cast<size_t>(members)>(key.state.size()-6)/2||5+2*static_cast<size_t>(members)>ResidentScalarKeyWork::MAX_PREFIX_WORDS)return;
- ParentStackPreparationStorage& storage=gParentStackPreparationStorage;
- ParentStackPreparationView* const view=gParentStackPreparationView;
- ResidentArrivalRequest* const request=gResidentArrivalRequest;
- const unsigned long revision=gStackForecastRevision;const long scene=gStackForecastSceneEpoch;
- ResidentScalarCertificate& certificate=cell->resident;const size_t before=certificate.Bytes();certificate.valid=false;
- bool copied=false;
- try {certificate.key=key.state;copied=true;}
- catch(const std::bad_alloc&) {}
- // Optional allocation failures/invalidation never recompute the scalar hit.
- // Context was already validated at the original post-key seam. Check only
- // its captured ownership/lifetime fields before publishing this certificate.
- if(!copied||gParentStackPreparationView!=view||gResidentArrivalRequest!=request||!view||view->disabled||
-  !storage.busy||revision!=gStackForecastRevision||scene!=gStackForecastSceneEpoch||
-  scene!=CvStackingStrengthCache::SceneEpoch()||!gIndexed.TryReadScalarHandle(handle,ignored))
- {
-  certificate.Release();storage.retainedBytes=0;
-  for(size_t i=0;i<ParentStackPreparationStorage::MAX_CELLS;++i)storage.retainedBytes+=storage.CellBytes(i);
-  return;
- }
- storage.retainedBytes=storage.retainedBytes-before+certificate.Bytes();
- if(storage.RetainedBytes()>gStackKeyPayloadLimit)
- {storage.retainedBytes-=certificate.Bytes();certificate.Release();return;}
- certificate.unit=unit;certificate.extra=request->extra;certificate.canonical=canonical;certificate.handle=handle;
+ ResidentScalarCertificate& certificate=*gResidentScalarKeyWork.certificate;
+ certificate.unit=unit;certificate.extra=gResidentScalarKeyWork.request->extra;certificate.canonical=canonical;certificate.handle=handle;
  certificate.valid=true;++gResidentCaptures;
 }
 
