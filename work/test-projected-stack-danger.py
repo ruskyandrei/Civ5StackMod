@@ -24,8 +24,6 @@ assert city.count('enemyDamage')==2 and stack.count('enemyDamage')==4
 assert 'friendlyDamage' in air and 'extraDamage.GetValue(pUnit->GetID())' in collateral
 container=unit[unit.index('struct SUnitIDValueContainer\n'):unit.index('\nnamespace std {',unit.index('struct SUnitIDValueContainer\n'))]
 contents=header[header.index('struct CvDangerPlotContents\n'):header.index('//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++',header.index('struct CvDangerPlotContents\n'))]
-selector_start=header.index('typedef const CvUnit* (*StackDangerDefenderSelector)')
-selector_type=header[selector_start:header.index(';',selector_start)+1]
 metadata='\n'.join(function(danger,s) for s in ('const std::vector<int>* CvDangerPlots::GetStackDangerDamageIDs(', 'const std::vector<int>& CvDangerPlotContents::GetStackDangerDamageIDs(', 'void CvDangerPlots::AssignUnitDangerValue(', 'void CvDangerPlots::AssignCityDangerValue('))
 
 prefix=r'''
@@ -176,7 +174,7 @@ int main(){
  printf("projected stack danger actual-source regression: %d checks, %d failures\n",checks,failures);return failures?1:0;
 }
 '''
-fixture=prefix+container+services+selector_type+contents+wrapper+metadata+air+expected+collateral+city+stack+tests
+fixture=prefix+container+services+contents+wrapper+metadata+air+expected+collateral+city+stack+tests
 cpp=out/'test.cpp';cpp.write_text(fixture,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows'
 env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')

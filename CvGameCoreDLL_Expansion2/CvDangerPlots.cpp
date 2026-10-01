@@ -397,19 +397,19 @@ int CvDangerPlots::GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison
 
 /// Return the maximum amount of damage a unit could take at this plot
 int CvDangerPlots::GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates,
- const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerDefenderSelector selector)
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
 {
  if (m_bDirty)
   UpdateDanger();
  if (m_DangerPlots.empty() || !pUnit)
   return 0;
- return m_DangerPlots[plot.GetPlotIndex()].GetStackDanger(pUnit, candidates, friendlyDamage, enemyDamage, selector);
+ return m_DangerPlots[plot.GetPlotIndex()].GetStackDanger(pUnit, candidates, friendlyDamage, enemyDamage);
 }
 
 bool CvDangerPlots::GetStackDangerOutcome(const CvPlot& plot, const CvUnit* pUnit,
  const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
  const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage,
- bool& cityCanFall, int& result, StackDangerDefenderSelector selector)
+ bool& cityCanFall, int& result)
 {
  if (m_bDirty)
   UpdateDanger();
@@ -418,7 +418,7 @@ bool CvDangerPlots::GetStackDangerOutcome(const CvPlot& plot, const CvUnit* pUni
   return false;
  CvDangerPlotContents& contents = m_DangerPlots[index];
  contents.GetStackDangerOutcome(pUnit->getOwner(), pUnit->getTeam(), plot.isFriendlyCity(*pUnit),
-  candidates, friendlyDamage, enemyDamage, finalDamage, cityCanFall, selector);
+  candidates, friendlyDamage, enemyDamage, finalDamage, cityCanFall);
  result = contents.GetStackDangerFromOutcome(pUnit, friendlyDamage, finalDamage, cityCanFall);
  return true;
 }
@@ -1177,7 +1177,7 @@ bool CvDangerPlotContents::TryGetFixedStackDanger(const CvUnit* pUnit, int& resu
 }
 
 int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const CvUnit*>& candidates,
- const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerDefenderSelector selector)
+ const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage)
 {
  if (!pUnit || !m_pPlot)
   return 0;
@@ -1210,7 +1210,7 @@ int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const
    continue;
   const int range = attacker->IsCanAttackRanged() ? attacker->GetRange() : 1;
   const CvPlot* from = plotDistance(*m_pPlot, *attacker->plot()) > range ? NULL : attacker->plot();
-  const CvUnit* defender = (selector ? selector : CvUnitCombat::SelectStackDefender)(attacker, from, m_pPlot, candidates, damage, attacker->IsCanAttackRanged(), attackerDamage);
+  const CvUnit* defender = CvUnitCombat::SelectStackDefender(attacker, from, m_pPlot, candidates, damage, attacker->IsCanAttackRanged(), attackerDamage);
   if (!defender)
    continue;
   int retaliation = 0;
@@ -1246,7 +1246,7 @@ int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const
 
 void CvDangerPlotContents::GetStackDangerOutcome(PlayerTypes defendingOwner, TeamTypes defendingTeam, bool friendlyCity,
  const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
- const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& damage, bool& cityCanFall, StackDangerDefenderSelector selector)
+ const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& damage, bool& cityCanFall)
 {
  damage = friendlyDamage;
  cityCanFall = false;
@@ -1271,7 +1271,7 @@ void CvDangerPlotContents::GetStackDangerOutcome(PlayerTypes defendingOwner, Tea
    continue;
   const int range = attacker->IsCanAttackRanged() ? attacker->GetRange() : 1;
   const CvPlot* from = plotDistance(*m_pPlot, *attacker->plot()) > range ? NULL : attacker->plot();
-  const CvUnit* defender = (selector ? selector : CvUnitCombat::SelectStackDefender)(attacker, from, m_pPlot, candidates, damage, attacker->IsCanAttackRanged(), attackerDamage);
+  const CvUnit* defender = CvUnitCombat::SelectStackDefender(attacker, from, m_pPlot, candidates, damage, attacker->IsCanAttackRanged(), attackerDamage);
   if (!defender)
    continue;
   int retaliation = 0;

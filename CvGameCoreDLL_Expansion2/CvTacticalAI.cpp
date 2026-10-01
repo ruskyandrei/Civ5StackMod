@@ -8176,9 +8176,6 @@ static void AppendStackDamageProjected(StackForecastKey& key, const SUnitIDValue
 // scalar memo hits, so its key/FIFO admission and fast path remain unchanged.
 // The capacity ceiling bounds retained local outcomes, not the temporary copy
 // already required while simulating an original scalar leaf.
-static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvPlot* from, const CvPlot* target,
- const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool ranged, int attackerDamage);
-
 struct StackDangerOutcomeBatch
 {
  const CvPlot* plot;
@@ -8208,7 +8205,7 @@ struct StackDangerOutcomeBatch
   finalDamage.swap(empty);
  }
  bool TryGet(const CvUnit* unit, const CvPlot* target, const vector<const CvUnit*>& members,
-  const SUnitIDValueContainer& friendly, const SUnitIDValueContainer& enemy, int& result, StackDangerDefenderSelector selector = NULL)
+  const SUnitIDValueContainer& friendly, const SUnitIDValueContainer& enemy, int& result)
  {
   // A foreign callback cannot touch an owning thread's payload or counters.
   if (!IsStackForecastOwner())
@@ -8251,7 +8248,7 @@ struct StackDangerOutcomeBatch
   Release();
   building = true;
   ++gStackOutcomeBuilds;
-  const bool computed = danger->GetStackDangerOutcome(*plot, unit, candidates, friendlyDamage, enemyDamage, finalDamage, cityCanFall, result, selector);
+  const bool computed = danger->GetStackDangerOutcome(*plot, unit, candidates, friendlyDamage, enemyDamage, finalDamage, cityCanFall, result);
   building = false;
   const size_t bytes = finalDamage.m_aExtraStorage.capacity() * sizeof(SUnitIDValueContainer::value_type);
   ready = computed && StackForecastContext() && currentRevision == gStackForecastRevision && currentScene == gStackForecastSceneEpoch &&
@@ -8311,9 +8308,8 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   ++gStackDangerMisses;
  int result = 0;
  CvStackingDiagnostics::PlanSampleScope leafSample(CvStackingDiagnostics::PLAN_DANGER_LEAF); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
- const StackDangerDefenderSelector selector = cacheable && !MOD_EVENTS_CAN_MOVE_INTO ? SelectCachedStackDefender : NULL;
- if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result, selector))
-  result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage, selector);
+ if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
+  result = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage);
  leafSample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
   StoreStackDangerForecast(key, result);
@@ -8323,33 +8319,6 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
 static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvPlot* from, const CvPlot* target,
  const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool ranged, int attackerDamage)
 {
- // Exchange comparison can run movement events through heavy charge, morale
- // fallback and nonquick city blockade. Never memoize those scripted calls.
- if (!attacker || !target || !StackForecastContext() || MOD_EVENTS_CAN_MOVE_INTO || candidates.size() < 2)
-  return CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
- PlayerTypes defenderOwner = NO_PLAYER;
- int eligible = 0;
- for (size_t i = 0; i < candidates.size(); ++i)
- {
-  const CvUnit* member = candidates[i];
-  if (!member)
-   continue;
-  if (defenderOwner == NO_PLAYER)
-   defenderOwner = member->getOwner();
-  else if (defenderOwner != member->getOwner())
-   return CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
-  // Repeated occurrences of the same unit are valid. Distinct objects claiming
-  // the same owner/ID cannot be distinguished by the original candidate key.
-  for (size_t j = 0; j < i; ++j)
-   if (candidates[j] && candidates[j] != member && candidates[j]->GetID() == member->GetID())
-    return CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
-  if (member != attacker && member->IsCanDefend() && !member->isCargo() && member->getDomainType() != DOMAIN_AIR &&
-   !member->IsDead() && !member->isDelayedDeath() && member->GetCurrHitPoints() > damage.GetValue(member->GetID()))
-   ++eligible;
- }
- // Keep the original singleton/flank-filter fast path ahead of key building.
- if (eligible <= 1)
-  return CvUnitCombat::SelectStackDefender(attacker, from, target, candidates, damage, ranged, attackerDamage);
  StackForecastQuery query(gStackDefenderScratch,gStackDefenderScratchBusy);
  StackForecastKey& key=query.key;
  bool cacheable = StackForecastContext();
@@ -8357,9 +8326,7 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
  const long scene = cacheable ? gStackForecastSceneEpoch : 0;
  if (cacheable)
  {
-  key.state.push_back(attacker->getOwner());
   key.state.push_back(attacker->GetID());
-  key.state.push_back(defenderOwner);
   key.state.push_back(from ? from->GetPlotIndex() : -1);
   key.state.push_back(target->GetPlotIndex());
   key.state.push_back(ranged ? 1 : 0);

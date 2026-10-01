@@ -12,10 +12,7 @@ unit=(root/'CvGameCoreDLL_Expansion2/CvUnit.h').read_text(encoding='utf-8-sig')
 container=unit[unit.index('struct SUnitIDValueContainer\n'):unit.index('\nnamespace std {',unit.index('struct SUnitIDValueContainer\n'))]
 cache=text[text.index('struct StackForecastKey\n'):text.index('static int GetCachedStackDanger(')]
 builder=text[text.index('static void GetVirtualFriendlyStack('):text.index('// A same-tile escort counts only')]
-danger_start=text.index('static int GetCachedStackDanger(')
-# The selector now has an earlier forward declaration. Keep the complete
-# actual scalar wrapper, ending at the following selector implementation.
-danger=text[danger_start:text.index('static const CvUnit* SelectCachedStackDefender(',danger_start)]
+danger=text[text.index('static int GetCachedStackDanger('):text.index('static const CvUnit* SelectCachedStackDefender(')]
 unit_danger=text[text.index('static int GetUnitDangerForPlot('):text.index('static unsigned char GetStackAttackThreatFlags(')]
 stack_score=text[text.index('static unsigned char GetStackAttackThreatFlags('):text.index('// what is the rough state looking like after this assignment')]
 previous_score=subprocess.check_output(['git','show','c0e19fcb3:CvGameCoreDLL_Expansion2/CvTacticalAI.cpp'],cwd=root).decode('utf-8-sig')
@@ -72,14 +69,6 @@ struct CvUnit{
 };
 '''
 engine=r'''
-typedef const CvUnit* (*StackDangerDefenderSelector)(const CvUnit*, const CvPlot*, const CvPlot*,
- const std::vector<const CvUnit*>&, const SUnitIDValueContainer&, bool, int);
-// Explicit callback service boundary: this membership/work-count fixture uses
-// a synthetic scalar leaf. The complete native selector is tested separately.
-static const CvUnit* SelectCachedStackDefender(const CvUnit*,const CvPlot*,const CvPlot*,
- const vector<const CvUnit*>& candidates,const SUnitIDValueContainer&,bool,int){
- return candidates.empty()?NULL:candidates.front();
-}
 struct SUnitStats{int iSelfDamage;SUnitStats(int d=0):iSelfDamage(d){}};
 struct STacticalUnit{int iUnitID;STacticalUnit(int id=0):iUnitID(id){}};
 static unsigned int statsReads=0;
@@ -99,13 +88,13 @@ struct CvTacticalPosition{
 struct CvDangerPlots{
  // Outcome behavior is checked separately with actual damage math services.
  bool IsDirty()const{return false;}
- bool GetStackDangerOutcome(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&,SUnitIDValueContainer&,bool&,int&,StackDangerDefenderSelector = NULL){return false;}
+ bool GetStackDangerOutcome(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&,SUnitIDValueContainer&,bool&,int&){return false;}
  bool TryGetStackDangerFromOutcome(const CvPlot&,const CvUnit*,const SUnitIDValueContainer&,const SUnitIDValueContainer&,bool,int&){return false;}
  bool fixed,dynamicLeaf;int fixedValue,leafValue,leafCalls;void(*leafCallback)();
  CvDangerPlots():fixed(false),dynamicLeaf(false),fixedValue(0),leafValue(73),leafCalls(0),leafCallback(NULL){}
  bool TryGetFixedStackDanger(const CvPlot&,const CvUnit*,int&result){if(!fixed)return false;result=fixedValue;return true;}
  const vector<int>*GetStackDangerDamageIDs(const CvPlot&){return NULL;}
- int GetStackDanger(const CvPlot&,const CvUnit* unit,const vector<const CvUnit*>&members,const SUnitIDValueContainer&friendly,const SUnitIDValueContainer&enemy,StackDangerDefenderSelector = NULL){++leafCalls;if(leafCallback)leafCallback();return dynamicLeaf?max(0,leafValue-(int)members.size()*11+friendly.GetValue(unit->GetID())-enemy.GetValue(-1)/5):leafValue;}
+ int GetStackDanger(const CvPlot&,const CvUnit* unit,const vector<const CvUnit*>&members,const SUnitIDValueContainer&friendly,const SUnitIDValueContainer&enemy){++leafCalls;if(leafCallback)leafCallback();return dynamicLeaf?max(0,leafValue-(int)members.size()*11+friendly.GetValue(unit->GetID())-enemy.GetValue(-1)/5):leafValue;}
 };
 struct Player{
  map<int,CvUnit*> units;CvDangerPlots danger;vector<CvUnit*> attackers;int attackerReads;void(*attackerCallback)();Player():attackerReads(0),attackerCallback(NULL){}
@@ -133,10 +122,6 @@ struct DummyDangerCache{
 struct Storage{DummyDangerCache cache;int getSizeLimit()const{return 6000;}DummyDangerCache&getDangerCache(){return cache;}}gTactPosStorage;
 const int TACTSIM_MAX_UNITS=13;
 '''
-selector_header=(root/'CvGameCoreDLL_Expansion2/CvDangerPlots.h').read_text(encoding='utf-8-sig')
-selector_start=selector_header.index('typedef const CvUnit* (*StackDangerDefenderSelector)')
-selector_type=selector_header[selector_start:selector_header.index(';',selector_start)+1]
-assert ' '.join(selector_type.split()) in ' '.join(engine.split()), 'Callback service type differs from actual native declaration'
 suffix=r'''
 static int checks=0,failures=0;
 static void expect(const char*name,bool ok){++checks;if(!ok){++failures;if(failures<30)printf("FAIL %s\n",name);}}

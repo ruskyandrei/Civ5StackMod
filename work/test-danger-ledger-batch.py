@@ -38,12 +38,6 @@ static unsigned long gStackDangerHits=0,gStackDangerMisses=0;
 static unsigned long gStackOutcomeBuilds=0,gStackOutcomeReuses=0,gStackOutcomeBypasses=0;
 static size_t gStackOutcomeCurrentBytes=0,gStackOutcomePeakBytes=0,gStackKeyPayloadLimit=100000;
 #define MOD_EVENTS_CAN_MOVE_INTO moveEvent
-// This fixture tests actual outcome/batch traversal, not selector memo policy.
-// Its explicit callback service forwards to the existing numerical selector.
-static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker,const CvPlot* from,const CvPlot* target,
- const vector<const CvUnit*>& candidates,const SUnitIDValueContainer& damage,bool ranged,int attackerDamage){
- return CvUnitCombat::SelectStackDefender(attacker,from,target,candidates,damage,ranged,attackerDamage);
-}
 struct StackForecastKey{vector<int>state;bool operator<(const StackForecastKey&o)const{return state<o.state;}};
 typedef map<StackForecastKey,int>StackDangerForecasts;
 static StackDangerForecasts gStackDangerForecasts;
@@ -62,8 +56,8 @@ struct CvDangerPlots{
  bool m_bDirty;vector<CvDangerPlotContents>m_DangerPlots;int updates;
  CvDangerPlots():m_bDirty(false),updates(0){m_DangerPlots.resize(1);}
  bool IsDirty()const{return m_bDirty;}void UpdateDanger(){m_bDirty=false;++updates;++liveScene;}
- int GetStackDanger(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&,StackDangerDefenderSelector = NULL);
- bool GetStackDangerOutcome(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&,SUnitIDValueContainer&,bool&,int&,StackDangerDefenderSelector = NULL);
+ int GetStackDanger(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&);
+ bool GetStackDangerOutcome(const CvPlot&,const CvUnit*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&,SUnitIDValueContainer&,bool&,int&);
  bool TryGetStackDangerFromOutcome(const CvPlot&,const CvUnit*,const SUnitIDValueContainer&,const SUnitIDValueContainer&,bool,int&);
  bool TryGetFixedStackDanger(const CvPlot&,const CvUnit*,int&);
  const vector<int>*GetStackDangerDamageIDs(const CvPlot&);
