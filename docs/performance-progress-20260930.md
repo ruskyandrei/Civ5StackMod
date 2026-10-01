@@ -844,3 +844,42 @@ Evidence: `work/test-runs/perf-d87-cold-format-off-251-255`, native
 `wrapper-interruption.json` and `normal-exit.json`. Next are work-only exact
 indexed-store and bounded incremental-kernel shadow prototypes; see
 `performance-redesign-plan.md` for contracts and adoption thresholds.
+
+## DLL88 indexed-store trial interrupted by heat guard
+
+DLL88 (`5f3f86117`) passed723,127 complete production-source-bound checks,
+including actual scalar/member/defender lookup callers and constructor legacy
+fallback. Build83.5s under `work/msvc-output/Release/20261001-094245`;
+DLLAFB75D9AF8CE85077827FBF254820DA1CC31FB370B420297CEC150DA7FFD8345,
+PDB3BCD58AAE9661E5E7E951489181CA035A65141FD3CBAF9003CF1FF7724743E19.
+Deployment verified2368 files, with backup
+`deployment-replaced-20261001-094530-5f03cd8e`; graphics and saves unchanged.
+
+The OFF251→255 trial reached254 before the CPU guard stopped the exact game
+at08:51:13UTC after three consecutive threshold readings, final maximum100C.
+The GPU/memory guard confirmed game exit08:51:15. The harness failed without a
+verified stop or after-census; this is an incomplete run, not a completed smoke
+test or crash attributed to the DLL. The user confirmed concurrent Blender work
+and will report when it finishes. No further game launch or heavy compilation
+is scheduled until then. The spike cannot be attributed solely to Civ V or the
+candidate. Existing service5972 was closed by its HTTP-only stop after exact
+identity verification at08:55:43, with game/service/session absent and no
+reconnect or restart. Evidence is preserved.
+
+The retained complete interior252/253 windows took31.922s/60.906s
+(PLAN8.863s/35.256s), against87's32.313s/63.484s (9.665s/39.010s).
+Concurrent work and the interrupted trial prevent a clean speedup claim.
+The before-census matches. All417 semantic events within those two windows,
+and the full retained606-event prefix of87's699, match exactly. All259
+corresponding recorded six-pair hit/miss and callback-proof rows match;259
+rows report the indexed backend, with estimated bytes up to1,526,460.
+This is an estimate, not RSS/CRT totals. Missing final records and world state
+remain unknown. A fresh complete quiet repeat is required for adoption judgment.
+
+Evidence: `work/test-runs/perf-d88-indexed-store-off-251-255`, native
+`Stacking-20261001T084835-632-p27308-r1`, thermal/health logs,
+`partial-phases252.json`, `partial-phases253.json`,
+`partial-comparison-d87.json`, `guard-stop-cleanup.json` and failed original
+manifest. Post-stop process deltas are a current snapshot, not historical heat
+attribution. Source remains the indexed candidate; installed DLL88 remains in
+place. The <30s objective is not achieved.

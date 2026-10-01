@@ -52,6 +52,13 @@ cleanup measurement assertion was corrected after finding that empty original
 containers retain newly allocated default buffers; the functional oracle passes.
 Native whole-turn benefit remains unmeasured until the matched trial completes.
 
+The first native trial was stopped at254 by the sustained CPU temperature guard
+while the user also had Blender work running. Its retained252/253 windows and
+606-event prefix match original behavior, with unchanged recorded hit/miss
+counters. There is no final census or verified normal stop, so native adoption
+and a clean performance gain remain unconfirmed. A quiet complete repeat is
+pending; see `performance-progress-20260930.md` for evidence and limits.
+
 Reproduction uses `work/prepare-indexed-forecast-store.py`,
 `work/apply-indexed-forecast-store.py` and `work/test-indexed-forecast-store.py`.
 Run the fixture with `--stage-production --no-benchmark` before application and
