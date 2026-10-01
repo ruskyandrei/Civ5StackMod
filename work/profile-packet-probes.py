@@ -18,14 +18,14 @@ wall=samples.wall
 MAX_U64=(1<<64)-1
 COUNTS=('misses','prefiltered','cohortQueries','groups','repeats','sameMember','crossMember',
  'freshQueries','batchReuseQueries','freshRepeatQueries','freshCrossMemberQueries','rawCalls','outcomeBuildAttempts',
- 'fieldGroups','cityGroups','fallback','oversized','sourceUnavailable','invalidated','reentrant','evictions','clears')
+ 'fieldGroups','cityGroups','fallback','oversized','sourceUnavailable','invalidated','reentrant','evictions','clears','packetResultReuseQueries')
 BYTES=('keyBytes','peakKeyBytes','outputUpperBytes','peakOutputUpperBytes')
 IDENTITY=('turn','player','targetPlot','thread','serial')
 NOTES=[
  'These are retained diagnostic observations, not estimated saved simulations or time. No stride scaling is applied.',
  'Both deterministic filters are group-consistent for supported exact inputs; censoring, finite metadata FIFO, bounds and scene clears can omit valuable groups.',
  'freshQueries counts queries which called raw danger or attempted an outcome build. Attempts can fail; rawCalls and outcomeBuildAttempts may both occur for one query.',
- 'batchReuseQueries already used the existing local outcome batch; they are not avoidable original leaves.',
+ 'batchReuseQueries used the existing local outcome batch; v2 reports shared result-packet hits separately as packetResultReuseQueries. v1 predates the shared result cache.',
  'crossMember is the first observation of a new member after another member in the retained group; subsequent visits to that member are sameMember.',
  'freshCrossMemberQueries is the first fresh-work visit by a new member after earlier fresh work; the member may previously have used the local batch.',
  'outputUpperBytes is the first retained group\'s logical injury-pair union proxy, not actual retained vector capacity, inline/container/node cost or a future global cache budget.',
@@ -38,7 +38,8 @@ NOTES=[
 def unsigned(value,maximum=MAX_U64):return type(value) is int and 0<=value<=maximum
 def identity(row):return tuple(row[k] for k in IDENTITY)
 def decode(record):
- value=record['values'];errors=[];warnings=[]
+ value=dict(record['values']);errors=[];warnings=[]
+ if value.get('version')==1 and 'packetResultReuseQueries' not in value:value['packetResultReuseQueries']=0
  if '[message truncated]' in record.get('raw_message',''):errors.append('explicit_message_truncation')
  raw_message=record.get('raw_message','');wire=wall.RECORD.fullmatch(raw_message.rstrip('\r\n'))
  raw_pairs=wall.FIELD.findall(wire.group(5) if wire else raw_message)
@@ -47,7 +48,8 @@ def decode(record):
  for k in COUNTS+BYTES+('targetPlot','serial','thread','version','prefilterBits','cohortBits','slots','maxKeyWords','metadataBytes'):
   if not unsigned(value.get(k)):errors.append(k+':missing_or_invalid_unsigned_integer')
  if errors:return None,errors
- if value['version']!=1:errors.append('unsupported_version')
+ if value['version'] not in (1,2):errors.append('unsupported_version')
+ if value['version']==1 and value['packetResultReuseQueries']!=0:errors.append('v1_cannot_report_shared_packet_result_reuse')
  if value['serial']==0 or value['thread']==0 or value['serial']>(1<<32)-1 or value['thread']>(1<<32)-1:errors.append('invalid_native_identity')
  if value['targetPlot']>(1<<31)-1:errors.append('invalid_native_plot_index')
  expected={'prefilterBits':2,'cohortBits':3,'slots':128,'maxKeyWords':512}
@@ -60,7 +62,7 @@ def decode(record):
   if value[a]>value[b]:errors.append(a+'_exceeds_'+b)
  observations=value['groups']+value['repeats']
  if value['sameMember']+value['crossMember']!=value['repeats']:errors.append('repeat_classes_do_not_sum')
- if value['freshQueries']+value['batchReuseQueries']!=observations:errors.append('work_classes_do_not_sum')
+ if value['freshQueries']+value['batchReuseQueries']+value['packetResultReuseQueries']!=observations:errors.append('work_classes_do_not_sum')
  if value['fieldGroups']+value['cityGroups']!=value['groups']:errors.append('field_city_groups_do_not_sum')
  if value['freshQueries']>value['rawCalls']+value['outcomeBuildAttempts']:errors.append('fresh_queries_without_raw_or_build_attempt')
  if observations+value['invalidated']>value['cohortQueries']:errors.append('finished_and_invalidated_exceed_selected_queries')
@@ -130,7 +132,7 @@ def analyze(records,quality=None,turn=None,player=None,map_width=None):
  if quality.get('clock_reversals'):warnings.append('Native clock order contains reversals; legacy timing adjacency is unreliable.')
  if truncated or any(r['fields'].get('dropped',0) for r in costs):warnings.append('Diagnostic row drops are reported; absent probe/SAMPLE records can be budget-censored.')
  unmatched_samples=[dict(identity=identity(r),origin=r['origin']) for r in timed if identity(r) not in probes_by_id]
- return dict(schema='native_PLAN_PACKET_PROBE_v1',filters=dict(turn=turn,player=player,map_width=map_width),
+ return dict(schema='native_PLAN_PACKET_PROBE_v1_v2',filters=dict(turn=turn,player=player,map_width=map_width),
   measurement_notes=NOTES,warnings=warnings,archive_quality=quality,
   coverage=dict(valid_probe_rows=len(probes),valid_sample_rows=len(timed),
    probe_sample_identity_matches=sum(identity(r) in timed_by_id for r in probes),

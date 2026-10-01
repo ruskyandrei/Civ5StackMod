@@ -33,13 +33,19 @@ decoded,errors=p.decode(probe());check('valid v1 fields',not errors and decoded[
 check('group/member introductions qualified',decoded['observed_group_member_introductions']==6)
 check('retained groups current known without clears',decoded['current_metadata_groups']==2)
 for field,value in [('misses',-1),('rawCalls',True),('groups',1<<64),('thread',0),('serial',1<<32),('targetPlot',-1),
- ('version',2),('slots',129),('maxKeyWords',511),('prefilterBits',3),('cohortBits',2),('metadataBytes',3*1024*1024+1),
+ ('version',3),('slots',129),('maxKeyWords',511),('prefilterBits',3),('cohortBits',2),('metadataBytes',3*1024*1024+1),
  ('sameMember',4),('freshRepeatQueries',8),('freshCrossMemberQueries',6),('rawCalls',8),('fieldGroups',2),('freshQueries',8),
  ('cohortQueries',8),('prefiltered',101),('evictions',3),('keyBytes',204),('peakKeyBytes',262148),('keyBytes',119),
  ('outputUpperBytes',97),('peakOutputUpperBytes',163841),('outcomeBuildAttempts',0)]:
  _,bad=p.decode(probe(**{field:value}));check('reject inconsistent '+field+str(value),bool(bad))
 for field in p.COUNTS+p.BYTES:
+ if field=='packetResultReuseQueries':continue # This field is absent in v1.
  r=probe();del r['values'][field];_,errors=p.decode(r);check('required metric '+field,bool(errors))
+check('v1 absent shared-packet metric defaults to zero',p.decode(probe())[0]['packetResultReuseQueries']==0)
+v2=probe(version=2,metadataBytes=269576,packetResultReuseQueries=1,batchReuseQueries=1)
+check('v2 distinguishes packet result from local batch',not p.decode(v2)[1] and p.decode(v2)[0]['packetResultReuseQueries']==1)
+del v2['values']['packetResultReuseQueries'];check('v2 requires packet result metric',bool(p.decode(v2)[1]))
+check('v1 shared result metric forbidden',bool(p.decode(probe(packetResultReuseQueries=1,batchReuseQueries=1))[1]))
 row=probe();row['raw_message']+=' [message truncated]';check('explicit truncation rejected',bool(p.decode(row)[1]))
 row=probe();row['raw_message']+=' serial=8';check('duplicate field rejected',bool(p.decode(row)[1]))
 row=probe();row['raw_message']='STACKDIAG|30|turn=252|player=1|PLAN_PACKET_PROBE|'+row['raw_message']+' targetPlot=93';check('wire first-field duplicate rejected',bool(p.decode(row)[1]))
@@ -94,7 +100,7 @@ with tempfile.TemporaryDirectory(prefix='civ-packet-profile-') as temp:
  check('conflicting copies recorded not silently combined',bool(quality['conflicting_segment_files']))
  absent=subprocess.run([sys.executable,'-B',str(root/'work/profile-packet-probes.py'),str(directory),'--run','absent','--output',str(directory/'absent.json')],capture_output=True,text=True)
  check('no matching run fails explicitly',absent.returncode!=0 and not (directory/'absent.json').exists())
- invalid_path=directory/'bad';invalid_path.mkdir();bad=probe(version=2);(invalid_path/'one.log').write_text('STACKDIAG|SESSION|run=bad segment=0\n'+wire(bad),encoding='utf-8');badout=invalid_path/'report.json'
+ invalid_path=directory/'bad';invalid_path.mkdir();bad=probe(version=3);(invalid_path/'one.log').write_text('STACKDIAG|SESSION|run=bad segment=0\n'+wire(bad),encoding='utf-8');badout=invalid_path/'report.json'
  rejected=subprocess.run([sys.executable,'-B',str(root/'work/profile-packet-probes.py'),str(invalid_path),'--run','bad','--output',str(badout)],capture_output=True,text=True)
  check('invalid schema emits diagnostic report with exit2',rejected.returncode==2 and json.loads(badout.read_text())['invalid_row_count']==1)
 

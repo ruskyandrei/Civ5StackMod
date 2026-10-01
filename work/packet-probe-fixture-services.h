@@ -54,7 +54,7 @@ struct CvUnit{
  bool isBetterDefenderThan(const CvUnit*u,const CvUnit*)const{return !u||defense>u->defense;}
  int GetMaxRangedCombatStrength(const CvUnit*,const void*,bool,const CvPlot*,const CvPlot*,bool,bool,int extra=0,int=0)const{return max(1,strength-extra);}
  int GetMaxAttackStrength(const CvPlot*,const CvPlot*,const CvUnit*,bool,bool,int extra=0,int=0)const{return max(1,strength-extra);}
- bool IsCanAttackRanged()const{return ranged||domain==DOMAIN_AIR;}int GetRange()const{return range;}bool isNoCapture()const{return noCapture;}
+ bool IsCanAttackRanged()const{return range>0&&GetBaseRangedCombatStrength()>0;}int GetRange()const{return range;}bool isNoCapture()const{return noCapture;}
  int getAoEDamageOnMove()const{++aoeReads;return aoe;}bool IsCivilianUnit()const{return civilian;}bool isTrade()const{return trade;}
  bool isEnemy(int team,const CvPlot*)const{return owner!=team;}bool ignoreTerrainDamage()const{return terrainIgnore;}bool ignoreFeatureDamage()const{return featureIgnore;}
  int extraTerrainDamage()const{return id%3;}int extraFeatureDamage()const{return id%2;}

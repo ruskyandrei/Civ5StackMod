@@ -124,6 +124,7 @@ public:
 	// Borrow only while building a key: rebuilding danger/resetting the map can
 	// invalidate the vector. Null means the caller must retain its full key.
 	const std::vector<int>* GetStackDangerDamageIDs(const CvPlot& plot);
+	bool AppendStackDangerCacheDescriptor(const CvPlot& plot, int* words, unsigned capacity, unsigned& used) const;
 	bool AppendStackDangerProbeSources(const CvPlot& plot, int* words, unsigned capacity, unsigned& used) const; // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
 
 	std::vector<CvUnit*> GetPossibleAttackers(const CvPlot& Plot, TeamTypes eTeamForVisibilityCheck) const;

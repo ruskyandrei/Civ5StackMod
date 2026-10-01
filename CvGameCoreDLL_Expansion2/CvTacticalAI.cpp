@@ -7788,7 +7788,15 @@ struct StackForecastKeyHash
   return result;
  }
 };
-typedef std::tr1::unordered_map<StackForecastKey, int, StackForecastKeyHash> StackDangerForecasts;
+// Scalar hits read only this first integer. Odd packet keys retain the
+// precomputed exact member integers in the same bounded danger table.
+struct StackDangerForecastValue
+{
+ int scalar;
+ vector<pair<int,int> > memberScores;
+ StackDangerForecastValue(int value=0):scalar(value){}
+};
+typedef std::tr1::unordered_map<StackForecastKey, StackDangerForecastValue, StackForecastKeyHash> StackDangerForecasts;
 typedef std::tr1::unordered_map<StackForecastKey, const CvUnit*, StackForecastKeyHash> StackDefenderForecasts;
 static StackDangerForecasts gStackDangerForecasts;
 static StackDefenderForecasts gStackDefenderForecasts;
@@ -8031,6 +8039,32 @@ private:
  VirtualFriendlyStackQuery& operator=(const VirtualFriendlyStackQuery&);
 };
 
+// Warmed owned packet query storage; nested/foreign calls retain private fallback.
+struct StackDangerPacketBuffer
+{
+ StackForecastKey key;
+ vector<int> source;
+ vector<const CvUnit*> members;
+ StackDangerForecastValue value;
+ int descriptor[512];
+ void clear(){key.state.clear();source.clear();members.clear();value.memberScores.clear();value.scalar=0;}
+ void release(){vector<int>().swap(key.state);vector<int>().swap(source);vector<const CvUnit*>().swap(members);vector<pair<int,int> >().swap(value.memberScores);}
+};
+static StackDangerPacketBuffer gStackPacketScratch;
+static bool gStackPacketScratchBusy=false;
+static unsigned long gStackPacketHits=0,gStackPacketBuilds=0,gStackPacketBypasses=0;
+struct StackDangerPacketQuery
+{
+ StackDangerPacketBuffer local;
+ bool borrowed,storePacket,scalarValid;
+ StackDangerPacketBuffer& buffer;
+ StackDangerPacketQuery(bool cacheable):borrowed(cacheable&&!gStackPacketScratchBusy),storePacket(false),scalarValid(false),
+  buffer(borrowed?gStackPacketScratch:local)
+ {if(borrowed)gStackPacketScratchBusy=true;buffer.clear();}
+ ~StackDangerPacketQuery(){if(borrowed)gStackPacketScratchBusy=false;}
+private:StackDangerPacketQuery(const StackDangerPacketQuery&);StackDangerPacketQuery&operator=(const StackDangerPacketQuery&);
+};
+
 struct StackForecastScope
 {
  bool owned;
@@ -8055,6 +8089,7 @@ struct StackForecastScope
   gStackDangerHits = gStackDangerMisses = gStackDefenderHits = gStackDefenderMisses = 0;
   gStackOutcomeBuilds = gStackOutcomeReuses = gStackOutcomeBypasses = 0;
   gStackOutcomeCurrentBytes = gStackOutcomePeakBytes = 0;
+  gStackPacketHits = gStackPacketBuilds = gStackPacketBypasses = 0;
   gStackInsertBypasses = gStackNestedBypasses = 0;
   gStackDangerEvictions = gStackDefenderEvictions = 0;
   gStackPeakEntries = gStackPeakKeyBytes = gStackPeakEstimatedBytes = 0;
@@ -8085,6 +8120,7 @@ struct StackForecastScope
    vector<pair<int,int> >().swap(gStackImmutableEnemyDamageScratch);
    gStackVirtualScratch.release();
    gStackDestinationScratch.release();
+   gStackPacketScratch.release();
    gStackKeyPayloadBytes = 0;
    InterlockedExchange(&gStackForecastOwnerThread, 0);
   }
@@ -8093,6 +8129,14 @@ private:
  StackForecastScope(const StackForecastScope&);
  StackForecastScope& operator=(const StackForecastScope&);
 };
+
+// Retained capacities, including packet outputs, share the original payload
+// ceiling. Scalar value vectors are empty and retain no output allocation.
+static size_t StackDangerForecastPayloadBytes(const StackDangerForecasts::value_type& entry)
+{
+ return entry.first.state.capacity() * sizeof(int)
+  + entry.second.memberScores.capacity() * sizeof(pair<int,int>);
+}
 
 static bool EvictOldestStackForecast()
 {
@@ -8103,7 +8147,7 @@ static bool EvictOldestStackForecast()
   StackDangerForecasts::iterator victim = gStackDangerForecasts.find(*gStackDangerOrder.front());
   if (victim == gStackDangerForecasts.end())
    return false;
-  const size_t payload = victim->first.state.capacity() * sizeof(int);
+  const size_t payload = StackDangerForecastPayloadBytes(*victim);
   if (payload > gStackKeyPayloadBytes)
    return false;
   gStackDangerOrder.pop_front();
@@ -8158,6 +8202,7 @@ static size_t EstimatedStackForecastBytes()
  // Key payload is measured; allocator/node/bucket overhead is an estimate.
  // FIFO adds only one key pointer per retained entry plus its two containers.
  return gStackKeyPayloadBytes + entries * (sizeof(StackForecastKey) + sizeof(const CvUnit*) + 9 * sizeof(void*))
+  + gStackDangerForecasts.size() * (sizeof(StackDangerForecastValue) - sizeof(int))
   + sizeof(gStackDangerOrder) + sizeof(gStackDefenderOrder)
   + sizeof(gStackThreatFlags) + gStackThreatFlags.size() * (sizeof(StackThreatFlags::value_type) + 4 * sizeof(void*));
 }
@@ -8173,10 +8218,10 @@ static void StoreStackDangerForecast(const StackForecastKey& key, int result)
 {
  if (!CanStoreStackForecast(key))
   return;
- pair<StackDangerForecasts::iterator, bool> stored = gStackDangerForecasts.insert(make_pair(key, result));
+ pair<StackDangerForecasts::iterator, bool> stored = gStackDangerForecasts.insert(make_pair(key, StackDangerForecastValue(result)));
  if (stored.second)
  {
-  const size_t payload = stored.first->first.state.capacity() * sizeof(int);
+  const size_t payload = StackDangerForecastPayloadBytes(*stored.first);
   if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
   {
    gStackKeyPayloadBytes += payload;
@@ -8189,6 +8234,95 @@ static void StoreStackDangerForecast(const StackForecastKey& key, int result)
    ++gStackInsertBypasses;
   }
  }
+}
+
+// Insert one temporary uncharged node to measure its ACTUAL copied vector
+// capacities before evicting useful entries. No node reference escapes this
+// helper; retained entries still use the original shared FIFO/entry ceiling.
+static void StoreStackDangerPacketForecast(const StackForecastKey& key, const StackDangerForecastValue& value)
+{
+ if (!StackForecastContext())
+  return;
+ if (key.state.size() % 2 == 0 || value.memberScores.size() < 2 || gStackEntryLimit == 0)
+ {
+  ++gStackInsertBypasses;
+  return;
+ }
+ if (gStackDangerForecasts.find(key) != gStackDangerForecasts.end())
+  return;
+ const unsigned long revision = gStackForecastRevision;
+ const long scene = gStackForecastSceneEpoch;
+ pair<StackForecastKey,StackDangerForecastValue> pending(key,value);
+ // Reject copied payloads that cannot fit before inserting or evicting.
+ if (pending.first.state.capacity() > gStackKeyPayloadLimit / sizeof(int))
+ {
+  ++gStackInsertBypasses;
+  return;
+ }
+ const size_t copiedKeyBytes = pending.first.state.capacity() * sizeof(int);
+ if (pending.second.memberScores.capacity() > (gStackKeyPayloadLimit - copiedKeyBytes) / sizeof(pair<int,int>))
+ {
+  ++gStackInsertBypasses;
+  return;
+ }
+ // Copying may allocate; observe a changed scene before touching the table.
+ if (!StackForecastContext() || revision != gStackForecastRevision || scene != gStackForecastSceneEpoch)
+ {
+  ++gStackInsertBypasses;
+  return;
+ }
+ pair<StackDangerForecasts::iterator,bool> stored = gStackDangerForecasts.insert(pending);
+ if (!stored.second)
+  return;
+ // Do not call a clearing context helper while owning this iterator. These
+ // reads only validate the still-owned pure preview; erase first on failure.
+ if (!gStackForecastsActive || gStackForecastDepth != 1 || revision != gStackForecastRevision ||
+  scene != gStackForecastSceneEpoch || scene != CvStackingStrengthCache::SceneEpoch())
+ {
+  gStackDangerForecasts.erase(stored.first);
+  ++gStackInsertBypasses;
+  return;
+ }
+ if (stored.first->first.state.capacity() > gStackKeyPayloadLimit / sizeof(int))
+ {
+  gStackDangerForecasts.erase(stored.first);
+  ++gStackInsertBypasses;
+  return;
+ }
+ const size_t keyBytes = stored.first->first.state.capacity() * sizeof(int);
+ if (stored.first->second.memberScores.capacity() > (gStackKeyPayloadLimit - keyBytes) / sizeof(pair<int,int>))
+ {
+  gStackDangerForecasts.erase(stored.first);
+  ++gStackInsertBypasses;
+  return;
+ }
+ const size_t payload = StackDangerForecastPayloadBytes(*stored.first);
+ // The pending node is already included in size(), but is not in either
+ // FIFO yet. Use > for entries; eviction still chooses the larger FIFO.
+ while (gStackDangerForecasts.size() + gStackDefenderForecasts.size() > gStackEntryLimit ||
+  payload > gStackKeyPayloadLimit - gStackKeyPayloadBytes)
+ {
+  if (!EvictOldestStackForecast())
+  {
+   gStackDangerForecasts.erase(stored.first);
+   ++gStackInsertBypasses;
+   return;
+  }
+ }
+ try
+ {
+  gStackDangerOrder.push_back(&stored.first->first);
+ }
+ catch (...)
+ {
+  // The payload has not been charged. Roll back the otherwise orphan node;
+  // previous FIFO evictions are not transactional and remain, as with the
+  // legacy preflight. Preserve the caller's allocation failure by rethrowing.
+  gStackDangerForecasts.erase(stored.first);
+  throw;
+ }
+ gStackKeyPayloadBytes += payload;
+ UpdateStackForecastPeaks();
 }
 
 static void StoreStackDefenderForecast(const StackForecastKey& key, const CvUnit* result)
@@ -8383,6 +8517,128 @@ private:
  StackDangerOutcomeBatch& operator=(const StackDangerOutcomeBatch&);
 };
 
+// Exact shared packet keys and outcome resolution after ordinary scalar hits.
+static bool AppendUniquePacketDamage(StackForecastKey* key,const SUnitIDValueContainer& damage)
+{
+ StackForecastPairQuery query;vector<pair<int,int> >& entries=query.entries;
+ for(SUnitIDValueContainer::const_iterator i=damage.begin();i!=damage.end();++i)entries.push_back(*i);
+ std::sort(entries.begin(),entries.end());
+ int nonzero=0;
+ for(size_t i=0;i<entries.size();++i)
+ {
+  if(i&&entries[i-1].first==entries[i].first)return false;
+  if(entries[i].second)++nonzero;
+ }
+ if(key){key->state.push_back(nonzero);for(size_t i=0;i<entries.size();++i)if(entries[i].second){key->state.push_back(entries[i].first);key->state.push_back(entries[i].second);}}
+ return true;
+}
+static bool StackPacketSourcesHaveNoLoadingCallback(const vector<int>& source)
+{
+ // Custom air melee can enter canEnterTerrain -> canLoad -> CanLoadAt, whose
+ // fallback Lua hook is independent of CAN_MOVE_INTO/CITY_BOMBARD flags.
+ // Standard ranged aircraft do not use that ground-attack legality route.
+ if(source.size()<6||source[0]!=1||source[4]<0||(size_t)source[4]>(source.size()-6)/2)return false;
+ for(int i=0;i<source[4];++i)
+ {
+  const CvUnit* threat=GET_PLAYER((PlayerTypes)source[5+2*i]).getUnit(source[6+2*i]);
+  if(threat&&threat->getDomainType()==DOMAIN_AIR&&!threat->IsCanAttackRanged())return false;
+ }
+ return true;
+}
+static bool PrepareStackDangerPacket(StackDangerPacketQuery& query,const CvUnit* unit,const CvPlot* plot,
+ const vector<const CvUnit*>& roster,const SUnitIDValueContainer& friendly,const SUnitIDValueContainer& enemy,const StackForecastKey& legacy)
+{
+ if(!query.borrowed||MOD_EVENTS_CAN_MOVE_INTO||MOD_EVENTS_CITY_BOMBARD||!unit||!plot||!unit->IsCombatUnit()||!unit->isNativeDomain(plot)||
+  legacy.state.size()<6||legacy.state.size()%2)return false;
+ StackDangerPacketBuffer& b=query.buffer;const bool city=plot->isFriendlyCity(*unit);bool found=false;
+ for(size_t i=0;i<roster.size();++i)
+ {
+  const CvUnit* member=roster[i];
+  if(!member||member->getOwner()!=unit->getOwner()||member->getTeam()!=unit->getTeam()||member->getDomainType()!=unit->getDomainType()||!member->IsCombatUnit()||!member->isNativeDomain(plot)||
+   plot->isFriendlyCity(*member)!=city||GET_PLAYER(member->getOwner()).getUnit(member->GetID())!=member)return false;
+  found|=member==unit;if(std::find(b.members.begin(),b.members.end(),member)==b.members.end())b.members.push_back(member);
+ }
+ if(!found||b.members.size()<2)return false;
+ const int count=legacy.state[4];if(count<0||(size_t)count!=roster.size()||(size_t)count>(legacy.state.size()-5)/2)return false;
+ const size_t suffix=5+2*(size_t)count;
+ if(suffix>=legacy.state.size()||legacy.state[suffix]<0||legacy.state.size()-suffix!=1+2*(size_t)legacy.state[suffix])return false;
+ // Scalars: 6+2*N (even). Complete packets: 15+2*N (odd), deliberately
+ // disjoint without adding a kind/hash field to millions of scalar hits.
+ b.key.state.push_back(unit->getOwner());b.key.state.push_back(unit->getTeam());b.key.state.push_back(plot->GetPlotIndex());
+ b.key.state.push_back(city?1:0);b.key.state.push_back((int)roster.size());
+ b.key.state.push_back(legacy.state[3]);b.key.state.push_back(plot->getPlotCity()?plot->getPlotCity()->getDamage():-1);
+ for(size_t i=0;i<roster.size();++i){b.key.state.push_back(roster[i]->getOwner());b.key.state.push_back(roster[i]->GetID());}
+ if(!AppendUniquePacketDamage(&b.key,friendly)||!AppendUniquePacketDamage(NULL,enemy))return false;
+ const CvDangerPlots* map=GET_PLAYER(unit->getOwner()).GetDangerPlots();unsigned used=0;
+ if(!map->AppendStackDangerCacheDescriptor(*plot,b.descriptor,sizeof(b.descriptor)/sizeof(b.descriptor[0]),used))return false;
+ b.source.assign(b.descriptor,b.descriptor+used);b.key.state.insert(b.key.state.end(),b.source.begin(),b.source.end());
+ if(!StackPacketSourcesHaveNoLoadingCallback(b.source))return false;
+ b.key.state.insert(b.key.state.end(),legacy.state.begin()+suffix,legacy.state.end());
+ return b.key.state.size()%2&&b.key.state.size()<=gStackKeyPayloadLimit/sizeof(int);
+}
+static bool ValidateStackDangerPacket(StackDangerPacketQuery& query,const CvUnit* unit,const CvPlot* plot,
+ unsigned long revision,long scene)
+{
+ if(!StackForecastContext()||revision!=gStackForecastRevision||scene!=gStackForecastSceneEpoch||scene!=CvStackingStrengthCache::SceneEpoch()||
+  MOD_EVENTS_CAN_MOVE_INTO||MOD_EVENTS_CITY_BOMBARD)return false;
+ StackDangerPacketBuffer& b=query.buffer;const CvDangerPlots* map=GET_PLAYER(unit->getOwner()).GetDangerPlots();
+ if(map->IsDirty()||b.key.state.size()<7||CvStacking::GetCityProtection(plot->getPlotCity())!=b.key.state[5]||
+  (plot->getPlotCity()?plot->getPlotCity()->getDamage():-1)!=b.key.state[6])return false;
+ unsigned used=0;if(!map->AppendStackDangerCacheDescriptor(*plot,b.descriptor,sizeof(b.descriptor)/sizeof(b.descriptor[0]),used)||used!=b.source.size())return false;
+ if(!std::equal(b.source.begin(),b.source.end(),b.descriptor)||!StackPacketSourcesHaveNoLoadingCallback(b.source))return false;
+ // Descriptor/source-unit getters are additional preparation work. Recheck
+ // the owning scene after them, before using an iterator or admitting values.
+ return StackForecastContext()&&revision==gStackForecastRevision&&scene==gStackForecastSceneEpoch&&scene==CvStackingStrengthCache::SceneEpoch();
+}
+static bool ResolveStackDangerPacket(StackDangerPacketQuery& query,const CvUnit* unit,const CvPlot* plot,
+ const vector<const CvUnit*>& roster,const SUnitIDValueContainer& friendly,const SUnitIDValueContainer& enemy,
+ const StackForecastKey& legacy,unsigned long revision,long scene,StackDangerOutcomeBatch* outcome,int& result)
+{
+ if(!PrepareStackDangerPacket(query,unit,plot,roster,friendly,enemy,legacy))return false;
+ if(!ValidateStackDangerPacket(query,unit,plot,revision,scene))return false;
+ StackDangerPacketBuffer& b=query.buffer;
+ StackDangerForecasts::const_iterator hit=gStackDangerForecasts.find(b.key);
+ if(hit!=gStackDangerForecasts.end())
+  for(size_t i=0;i<hit->second.memberScores.size();++i)if(hit->second.memberScores[i].first==unit->GetID())
+  {
+   // Copy before a validating context call, which may clear the owning table.
+   const int cachedResult=hit->second.memberScores[i].second;
+   if(!ValidateStackDangerPacket(query,unit,plot,revision,scene))return false;
+   result=cachedResult;query.scalarValid=true;++gStackPacketHits;return true;
+  }
+ CvDangerPlots* map=GET_PLAYER(unit->getOwner()).GetDangerPlots();
+ SUnitIDValueContainer localFinal;const SUnitIDValueContainer* finalDamage=NULL;bool cityCanFall=false,computed=false;
+ if(outcome)
+ {
+  computed=outcome->TryGet(unit,plot,roster,friendly,enemy,result);
+  if(computed&&outcome->ready){finalDamage=&outcome->finalDamage;cityCanFall=outcome->cityCanFall;}
+  else if(computed)
+  {
+   // A computed local ledger was released on invalidation/budget failure.
+   // Retain this one query value; never replay the original callbacks/math.
+   query.scalarValid=ValidateStackDangerPacket(query,unit,plot,revision,scene);++gStackPacketBypasses;return true;
+  }
+ }
+ if(!computed)
+ {
+  ++gStackPacketBuilds;++gStackOutcomeBuilds;
+  computed=map->GetStackDangerOutcome(*plot,unit,roster,friendly,enemy,localFinal,cityCanFall,result);finalDamage=&localFinal;
+ }
+ if(!computed)return false; // The native false-return contract computes no leaf.
+ if(!ValidateStackDangerPacket(query,unit,plot,revision,scene)){++gStackPacketBypasses;return true;}
+ b.value.scalar=result;
+ for(size_t i=0;i<b.members.size();++i)
+ {
+  int memberResult=result;
+  if(b.members[i]!=unit&&!map->TryGetStackDangerFromOutcome(*plot,b.members[i],friendly,*finalDamage,cityCanFall,memberResult))
+  {++gStackPacketBypasses;return true;}
+  b.value.memberScores.push_back(make_pair(b.members[i]->GetID(),memberResult));
+ }
+ if(ValidateStackDangerPacket(query,unit,plot,revision,scene)){query.storePacket=true;query.scalarValid=true;}
+ else ++gStackPacketBypasses;
+ return true;
+}
+
 // BEGIN PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
 // Metadata only: no result/assignment/cache admission reads these fields.
 enum { PACKET_PROBE_SLOTS=128, PACKET_PROBE_WORDS=512, PACKET_PROBE_PAIRS=128 };
@@ -8405,12 +8661,12 @@ struct PacketProbeState
  int target;
  bool busy;
  unsigned __int64 misses,prefilter,cohort,groups,repeats,sameMember,crossMember;
- unsigned __int64 freshQueries,batchReuseQueries,freshRepeatQueries,freshCrossMemberQueries;
+ unsigned __int64 freshQueries,batchReuseQueries,packetResultReuseQueries,freshRepeatQueries,freshCrossMemberQueries;
  unsigned __int64 rawCalls,outcomeBuildAttempts;
  unsigned __int64 fallback,oversized,unavailable,invalidated,reentrant,evictions,clears;
  unsigned __int64 fieldGroups,cityGroups,keyBytes,peakKeyBytes,outputUpperBytes,peakOutputUpperBytes;
  PacketProbeState():count(0),sourceStart(0),sourceCount(0),next(0),serial(0),thread(0),revision(0),epoch(0),scene(0),actor(NO_PLAYER),target(-1),busy(false),
-  misses(0),prefilter(0),cohort(0),groups(0),repeats(0),sameMember(0),crossMember(0),freshQueries(0),batchReuseQueries(0),freshRepeatQueries(0),freshCrossMemberQueries(0),rawCalls(0),outcomeBuildAttempts(0),
+  misses(0),prefilter(0),cohort(0),groups(0),repeats(0),sameMember(0),crossMember(0),freshQueries(0),batchReuseQueries(0),packetResultReuseQueries(0),freshRepeatQueries(0),freshCrossMemberQueries(0),rawCalls(0),outcomeBuildAttempts(0),
   fallback(0),oversized(0),unavailable(0),invalidated(0),reentrant(0),evictions(0),clears(0),fieldGroups(0),cityGroups(0),keyBytes(0),peakKeyBytes(0),outputUpperBytes(0),peakOutputUpperBytes(0)
  { for(unsigned i=0;i<PACKET_PROBE_SLOTS;++i)slots[i].used=false; }
  void Clear(){for(unsigned i=0;i<PACKET_PROBE_SLOTS;++i)slots[i].used=false;next=0;keyBytes=outputUpperBytes=0;++clears;}
@@ -8461,9 +8717,9 @@ struct PacketProbeScope
   unsigned long serial=0;long epoch=0;
   if(CvStackingDiagnostics::TryGetPlanSamplingContext(serial,epoch)&&serial==done->serial&&epoch==done->epoch)
    CvStackingDiagnostics::Record(1,done->actor,"PLAN_PACKET_PROBE",
-    "targetPlot=%d serial=%lu thread=%lu version=1 prefilterBits=2 cohortBits=3 slots=128 maxKeyWords=512 metadataBytes=%u misses=%I64u prefiltered=%I64u cohortQueries=%I64u groups=%I64u repeats=%I64u sameMember=%I64u crossMember=%I64u freshQueries=%I64u batchReuseQueries=%I64u freshRepeatQueries=%I64u freshCrossMemberQueries=%I64u rawCalls=%I64u outcomeBuildAttempts=%I64u fieldGroups=%I64u cityGroups=%I64u fallback=%I64u oversized=%I64u sourceUnavailable=%I64u invalidated=%I64u reentrant=%I64u evictions=%I64u clears=%I64u keyBytes=%I64u peakKeyBytes=%I64u outputUpperBytes=%I64u peakOutputUpperBytes=%I64u; metadata cohorts are censored by sampling/bounds/eviction; fresh fields count queries, build attempts may fail; no stride-scaled saved simulations; output bytes are an upper estimate, not actual retained capacity",
+    "targetPlot=%d serial=%lu thread=%lu version=2 prefilterBits=2 cohortBits=3 slots=128 maxKeyWords=512 metadataBytes=%u misses=%I64u prefiltered=%I64u cohortQueries=%I64u groups=%I64u repeats=%I64u sameMember=%I64u crossMember=%I64u freshQueries=%I64u batchReuseQueries=%I64u packetResultReuseQueries=%I64u freshRepeatQueries=%I64u freshCrossMemberQueries=%I64u rawCalls=%I64u outcomeBuildAttempts=%I64u fieldGroups=%I64u cityGroups=%I64u fallback=%I64u oversized=%I64u sourceUnavailable=%I64u invalidated=%I64u reentrant=%I64u evictions=%I64u clears=%I64u keyBytes=%I64u peakKeyBytes=%I64u outputUpperBytes=%I64u peakOutputUpperBytes=%I64u; metadata cohorts are censored by sampling/bounds/eviction; fresh fields count queries, build attempts may fail; no stride-scaled saved simulations; output bytes are an upper estimate, not actual retained capacity",
     done->target,done->serial,done->thread,(unsigned)sizeof(PacketProbeState),done->misses,done->prefilter,done->cohort,done->groups,done->repeats,done->sameMember,done->crossMember,
-    done->freshQueries,done->batchReuseQueries,done->freshRepeatQueries,done->freshCrossMemberQueries,done->rawCalls,done->outcomeBuildAttempts,done->fieldGroups,done->cityGroups,done->fallback,done->oversized,done->unavailable,done->invalidated,done->reentrant,
+    done->freshQueries,done->batchReuseQueries,done->packetResultReuseQueries,done->freshRepeatQueries,done->freshCrossMemberQueries,done->rawCalls,done->outcomeBuildAttempts,done->fieldGroups,done->cityGroups,done->fallback,done->oversized,done->unavailable,done->invalidated,done->reentrant,
     done->evictions,done->clears,done->keyBytes,done->peakKeyBytes,done->outputUpperBytes,done->peakOutputUpperBytes);
   delete done;
  }
@@ -8476,12 +8732,12 @@ struct PacketProbeCall
  const CvDangerPlots* danger;
  const CvPlot* plot;
  unsigned member,outputUpper;
- unsigned long beforeBuilds,revision;
+ unsigned long beforeBuilds,beforePacketHits,revision;
  long scene;
  bool raw,city;
  PacketProbeCall(const CvUnit* unit,const CvPlot* target,const vector<const CvUnit*>& roster,
   const SUnitIDValueContainer& friendly,const SUnitIDValueContainer& enemy,const StackForecastKey& scalarKey,bool eligible):
-  state(NULL),threadState(&gPacketProbeState),danger(NULL),plot(target),member(0),outputUpper(0),beforeBuilds(0),revision(0),scene(0),raw(false),city(false)
+  state(NULL),threadState(&gPacketProbeState),danger(NULL),plot(target),member(0),outputUpper(0),beforeBuilds(0),beforePacketHits(0),revision(0),scene(0),raw(false),city(false)
  {
   PacketProbeState* active=gPacketProbeState;unsigned long serial=0;long epoch=0;
   if(!active||!eligible)return;
@@ -8529,7 +8785,7 @@ struct PacketProbeCall
   for(SUnitIDValueContainer::const_iterator i=friendly.begin();i!=friendly.end();++i)ids[unions++]=(*i).first;
   for(unsigned i=0;i<uniques;++i){unsigned j=0;for(;j<unions;++j)if(ids[j]==unique[i]->GetID())break;if(j==unions)ids[unions++]=unique[i]->GetID();}
   outputUpper=unions*sizeof(SUnitIDValueContainer::value_type);
-  ++active->cohort;active->busy=true;state=active;revision=gStackForecastRevision;scene=gStackForecastSceneEpoch;beforeBuilds=gStackOutcomeBuilds;
+  ++active->cohort;active->busy=true;state=active;revision=gStackForecastRevision;scene=gStackForecastSceneEpoch;beforeBuilds=gStackOutcomeBuilds;beforePacketHits=gStackPacketHits;
  }
  void MarkRaw(){raw=true;}
  ~PacketProbeCall(){Finish();}
@@ -8545,7 +8801,7 @@ struct PacketProbeCall
   const unsigned long attempts=gStackOutcomeBuilds-beforeBuilds;
   done->rawCalls+=raw?1:0;done->outcomeBuildAttempts+=attempts;
   const bool fresh=raw||attempts!=0;
-  if(fresh)++done->freshQueries;else ++done->batchReuseQueries;
+  if(fresh)++done->freshQueries;else if(gStackPacketHits!=beforePacketHits)++done->packetResultReuseQueries;else ++done->batchReuseQueries;
   const unsigned long hash=PacketProbeHash(done->key,done->count,0);
   unsigned selected=PACKET_PROBE_SLOTS;
   for(unsigned i=0;i<PACKET_PROBE_SLOTS;++i)if(done->slots[i].used&&done->slots[i].hash==hash&&done->slots[i].count==done->count&&
@@ -8593,7 +8849,7 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   if (cacheable && cached != gStackDangerForecasts.end())
   {
    ++gStackDangerHits;
-   return cached->second;
+   return cached->second.scalar;
   }
  }
  keySample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
@@ -8601,13 +8857,29 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   ++gStackDangerMisses;
  PacketProbeCall packetProbeCall(unit,plot,candidates,friendlyDamage,enemyDamage,key,cacheable); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
  int result = 0;
+ StackDangerPacketQuery packetQuery(cacheable);
  CvStackingDiagnostics::PlanSampleScope leafSample(CvStackingDiagnostics::PLAN_DANGER_LEAF); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+ const bool packetResolved = cacheable && ResolveStackDangerPacket(packetQuery,unit,plot,candidates,friendlyDamage,enemyDamage,key,revision,scene,outcome,result);
+ if (!packetResolved)
+ {
  if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
   result = (packetProbeCall.MarkRaw(), GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage)); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+ }
  leafSample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  packetProbeCall.Finish(); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
  if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
-  StoreStackDangerForecast(key, result);
+ {
+  if (packetResolved)
+  {
+   if (packetQuery.scalarValid && ValidateStackDangerPacket(packetQuery,unit,plot,revision,scene))
+   {
+    if (packetQuery.storePacket) StoreStackDangerPacketForecast(packetQuery.buffer.key,packetQuery.buffer.value);
+    // Only this queried even key is admitted, last under tiny shared budgets.
+    if (ValidateStackDangerPacket(packetQuery,unit,plot,revision,scene)) StoreStackDangerForecast(key,result);
+   }
+  }
+  else StoreStackDangerForecast(key,result);
+ }
  return result;
 }
 
@@ -14742,14 +15014,15 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
 	{
 		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
 			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
 			strength.meleeHits,strength.meleeMisses,strength.rangedHits,strength.rangedMisses,
 			strength.attackHits,strength.attackMisses,strength.defenseHits,strength.defenseMisses,
 			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations,
-			gStackOutcomeBuilds,gStackOutcomeReuses,gStackOutcomeBypasses,(unsigned int)gStackOutcomeCurrentBytes,(unsigned int)gStackOutcomePeakBytes);
+			gStackOutcomeBuilds,gStackOutcomeReuses,gStackOutcomeBypasses,(unsigned int)gStackOutcomeCurrentBytes,(unsigned int)gStackOutcomePeakBytes,
+			gStackPacketHits,gStackPacketBuilds,gStackPacketBypasses);
 	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,

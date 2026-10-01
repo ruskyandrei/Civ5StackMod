@@ -48,3 +48,12 @@ Its synthetic tests cover schema/count equations, native byte bounds, exact
 and mismatched identities, legacy candidate qualifications, filters, absence,
 duplicate/conflicting segments, row drops, CLI writes and invalid-row exit 2.
 Results are written to `work/packet-probe-profile-fixture-result.json`.
+
+
+The shared-result implementation emits probe version2. Its separate
+`packetResultReuseQueries` counter records selected queries served by the new
+shared result entry; `batchReuseQueries` continues to mean the existing local
+outcome batch. The count equation is
+`freshQueries + batchReuseQueries + packetResultReuseQueries = cohortQueries`.
+Version1 has no shared-result class and remains readable as zero for this
+field. This is a diagnostic schema change, not evidence of native savings.

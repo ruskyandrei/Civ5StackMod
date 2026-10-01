@@ -617,3 +617,21 @@ The next separate trial removes out-of-line `PlanSampleScope` completion calls
 when its existing `sampled` flag is false. It retains the selected completion
 body and constructor, with89 actual-source lifecycle/cadence checks passing.
 Native ROI is pending; it does not alter gameplay or reduce search limits.
+
+## DLL78 inline completion result
+
+`b0092e54d` completed the OFF251→255 replay with all699 native actions and
+nonempty censuses matching77. Interior252 took35.906s (PLAN10.895s),253
+73.969s (PLAN46.077s), compared with36.266s/73.797s for77OFF. This pair shows
+no clear overall wall-time improvement: the fast turn improves slightly and
+the slower turn regresses slightly. The narrow inline gate remains correct,
+with89 actual-source lifecycle/cadence checks and fewer unselected completion
+calls, but no meaningful general performance gain is claimed.
+
+The exact game/service closed normally at04:29:06 UTC; configuration retains
+the original04B4AAA0... hash. Build66.281s under
+`work/msvc-output/Release/20261001-052115`; DLL
+B045482865CB7F1F6CA2F5B8256C9516862AF532AF4C1DBEB6381D8C2882F41A.
+Evidence: `perf-d78-inline-finish-off-251-255/comparison-d77.json`, phase reports
+and normal-exit proof. The target remains unmet; the slower controlled turn
+still takes about74seconds.

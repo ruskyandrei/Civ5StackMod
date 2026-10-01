@@ -28,4 +28,17 @@ before="sources={name:(root/'CvGameCoreDLL_Expansion2'/name).read_text(encoding=
 assert script.count(before)==1
 script=script.replace(before,"sources={name:(staged/name).read_text(encoding='utf-8') for name in ('CvStackingDiagnostics.cpp','CvStackingDiagnostics.h')}",1)
 script=script.replace('current production sampler exact reviewed frozen60 proposal','actual staged/adopted inline finish candidate; current cadence and lifecycle')
-exec(compile(script,'tracked actual cadence fixture with inline finish source','exec'),{'__file__':str(root/'work/test-inline-plan-finish.py'),'__name__':'__main__','CANDIDATE_ROOT':str(candidate_root)})
+script=script.replace('production_applied=True','production_applied=ADOPTED')
+script=script.replace('Current Diagnostics sampler/header/reset/level methods exactly match frozen60 cadence proposal; frozen60 Lua methods unchanged.',
+                      'Actual whole-file-pinned frozen77 inline finish candidate; frozen60 Lua methods unchanged.')
+try:
+    exec(compile(script,'tracked actual cadence fixture with inline finish source','exec'),{'__file__':str(root/'work/test-inline-plan-finish.py'),'__name__':'__main__','CANDIDATE_ROOT':str(candidate_root),'ADOPTED':opts.production})
+except SystemExit as result:
+    if result.code not in (None,0):
+        raise
+    report=root/'work/inline-plan-finish-regression/result.json'
+    evidence=json.loads(report.read_text())
+    evidence['lua_fixture_control']=evidence['control']
+    evidence['control']=proof['control']
+    evidence['candidate_source_hashes']={name:info['candidateSHA256'] for name,info in proof['files'].items()}
+    report.write_text(json.dumps(evidence,indent=2)+'\n')
