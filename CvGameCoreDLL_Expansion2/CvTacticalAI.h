@@ -1134,6 +1134,36 @@ protected:
 	std::tr1::unordered_map<AttackKey, vector<int>, AttackKeyHash> attackStats;
 };
 
+// Plot scores are small, frequently copied and only mutated through operator[].
+// Integer key order and default-zero short values match the former map. Element
+// references/iterators can move on insertion; callers do not retain them across
+// insertion. The container object itself remains stable for CoW borrowing.
+class STacticalPlotScores
+{
+public:
+    typedef std::pair<int, short> value_type;
+    typedef std::vector<value_type>::const_iterator const_iterator;
+    short& operator[](int key)
+    {
+        std::vector<value_type>::iterator it = std::lower_bound(values.begin(), values.end(), key, KeyLess());
+        if (it == values.end() || it->first != key)
+            it = values.insert(it, value_type(key, 0));
+        return it->second;
+    }
+    const_iterator begin() const { return values.begin(); }
+    const_iterator end() const { return values.end(); }
+    size_t size() const { return values.size(); }
+    bool empty() const { return values.empty(); }
+    void clear() { values.clear(); }
+    void swap(STacticalPlotScores& other) { values.swap(other.values); }
+private:
+    struct KeyLess
+    {
+        bool operator()(const value_type& value, int key) const { return value.first < key; }
+    };
+    std::vector<value_type> values;
+};
+
 //copy-on-write for often reused seldom updated fields in tactical positions
 template<typename T>
 struct SCoWField {
@@ -1183,7 +1213,7 @@ class CvBasePosition
 {
 protected:
 	//for final sorting (does not include intermediate moves)
-	SCoWField<map<int, short>> plotScores; // not additive (only the final plot value is included in the total evaluation)
+	SCoWField<STacticalPlotScores> plotScores; // not additive (only the final plot value is included in the total evaluation)
 	int iDamageDelta; //damage dealt - damage received
 	int iBonusScore; // additive
 	int iTotalScore; // sum of all above

@@ -7733,14 +7733,14 @@ void CvBasePosition::UpdateScore(int iUnitId, int iPlotScore, int iOldPlotScore,
 	iDamageDelta += iDamageDelta_;
 	iBonusScore += iBonusScore_;
 
-	const map<int, short>& plotScores_r = plotScores.read();
+	const STacticalPlotScores& plotScores_r = plotScores.read();
 
 	//update total score and check for old plot score
 	//total score is (iDamageDelta + iBonusScore) * 10 + sum(plotScores)
 	//score over parent is (iBonusScore + iDamageDelta + iPlotScore - sPreviousPlotScore)
 	iTotalScore = (iDamageDelta + iBonusScore) * 10;
 	bool bFoundScore = false;
-	for (map<int, short>::const_iterator it = plotScores_r.begin(); it != plotScores_r.end(); ++it)
+	for (STacticalPlotScores::const_iterator it = plotScores_r.begin(); it != plotScores_r.end(); ++it)
 	{
 		int iLoopUnitID = it->first;
 		short sPreviousPlotScore = it->second;
@@ -11461,8 +11461,8 @@ bool CvTacticalPosition::addFinishMovesIfAcceptable(bool bEarlyFinish, int& iBad
 	if (CvStacking::IsEnabled())
 	{
 		iTotalScore = (iDamageDelta + iBonusScore) * 10;
-		const map<int, short>& finalScores = plotScores.read();
-		for (map<int, short>::const_iterator it = finalScores.begin(); it != finalScores.end(); ++it)
+		const STacticalPlotScores& finalScores = plotScores.read();
+		for (STacticalPlotScores::const_iterator it = finalScores.begin(); it != finalScores.end(); ++it)
 			iTotalScore += it->second;
 	}
 

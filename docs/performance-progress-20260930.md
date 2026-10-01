@@ -443,3 +443,29 @@ The next candidates remove zero-AoE ledger scans and per-branch plot-score tree
 allocations. Both must preserve scores, candidate ordering and full search
 budgets; numerical and native behavior comparisons remain required. Goal
 <30s after250 remains unmet, and no broad late-game timing claim is warranted.
+
+## DLL64 empty-ledger work and DLL65 score-container trial
+
+DLL64 (`fb45e447e`) combines the separately committed default-off diagnostic
+cadence revision with the two zero-AoE forecast guards. Its quiet sampling-off
+251→255 replay completed and quit normally. All699 native semantic records
+and before/after player/unit/city/war censuses match DLL60. Interior252 took
+38.781s (PLAN13.238s);253 took84.031s (PLAN55.497s). The small difference from
+60 is within ordinary run variation; the verified removed fixture work does
+not establish a substantial native speed gain. Source/run evidence is in
+`perf-d64-zero-aoe-off-251-255` and `docs/zero-aoe-danger-forecasts.md`.
+
+DLL60's253 CPU profile covers73.625s of same-thread CPU inside fully contained
+native phase unions, with8.374s of uncovered elapsed gaps and0.344s of measured
+CPU across unambiguous same-thread gap endpoints. Inclusive nested scopes must
+not be added. This supports continuing to reduce computation as well as studying
+engine scheduling; eliminating uncovered waits alone cannot meet30s here.
+
+The next separately validated trial replaces only the protected plot-score
+map with sorted contiguous `(int,short)` records. Current-production VC9
+regressions pass49,687 checks and strict source-delta guards. Scores, integer
+iteration order, short conversions, CoW borrowing and search policies are
+unchanged. Allocation counts decrease in isolated repeated-copy fixtures;
+native timing/RSS and retained action comparison remain to be measured.
+See `docs/flat-tactical-plot-scores.md`. Broad nested CoW retention is deferred
+because actor/plot caps do not tightly bound retained history and nested vectors.
