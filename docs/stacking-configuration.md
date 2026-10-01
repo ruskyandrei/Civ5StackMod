@@ -50,9 +50,9 @@ Capacity and integer additions are bounded internally at `INT_MAX / 4` to preven
 |---|---:|---:|
 | Start | — | 2 |
 | TECH_IRON_WORKING | 1 | 3 |
-| TECH_GUNPOWDER | 2 | 5 |
-| TECH_MILITARY_SCIENCE | 2 | 7 |
-| TECH_ROBOTICS | 2 | 9 |
+| TECH_GUNPOWDER | 1 | 4 |
+| TECH_MILITARY_SCIENCE | 1 | 5 |
+| TECH_ROBOTICS | 1 | 6 |
 
 There is no requirement to use those four technologies. Removing a row removes that bonus. Adding a row requires only a valid final-database technology Type. Primary keys prevent double-counting the same technology.
 
@@ -284,7 +284,15 @@ All controls remain in `StackingConfig.xml`. The new pass keeps the tactical 13-
 | AIWarOpeningReadyPercent | 75 | 50–100 | Minimum fraction of the army within opening range. |
 | AIWarOpeningMinimumRanged | 1 | 0–10 | Minimum ranged members in the staged core. |
 | AIWarOpeningStrengthPercent | 150 | 100–300 | Staged strength relative to visible target city and nearby defenders. |
-| AIOffensiveSupportMaximumObjectives | 8 | 1–24 | Maximum remembered city/domain objectives per player. |
+| AIOffensiveSupportMaximumObjectives | 8 | 1–24 | Maximum remembered city/domain objectives per player. A recently lost city (`AIRecaptureMemoryTurns`) is remembered beyond this cap. |
+| AIOffensiveFocusObjectives | 2 | 0–8 | Reinforcement and production focus. Each turn a player's city objectives in each domain are ranked by promise; only this many receive reinforcement demands and offensive production. Units already near another objective still fight there, and a unit committed to an objective outside the focus may be redirected. Changes are logged as `OFFENSIVE_FOCUS`. 0 disables the focus (every objective gets demands). |
+| AIOffensiveFocusForceCapPercent | 200 | 0–1000 | Promise score: the healthy strength already credited to the objective (its army, committed units and nearby free units) as a percentage of the local enemy strength (city plus visible defenders within two tiles), capped at this value. The city's missing HP percentage is added. |
+| AIOffensiveFocusDistancePenalty | 4 | 0–50 | Promise score subtracted per tile between the objective and the player's nearest city (at most 30 tiles). |
+| AIOffensiveFocusOperationBonus | 60 | 0–500 | Promise score added when a live city-attack operation targets the city. |
+| AIOffensiveFocusContinuityBonus | 30 | 0–500 | Promise score added to objectives focused on the previous ranking, so the focus does not flip between similar targets. |
+| AIRecaptureMemoryTurns | 30 | 0–100 | A city the player lost within this many turns stays one of its land objectives while the captor holds it and the two are at war, so reinforcements gather for a counterattack. 0 disables recapture objectives and bonuses. |
+| AIRecaptureFocusBonus | 100 | 0–500 | Promise score added to a recently lost city. |
+| AIRecaptureDemandPriority | 40 | 0–300 | Reinforcement priority added to demands for a recently lost city. |
 | AIOffensiveSupportMemoryTurns | 12 | 2–40 | Expire a handed-off objective after this many turns without a tactical siege observation. |
 | AIOffensiveSupportMinimumUnits | 12 | 2–40 | Baseline desired force, bounded by the maximum. |
 | AIOffensiveSupportMaximumUnits | 32 | 4–64 | Hard cap on assigned, local, travelling and in-training combat-unit credit per objective/domain. |

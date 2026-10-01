@@ -25,9 +25,9 @@ Combat units share a tile up to their owner's current capacity, counted separate
 |---|---:|---:|
 | Start | — | 2 |
 | Iron Working | 1 | 3 |
-| Gunpowder | 2 | 5 |
-| Military Science | 2 | 7 |
-| Robotics | 2 | 9 |
+| Gunpowder | 1 | 4 |
+| Military Science | 1 | 5 |
+| Robotics | 1 | 6 |
 
 The defender is selected for each attack using its expected combat outcome. A badly wounded melee unit can therefore yield to a healthier ranged defender. Configured melee cavalry and armor can reach ranged/siege members first, unless an eligible anti-cavalry member intercepts them. Mounted ranged units do not gain a melee attack from this rule.
 

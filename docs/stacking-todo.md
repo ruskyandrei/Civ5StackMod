@@ -93,6 +93,22 @@ semantic replay comparison like the previous changes.
   did not crash. Fixed 2026-10-01: `LuaSupport::DeferredHookScope` queues those
   hooks (5 per capture) and runs them once the city is consistent; decisions
   identical. Saves and dump: `work/test-runs/campaign-c9-20261001/crash-t233`.
+- [x] Armies spread over up to eight city objectives, each asking for
+  reinforcements and production at the same priority. Done 2026-10-01
+  (`docs/ai-focus-recapture-20261001.md`): `AIOffensiveFocusObjectives` (2)
+  ranks objectives per domain each turn by force against local enemy strength,
+  city damage, distance, operation and continuity; only the focus gets demands
+  and production (`OFFENSIVE_FOCUS`). In the C11 fresh game, 71% of dispatches
+  went to each player's main target (59% before), but first waves did not grow.
+- [ ] Recapture objectives (`AIRecaptureMemoryTurns` 30) are implemented but
+  untested: in the C11 fresh game Rome lost three cities in seven turns and
+  made peace on turn 231. Observe a former owner that stays at war with forces
+  nearby (a Lua-staged scenario may be needed).
+- [ ] Separate the effect of the +1 technology capacity bonuses (capacity 6
+  instead of 9) from the focus change. The C11 fresh game had both and far
+  fewer major captures (7 against 18) and city attacks (301 against 497 by
+  turn 231). Candidates: a fresh game with C11 and the old +2 bonuses, or
+  readiness thresholds that assume the larger stacks.
 
 - [x] Ensure unused legal ranged/siege shots from the current tile are not lost
   simply because the whole assault is gathering or future incoming damage is

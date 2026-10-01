@@ -96,6 +96,21 @@
     <Row Name="AIWarOpeningMinimumRanged" Value="1"/>
     <Row Name="AIWarOpeningStrengthPercent" Value="150"/>
     <Row Name="AIOffensiveSupportMaximumObjectives" Value="8"/>
+    <!-- Reinforcements and offensive production go only to the best few city
+         objectives per domain, ranked each turn by the force already there
+         against the local enemy strength, the city's lost HP, the distance
+         from the nearest own city and the bonuses below. 0 disables. -->
+    <Row Name="AIOffensiveFocusObjectives" Value="2"/>
+    <Row Name="AIOffensiveFocusForceCapPercent" Value="200"/>
+    <Row Name="AIOffensiveFocusDistancePenalty" Value="4"/>
+    <Row Name="AIOffensiveFocusOperationBonus" Value="60"/>
+    <Row Name="AIOffensiveFocusContinuityBonus" Value="30"/>
+    <!-- A city lost within this many turns stays an objective of its former
+         owner while the captor holds it, ranks higher in the focus and gets
+         a reinforcement priority bonus. 0 disables. -->
+    <Row Name="AIRecaptureMemoryTurns" Value="30"/>
+    <Row Name="AIRecaptureFocusBonus" Value="100"/>
+    <Row Name="AIRecaptureDemandPriority" Value="40"/>
     <Row Name="AIOffensiveSupportMemoryTurns" Value="12"/>
     <Row Name="AIOffensiveSupportMinimumUnits" Value="12"/>
     <Row Name="AIOffensiveSupportMaximumUnits" Value="32"/>
@@ -239,9 +254,9 @@
   </Stacking_Settings>
   <Stacking_Technologies>
     <Row TechType="TECH_IRON_WORKING" CapacityBonus="1" />
-    <Row TechType="TECH_GUNPOWDER" CapacityBonus="2" />
-    <Row TechType="TECH_MILITARY_SCIENCE" CapacityBonus="2" />
-    <Row TechType="TECH_ROBOTICS" CapacityBonus="2" />
+    <Row TechType="TECH_GUNPOWDER" CapacityBonus="1" />
+    <Row TechType="TECH_MILITARY_SCIENCE" CapacityBonus="1" />
+    <Row TechType="TECH_ROBOTICS" CapacityBonus="1" />
   </Stacking_Technologies>
   <!-- Broad defaults let new unique classes inherit sensible behavior. -->
   <Stacking_UnitCombatRoles>

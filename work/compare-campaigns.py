@@ -4,7 +4,9 @@ Usage: python work/compare-campaigns.py RUN_DIR [RUN_DIR ...] [--until TURN]
 Per run: city captures, war declarations, major-vs-major combats and city attacks
 per attacker/defender pair, bombardment and readiness counts from ASSAULT_PLAN,
 combined-operation readiness rows (WAR_READINESS/OPERATION_READINESS of type-4
-operations) and wall-clock time per 50 turns from the monitor checkpoints.
+operations), land assault-wave sizes, recaptures by a city's former owner,
+reinforcement focus changes (OFFENSIVE_FOCUS) and wall-clock time per 50 turns
+from the monitor checkpoints.
 """
 import collections, glob, json, re, sys
 from pathlib import Path
@@ -50,6 +52,8 @@ def summarize(run, until):
     captures, declarations = [], []
     plans = collections.Counter()
     combined_ops, combined = set(), []
+    waves = collections.Counter()
+    focus = collections.Counter()
     for turn, player, cat, body in rows(run, until):
         if cat == 'COMBAT_SUMMARY':
             a, d = field(body, 'attackerOwner'), field(body, 'defenderOwner')
@@ -60,13 +64,19 @@ def summarize(run, until):
                     p[1] += 1
                     p[2] += max(0, (field(body, 'cityHPBefore') or 0) - (field(body, 'cityHPAfter') or 0))
         elif cat == 'CITY_CAPTURE':
-            captures.append((turn, field(body, 'newOwner'), field(body, 'oldOwner')))
+            captures.append((turn, field(body, 'newOwner'), field(body, 'oldOwner'), field(body, 'plot')))
         elif cat == 'WAR_DECLARATION':
             declarations.append((turn, player, field(body, 'enemy'), field(body, 'ready')))
         elif cat == 'ASSAULT_PLAN':
             plans['rows'] += 1
             plans['ready'] += field(body, 'phase') == 1
             plans['bombard'] += field(body, 'bombard') == 1
+            if field(body, 'domain') == 2 and player in MAJORS:
+                w = field(body, 'waveUnits') or 0
+                waves['0' if w == 0 else '1-3' if w <= 3 else '4-7' if w <= 7 else '8+'] += 1
+        elif cat == 'OFFENSIVE_FOCUS':
+            focus['changes'] += 1
+            focus['recapture focus'] += len(re.findall(r':1(?:,|$| )', body))
         elif cat == 'OPERATION_STATUS' and field(body, 'type') == 4:
             combined_ops.add((player, field(body, 'operation')))
         elif cat in ('WAR_READINESS', 'OPERATION_READINESS'):
@@ -74,9 +84,16 @@ def summarize(run, until):
                 combined.append((turn, player, cat, field(body, 'operation'), field(body, 'total') if cat == 'WAR_READINESS' else field(body, 'core'),
                                  field(body, 'capture') if cat == 'WAR_READINESS' else field(body, 'capturers'), field(body, 'failedMask'), field(body, 'ready')))
     print('==', run.name, 'through turn', until)
-    print('captures (turn, new, old):', [c for c in captures if c[2] in MAJORS or c[1] in MAJORS])
+    print('captures (turn, new, old):', [c[:3] for c in captures if c[2] in MAJORS or c[1] in MAJORS])
     print('captures total:', len(captures), ' war declarations (turn, player, enemy, ready):', declarations)
-    print('assault plans:', dict(plans))
+    print('assault plans:', dict(plans), ' major land waves by units:', dict(waves))
+    lost, retaken = {}, []
+    for t, new, old, plot in captures:
+        if lost.get(plot, (None, None))[0] == new and old != new:
+            retaken.append((t, new, old, t - lost[plot][1]))
+        lost[plot] = (old, t)
+    print('recaptured by the former owner (turn, owner, from, turns held):', retaken)
+    print('focus:', dict(focus))
     print('major pairs with city attacks or >50 combats: attacker->defender combats/cityAttacks/cityDamage')
     for (a, d), (n, c, dmg) in sorted(pair.items()):
         if c or n > 50:

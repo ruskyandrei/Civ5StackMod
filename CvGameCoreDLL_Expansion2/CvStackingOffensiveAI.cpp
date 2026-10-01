@@ -74,14 +74,15 @@ enum AssaultFailure
         std::vector<int> productionCaptureQueues;
         int lastUsefulTurn, lowestHP;
         int firstReadyTurn, lastCityProgress, lastCityAttack, cityAttempts, fieldContributions;
-        bool captureKnown;
+        bool captureKnown, focused;
+        int focusScore;
         std::vector<AssaultWaveUnit> waveRows;bool waveComplete,wavePathUnknown;
         Objective():enemy(-1),operation(-1),staging(-1),refreshed(-1),created(-1),coreUnits(0),coreStrength(0),
             captureTurn(-1),captureID(-1),noCaptureSince(-1),captureOwner(-1),captureEta(INT_MAX),captureProgress(-1),capturePlot(-1),captureDistance(INT_MAX),
             assaultTurn(-1),phaseSince(-1),phaseLogged(-1),staffTurn(-1),staffUnits(0),staffSiege(0),staffRanged(0),staffCapture(0),
             productionTurn(-1),productionUnits(0),productionSiege(0),productionRanged(0),productionCapture(0),productionQueued(0),productionGeneration(0),
             lastUsefulTurn(-1),lowestHP(INT_MAX),firstReadyTurn(-1),lastCityProgress(-1),lastCityAttack(-1),cityAttempts(0),fieldContributions(0),
-            captureKnown(false),waveComplete(false),wavePathUnknown(false){}
+            captureKnown(false),focused(false),focusScore(0),waveComplete(false),wavePathUnknown(false){}
     };
     struct Commitment
     {
@@ -130,6 +131,7 @@ static int openingForecastTurn=-1;
     std::map<Key,StalledProductionQueue> stalledProduction;
     std::map<Key,int> assemblyHolds;
     std::map<Key,int> fireRefusals; // unit -> turn of its last logged FIRE_REFUSAL
+    std::map<Key,int> focusRanked; // (owner,domain) -> turn of its last focus ranking
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
     void AdvanceProductionGeneration(PlayerTypes owner);
     bool shuttingDown=false;
@@ -298,6 +300,13 @@ static int openingForecastTurn=-1;
         for(std::map<Key,std::pair<int,int> >::iterator i=captureRetries.begin();i!=captureRetries.end();)
             if(i->second.second<turn || !Usable(GET_PLAYER((PlayerTypes)i->first.first).getUnit(i->first.second))) captureRetries.erase(i++); else ++i;
     }
+    // A city the owner lost recently, still held by its captor.
+    bool RecentlyLost(PlayerTypes owner,const CvCity* city)
+    {
+        const int turns=Setting("AIRecaptureMemoryTurns",30);
+        return turns>0 && city && city->getOwner()!=owner && city->getPreviousOwner()==owner &&
+            GC.getGame().getGameTurn()-city->getGameTurnAcquired()<=turns;
+    }
     Objective* Touch(PlayerTypes owner,CvPlot* target,DomainTypes domain)
     {
         if(!target || !target->isCity() || target->getOwner()==NO_PLAYER ||
@@ -310,7 +319,7 @@ static int openingForecastTurn=-1;
         {
             int count=0;
             for(std::map<ObjectiveKey,Objective>::const_iterator i=objectives.begin();i!=objectives.end();++i) count+=i->first.owner==owner;
-            if(count>=Setting("AIOffensiveSupportMaximumObjectives",8)) return NULL;
+            if(count>=Setting("AIOffensiveSupportMaximumObjectives",8) && !RecentlyLost(owner,target->getPlotCity())) return NULL;
         }
         Objective& o=objectives[key];
         if(o.created<0 || o.enemy!=target->getOwner()) { o=Objective(); o.created=o.lastUsefulTurn=currentTurn; }
@@ -360,6 +369,17 @@ static int openingForecastTurn=-1;
         for(CvCity* city=player.firstCity(&loop);city;city=player.nextCity(&loop))
             if(city->getProductionUnit()!=NO_UNIT && !city->IsBuildingUnitForOperation() && production.find(Key(owner,city->GetID()))==production.end())
                 CvStackingOffensiveAI::RecordProduction(city,city->getProductionUnit());
+        // A recently lost city stays an objective while its captor holds it,
+        // so reinforcements can gather for a counterattack.
+        if(Setting("AIRecaptureMemoryTurns",30)>0 && CvStackingOffensiveAI::Enabled(owner))
+            for(int p=0;p<MAX_PLAYERS;++p)
+            {
+                CvPlayer& captor=GET_PLAYER((PlayerTypes)p);
+                if(p==owner || !captor.isAlive() || !player.IsAtWarWith((PlayerTypes)p)) continue;
+                int cityLoop=0;
+                for(CvCity* city=captor.firstCity(&cityLoop);city;city=captor.nextCity(&cityLoop))
+                    if(RecentlyLost(owner,city) && city->plot()->isRevealed(player.getTeam())) Touch(owner,city->plot(),DOMAIN_LAND);
+            }
         LogRoster(owner);
     }
     bool Matches(CvUnit* u,const ObjectiveKey& key,const Objective& o)
@@ -399,6 +419,79 @@ static int openingForecastTurn=-1;
             }
         }
         return total;
+    }
+    bool Focused(const Objective& o)
+    { return Setting("AIOffensiveFocusObjectives",2)<=0 || o.focused; }
+    // Reinforcement and production focus: once per turn, rank the owner's
+    // objectives in one domain by promise and keep only the best few focused.
+    // Promise: the force already credited to the objective against the local
+    // enemy strength, the city's lost HP, the distance from the owner's
+    // nearest city, a live operation, a recently lost own city, and
+    // continuity with the previous focus.
+    void RankFocus(PlayerTypes owner,DomainTypes domain)
+    {
+        const int limit=Setting("AIOffensiveFocusObjectives",2);
+        if(limit<=0) return;
+        const Key rankKey(owner,domain);
+        std::map<Key,int>::iterator done=focusRanked.find(rankKey);
+        if(done!=focusRanked.end() && done->second==currentTurn) return;
+        focusRanked[rankKey]=currentTurn;
+        CvPlayer& player=GET_PLAYER(owner);
+        const int radius=Setting("AIOffensiveSupportLocalRadius",4);
+        const int healthy=Setting("AIOffensiveProductionHealthyPercent",65);
+        std::map<int,int> force; // target -> strength of the healthy units credited to it
+        int loop=0;
+        for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
+        {
+            if(!Usable(u) || u->getDomainType()!=domain || u->GetCurrHitPoints()*100<u->GetMaxHitPoints()*healthy) continue;
+            const bool assigned=u->getArmyID()!=-1 || commitments.find(Key(owner,u->GetID()))!=commitments.end();
+            for(std::map<ObjectiveKey,Objective>::const_iterator i=objectives.begin();i!=objectives.end();++i)
+            {
+                if(i->first.owner!=owner || i->first.domain!=domain) continue;
+                // Matches credits an unassigned unit only within the local radius.
+                if(!assigned && plotDistance(*u->plot(),*GC.getMap().plotByIndexUnchecked(i->first.target))>radius) continue;
+                if(Matches(u,i->first,i->second)) { force[i->first.target]+=CvStackingAI::UnitStrength(u); break; }
+            }
+        }
+        std::vector<std::pair<int,int> > ranking; // (-score, target)
+        bool changed=false;
+        for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
+        {
+            if(i->first.owner!=owner || i->first.domain!=domain) continue;
+            Objective& o=i->second;
+            CvPlot* target=GC.getMap().plotByIndexUnchecked(i->first.target);
+            if(!target || !target->isCity() || target->getOwner()!=o.enemy)
+            { changed|=o.focused; o.focused=false; continue; }
+            const CvCity* city=target->getPlotCity();
+            const bool visible=target->isVisible(player.getTeam());
+            // A hidden city keeps its last assessed strength.
+            const int enemy=max(1,max(EnemyStrength(owner,target),visible?0:o.assault.enemyStrength));
+            const int ratio=(int)min((long long)Setting("AIOffensiveFocusForceCapPercent",200),(long long)force[i->first.target]*100/enemy);
+            const int hp=visible?(city->GetMaxHitPoints()-city->getDamage())*100/max(1,city->GetMaxHitPoints()):100;
+            int distance=INT_MAX,cityLoop=0;
+            for(CvCity* own=player.firstCity(&cityLoop);own;own=player.nextCity(&cityLoop)) distance=min(distance,plotDistance(*own->plot(),*target));
+            if(distance==INT_MAX) distance=0;
+            CvAIOperation* op=player.getAIOperation(o.operation);
+            const bool active=Live(op) && CvStackingOffensiveAI::CityTarget(op)==target;
+            o.focusScore=ratio+(100-hp)-min(distance,30)*Setting("AIOffensiveFocusDistancePenalty",4)+
+                (active?Setting("AIOffensiveFocusOperationBonus",60):0)+(RecentlyLost(owner,city)?Setting("AIRecaptureFocusBonus",100):0)+
+                (o.focused?Setting("AIOffensiveFocusContinuityBonus",30):0);
+            ranking.push_back(std::make_pair(-o.focusScore,i->first.target));
+        }
+        std::sort(ranking.begin(),ranking.end());
+        char text[400]; int length=0; text[0]=0;
+        for(size_t r=0;r<ranking.size();++r)
+        {
+            Objective& o=objectives[ObjectiveKey(owner,ranking[r].second,domain)];
+            const bool focus=(int)r<limit;
+            changed|=o.focused!=focus;
+            o.focused=focus;
+            if(focus && length<(int)sizeof(text)-48)
+                length+=sprintf_s(text+length,sizeof(text)-length,"%s%d:%d:%d:%d",length?",":"",ranking[r].second,o.focusScore,
+                    force[ranking[r].second],RecentlyLost(owner,GC.getMap().plotByIndexUnchecked(ranking[r].second)->getPlotCity())?1:0);
+        }
+        if(changed)
+            CvStackingDiagnostics::Record(1,owner,"OFFENSIVE_FOCUS","domain=%d objectives=%d focused=%s (target:score:force:recapture)",domain,(int)ranking.size(),length?text:"none");
     }
     bool KnownFortified(PlayerTypes owner,const CvCity* city)
     {
@@ -636,10 +729,11 @@ static int openingForecastTurn=-1;
         if(!budget.ready)return 0; // Unknown optional proof never waives a native limit.
         ProductionPolicyState& state=productionPolicy[owner];const Key ownCity(owner,city->GetID());
         const int roles=ProductionEntryRoles(city,unit);int best=0,bestEvidence=INT_MIN;
+        RankFocus(owner,(DomainTypes)entry->GetDomainType());
         for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
         {
             const ObjectiveKey& key=i->first;Objective& o=i->second;
-            if(key.owner!=owner||key.domain!=entry->GetDomainType())continue;
+            if(key.owner!=owner||key.domain!=entry->GetDomainType()||!Focused(o))continue;
             CvPlot* target=GC.getMap().plotByIndexUnchecked(key.target);
             if(!target||!target->isCity()||target->getOwner()!=o.enemy||
                 CvStackingOffensiveAI::RouteBlocked(owner,target,key.domain==DOMAIN_SEA)||
@@ -1721,7 +1815,7 @@ namespace CvStackingOffensiveAI
     void Reset()
     {
         ResetOpeningReadiness(); ResetProductionPolicy();
-        objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); fireRefusals.clear(); currentTurn=-1; shuttingDown=false;
+        objectives.clear(); commitments.clear(); failures.clear(); focusRanked.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); fireRefusals.clear(); currentTurn=-1; shuttingDown=false;
         if(continuityGeneration==0xffffffffUL) continuityGenerationExhausted=true; else ++continuityGeneration;
     }
     void Shutdown()
@@ -1801,10 +1895,15 @@ namespace CvStackingOffensiveAI
         if(!unit || !Enabled(unit->getOwner())) return;
         const PlayerTypes owner=unit->getOwner(); Sync(owner);
         CvPlayer& player=GET_PLAYER(owner);
+        RankFocus(owner,unit->getDomainType());
+        // A unit committed to an objective outside the focus may be redirected.
+        const std::map<Key,Commitment>::const_iterator own=commitments.find(Key(owner,unit->GetID()));
+        const std::map<ObjectiveKey,Objective>::const_iterator ownGoal=own==commitments.end()?objectives.end():objectives.find(own->second.goal);
+        const bool keepGoal=ownGoal!=objectives.end() && Focused(ownGoal->second);
         for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
         {
             const ObjectiveKey& key=i->first; Objective& o=i->second;
-            if(key.owner!=owner || key.domain!=unit->getDomainType()) continue;
+            if(key.owner!=owner || key.domain!=unit->getDomainType() || !Focused(o)) continue;
             CvPlot* target=GC.getMap().plotByIndexUnchecked(key.target);
             if(!target || !target->isCity() || target->getOwner()!=o.enemy || RouteBlocked(owner,target,key.domain==DOMAIN_SEA)) continue;
             CvAIOperation* op=player.getAIOperation(o.operation);
@@ -1812,8 +1911,7 @@ namespace CvStackingOffensiveAI
             if(op && CvStackingOffensiveAI::CityTarget(op)!=target) continue;
             if(!active && !player.IsAtWarWith((PlayerTypes)o.enemy)) continue;
             if(!active && o.assault.staging<0) o.staging=key.target;
-            const std::map<Key,Commitment>::const_iterator own=commitments.find(Key(owner,unit->GetID()));
-            if(own!=commitments.end() && !(own->second.goal==key)) continue;
+            if(keepGoal && !(own->second.goal==key)) continue;
             int count=0,strength=0,capturers=0,ranged=0,siege=0,inbound=0,loop=0;
             for(CvUnit* other=player.firstUnit(&loop);other;other=player.nextUnit(&loop))
             {
@@ -1851,7 +1949,8 @@ namespace CvStackingOffensiveAI
             // Do not send a third ranged reserve while a depleted siege specifically needs capture support.
             if(missingCapture && !CanCapture(unit,target) && !missingSiege && count+training>=desiredCount) continue;
             const int need=max(mean,max((desiredCount-count-training)*mean,desiredStrength-strength-training*mean));
-            const int priority=Setting("AIReinforcementAttackPriority",200)+(usefulRole?Setting("AIOffensiveSupportRolePriority",80):0);
+            const int priority=Setting("AIReinforcementAttackPriority",200)+(usefulRole?Setting("AIOffensiveSupportRolePriority",80):0)+
+                (RecentlyLost(owner,target->getPlotCity())?Setting("AIRecaptureDemandPriority",40):0);
             result.push_back(Demand(o.staging,key.target,active?o.operation:-1,need,priority));
             CvStackingDiagnostics::Record(2,owner,"OFFENSIVE_DEMAND","target=%d unit=%d domain=%d assigned=%d inbound=%d training=%d strength=%d desired=%d desiredUnits=%d capture=%d ranged=%d siege=%d desiredSiege=%d need=%d",key.target,unit->GetID(),key.domain,count,inbound,training,strength,desiredStrength,desiredCount,capturers,ranged,siege,desiredSiege,need);
         }
