@@ -115,6 +115,8 @@ bool CvDangerPlots::UpdateDangerSingleUnit(const CvUnit* pLoopUnit, bool bIgnore
 /// Updates the danger plots values to reflect threats across the map
 void CvDangerPlots::UpdateDanger()
 {
+	// Rebuild may call movement/loading hooks while the map is partial.
+	CvStackingStrengthCache::PreviewSuspension callbackSuspension;
 	//we call this function in three situations
 	// * save game loaded (need to reconstruct m_DangerPlots). do not change m_knownUnits / m_vanishedUnits --> called from ui thread!
 	// * new turn (enemy units moved). update both both m_knownUnits / m_vanishedUnits

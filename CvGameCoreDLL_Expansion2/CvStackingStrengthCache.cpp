@@ -84,6 +84,12 @@ namespace CvStackingStrengthCache
 		LONG cachedEpoch = 0;
 		unsigned int depth = 0;
 		Stats stats = {};
+		CallbackCapabilityProvider capabilityProvider = NULL;
+		bool capabilitiesReady=false, capabilitiesSupported=false, validationSupported=false, capabilitiesBuilding=false;
+		unsigned int capabilities=0;
+		// Every loading/rebuild suspension is local to the invoking thread;
+		// atomic epoch invalidation also cancels an owning foreign computation.
+		static __declspec(thread) unsigned int previewSuspensionDepth=0;
 		LONG Read(volatile LONG& value)
 		{
 #if defined(_MSC_VER) && _MSC_VER == 1500 && defined(_M_IX86) && \
@@ -98,13 +104,15 @@ namespace CvStackingStrengthCache
 		bool IsOwner() { return Read(owner) == (LONG)GetCurrentThreadId(); }
 		void Clear()
 		{
+			capabilitiesReady=false;
+			validationSupported=false;
 			nodes.clear();
 			std::fill(buckets.begin(), buckets.end(), -1);
 			oldest = 0;
 		}
 	}
 
-	Scope::Scope(unsigned int entries) : entered(false)
+	Scope::Scope(unsigned int entries, CallbackCapabilityProvider provider) : entered(false)
 	{
 		const LONG thread = (LONG)GetCurrentThreadId();
 		// Never modify an AI-owned table from a UI/foreign thread.
@@ -119,6 +127,7 @@ namespace CvStackingStrengthCache
 			return;
 		entered = true;
 		depth = 1;
+		capabilityProvider=provider;
 		Clear();
 		stats = Stats();
 		stats.limit = entries > 65536 ? 65536 : entries;
@@ -135,6 +144,8 @@ namespace CvStackingStrengthCache
 			std::vector<Node>().swap(nodes);
 			std::vector<int>().swap(buckets);
 			depth = 0;
+			capabilityProvider=NULL;
+			capabilitiesReady=false;
 			entered = false;
 			stats = Stats();
 			InterlockedExchange(&owner, 0);
@@ -155,12 +166,14 @@ namespace CvStackingStrengthCache
 		// Queries from other threads bypass throughout destruction too.
 		std::vector<Node>().swap(nodes);
 		std::vector<int>().swap(buckets); // Release both retained allocations in the 32-bit game.
+		capabilityProvider=NULL;
+		capabilitiesReady=false;
 		InterlockedExchange(&owner, 0);
 	}
 
 	bool Context(long& generation)
 	{
-		if (!IsOwner() || depth != 1 || !stats.limit)
+		if (!IsOwner() || depth != 1 || !stats.limit || previewSuspensionDepth || capabilitiesBuilding)
 			return false;
 		generation = Read(epoch);
 		if (generation != cachedEpoch)
@@ -169,8 +182,49 @@ namespace CvStackingStrengthCache
 			cachedEpoch = generation;
 			++stats.invalidations;
 		}
-		return true;
+		if (!capabilityProvider) return false;
+		unsigned int liveFlags=0;
+		if (!capabilityProvider(liveFlags,false))
+		{
+			++stats.capabilityValidationBypasses;
+			// An unsupported transition must not revive retained values or proof
+			// if lock/options later return without any unrelated scene signal.
+			if (validationSupported || capabilitiesReady || !nodes.empty())
+			{ Invalidate(); Clear(); cachedEpoch=Read(epoch); }
+			return false;
+		}
+		validationSupported=true;
+		if (!capabilitiesReady)
+		{
+			struct BuildingGuard
+			{
+				bool& flag;BuildingGuard(bool& value):flag(value){flag=true;}
+				~BuildingGuard(){flag=false;}
+			} building(capabilitiesBuilding);
+			unsigned int flags=0;
+			++stats.capabilityScans;
+			const bool supported=capabilityProvider(flags,true);
+			// A provider is a pure native scan, but validate the complete owner/
+			// epoch/lifecycle again before publishing its bounded proof.
+			if (!IsOwner() || depth!=1 || previewSuspensionDepth || Read(epoch)!=generation)
+				return false;
+			if (!capabilityProvider(liveFlags,false))
+			{ ++stats.capabilityValidationBypasses; Invalidate(); Clear(); cachedEpoch=Read(epoch); return false; }
+			stats.capabilityFlags|=flags;
+			capabilities=flags;capabilitiesSupported=supported;capabilitiesReady=true;
+		}
+		return capabilitiesSupported && capabilities==0;
 	}
+
+	PreviewSuspension::PreviewSuspension(bool value):active(value)
+	{
+		if (active) { ++previewSuspensionDepth; Invalidate(); if(IsOwner())++stats.capabilitySuspensions; }
+	}
+	PreviewSuspension::~PreviewSuspension()
+	{
+		if (active) { --previewSuspensionDepth; Invalidate(); }
+	}
+	bool IsPreviewSuspended() { return previewSuspensionDepth!=0; }
 
 	bool Lookup(const Key& key, long generation, int& value)
 	{

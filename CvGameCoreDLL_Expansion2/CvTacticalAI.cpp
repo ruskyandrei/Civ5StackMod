@@ -7843,6 +7843,9 @@ static bool StackForecastContext()
 {
  if (!IsStackForecastOwner() || !gStackForecastsActive || gStackForecastDepth != 1)
   return false;
+ if (CvStackingStrengthCache::IsPreviewSuspended()) return false;
+ long callbackGeneration;
+ if (!CvStackingStrengthCache::Context(callbackGeneration)) return false;
  if (gStackForecastSceneEpoch != CvStackingStrengthCache::SceneEpoch())
   InvalidateStackForecastScene();
  return true;
@@ -8065,10 +8068,51 @@ struct StackDangerPacketQuery
 private:StackDangerPacketQuery(const StackDangerPacketQuery&);StackDangerPacketQuery&operator=(const StackDangerPacketQuery&);
 };
 
+// Pure current-world capability proof. These bits are intentionally
+// conservative: unsupported/custom AIR loading graphs disable reuse for the
+// segment. Standard ranged aircraft with zero melee base preserve all caches.
+static bool StackPreviewCallbackCapabilities(unsigned int& flags,bool scan)
+{
+ flags = 0;
+ if (!gDLL->HasGameCoreLock() || MOD_EVENTS_CAN_MOVE_INTO || MOD_EVENTS_AIRLIFT ||
+  MOD_EVENTS_SEALIFT || MOD_EVENTS_UNIT_RANGEATTACK || MOD_EVENTS_CITY_BOMBARD || MOD_EVENTS_REBASE || MOD_EVENTS_UNIT_ACTIONS)
+  return false;
+ if (!scan) return true; // Cheap live lock/options validation, no world reads.
+ for (int i=0;i<MAX_PLAYERS;++i)
+ {
+  const CvPlayer& player=GET_PLAYER((PlayerTypes)i);
+  int cursor=0;
+  for (const CvUnit* unit=player.firstUnit(&cursor);unit;unit=player.nextUnit(&cursor))
+   if (!unit->IsDead() && !unit->isDelayedDeath() && unit->getDomainType()==DOMAIN_AIR)
+   {
+    // Base strength and ranged readiness can be changed by Lua/native setters.
+    if (unit->GetBaseCombatStrength()!=0) flags|=CvStackingStrengthCache::CALLBACK_AIR_BLOCKADER;
+   }
+  const vector<pair<int,int> >& interceptors=player.GetPossibleInterceptors();
+  for (size_t j=0;j<interceptors.size();++j)
+  {
+   const CvUnit* unit=player.getUnit(interceptors[j].first);
+   if (unit && !unit->IsDead() && !unit->isDelayedDeath() && unit->getDomainType()!=DOMAIN_AIR &&
+    (unit->IsCanHeavyCharge() || unit->GetMoraleBreakChance()!=0))
+    flags|=CvStackingStrengthCache::CALLBACK_AIR_ESCAPE;
+  }
+ }
+ return true;
+}
+static bool StackPreviewInputsSupported(const vector<CvUnit*>& units)
+{
+ if (!gDLL->HasGameCoreLock() || MOD_EVENTS_CAN_MOVE_INTO || MOD_EVENTS_AIRLIFT ||
+  MOD_EVENTS_SEALIFT || MOD_EVENTS_UNIT_RANGEATTACK || MOD_EVENTS_CITY_BOMBARD || MOD_EVENTS_REBASE || MOD_EVENTS_UNIT_ACTIONS)
+  return false;
+ for (size_t i=0;i<units.size();++i)
+  if (units[i] && units[i]->getDomainType()==DOMAIN_AIR) return false;
+ return true;
+}
+
 struct StackForecastScope
 {
  bool owned;
- StackForecastScope():owned(false)
+ StackForecastScope(bool supported=false):owned(false)
  {
   const LONG thread = (LONG)GetCurrentThreadId();
   const LONG previous = InterlockedCompareExchange(&gStackForecastOwnerThread, thread, 0);
@@ -8077,7 +8121,8 @@ struct StackForecastScope
   owned = true;
   ++gStackForecastDepth;
   gStackForecastsActive = gStackForecastDepth == 1;
-  if (!gStackForecastsActive)
+  if (gStackForecastDepth==1 && !supported) gStackForecastsActive=false;
+  if (gStackForecastDepth != 1)
   {
    // A nested search bypasses shared storage and cancels outer computations
    // in flight. The base tactical search itself is still nonreentrant.
@@ -14706,8 +14751,10 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 	PlayerTypes ePlayer = vUnits.front()->getOwner();
 	TeamTypes ourTeam = GET_PLAYER(ePlayer).getTeam();
-	StackForecastScope stackForecastScope;
-	CvStackingStrengthCache::Scope strengthCacheScope(CvStacking::IsEnabled() && gDLL->HasGameCoreLock() ? CvStacking::GetInt("AITacticalStrengthCacheEntries", 16384) : 0);
+	const bool callbackFreeInputs=StackPreviewInputsSupported(vUnits);
+	StackForecastScope stackForecastScope(callbackFreeInputs);
+	CvStackingStrengthCache::Scope strengthCacheScope(callbackFreeInputs && CvStacking::IsEnabled() ? CvStacking::GetInt("AITacticalStrengthCacheEntries", 16384) : 0,
+		callbackFreeInputs ? StackPreviewCallbackCapabilities : NULL);
 	CvStackingDiagnostics::PlanSampleSession sampleSession(ePlayer,pTarget->GetPlotIndex()); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
 	PacketProbeScope packetProbeScope(ePlayer,pTarget->GetPlotIndex()); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
 
@@ -15017,7 +15064,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
 	{
 		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu callbackProofScans=%lu callbackProofFlags=%lu callbackValidationBypasses=%lu callbackSuspensions=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
 			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
@@ -15025,7 +15072,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 			strength.attackHits,strength.attackMisses,strength.defenseHits,strength.defenseMisses,
 			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations,
 			gStackOutcomeBuilds,gStackOutcomeReuses,gStackOutcomeBypasses,(unsigned int)gStackOutcomeCurrentBytes,(unsigned int)gStackOutcomePeakBytes,
-			gStackPacketHits,gStackPacketBuilds,gStackPacketBypasses);
+			gStackPacketHits,gStackPacketBuilds,gStackPacketBypasses,
+			strength.capabilityScans,strength.capabilityFlags,strength.capabilityValidationBypasses,strength.capabilitySuspensions);
 	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,

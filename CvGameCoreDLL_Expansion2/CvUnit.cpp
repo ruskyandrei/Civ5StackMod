@@ -16735,10 +16735,14 @@ int CvUnit::GetMaxAttackStrength(const CvPlot* pFromPlot, const CvPlot* pToPlot,
 								bool bIgnoreUnitAdjacencyBoni, bool bQuickAndDirty, int iAssumeExtraDamage, int iAssumeExtraOtherDamage) const
 {
 	long generation;
+	// Air escape testing can also run legacy CanLoadAt Lua callbacks, even
+	// when the modern movement/rebase event flags are disabled.
 	// Escape and city-blockade testing can run mod movement events. A cached
 	// result must not skip those callbacks on subsequent queries. Blockade
 	// checks can involve other nearby units, not just the supplied defender.
-	if (!CvStackingStrengthCache::Context(generation) || (MOD_EVENTS_CAN_MOVE_INTO &&
+	if (!CvStackingStrengthCache::Context(generation) ||
+		(IsCanHeavyCharge() && pDefender && pDefender->getDomainType() == DOMAIN_AIR) ||
+		(MOD_EVENTS_CAN_MOVE_INTO &&
 		((IsCanHeavyCharge() && pDefender && pDefender->getUnitInfo().IsSendCanMoveIntoEvent()) ||
 		(!bQuickAndDirty && pToPlot && pToPlot->isCity()))))
 		return GetMaxAttackStrengthUncached(pFromPlot, pToPlot, pDefender, bIgnoreUnitAdjacencyBoni,
@@ -32080,6 +32084,8 @@ void CvUnit::DoPlagueTransfer(CvUnit& defender, bool bAttacking)
 int CvUnit::GetNumFallBackPlotsAvailable(const CvUnit& attacker) const
 {
 	VALIDATE_OBJECT();
+	// AIR retreat legality can invoke modern or legacy CanLoadAt callbacks.
+	CvStackingStrengthCache::PreviewSuspension callbackSuspension(getDomainType()==DOMAIN_AIR);
 
 	// this should not happen. fixme
 	if (!onMap() || !attacker.onMap())

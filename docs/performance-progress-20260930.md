@@ -761,3 +761,23 @@ its row attempts at128 per native-run turn. The cap's coverage bias is
 explicit in records and the reader, including previous-turn denied counts.
 110 adopted source and50 parser/anchor checks passed. This diagnostic bound
 preserves path behavior and leaves the original gameplay/search limits intact.
+
+## DLL84 sparse sampler validation
+
+DLL84 (`24b0428c4`) restores the original forecast hash and bounds optional
+path rows. OFF252/253 took36.047s/72.469s (PLAN10.821s/44.775s), matching82's
+699 ordered records and both censuses. ON took35.953s/72.844s
+(PLAN10.889s/45.327s), again matching all699 records and both censuses with the
+intentional sampling difference allowed. No `TRUNCATED` row was present;
+256 selected252/253 PATH rows parsed without errors. The row cap censors path
+coverage deliberately, including early-completion bias and prior-turn denied
+counts. It does not suppress the later-player semantic records seen missing
+in82's original high-volume sample. These are individual replay pairs, not
+an overhead confidence interval or a new speed gain.
+
+The ON run was intended for an external EIP diagnostic as well, but a
+pipe-boundary error in thread selection missed the253 window. Corrected
+validation-only confirmed the exact process, native thread, module and SHA;
+no Civ V thread was suspended, so there is no EIP hotspot result to claim.
+Normal game/service closure occurred at06:46:32UTC. Evidence stays under
+`work/test-runs/perf-d84-bounded-path-on-eip-251-255`.
