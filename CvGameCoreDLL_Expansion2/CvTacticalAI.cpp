@@ -1069,16 +1069,30 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 
 				if (!pZone || (pZone->GetOverallDominanceFlag() == TACTICAL_DOMINANCE_ENEMY && !pCity->isInDangerOfFalling()))
 				{
-					if (GC.getLogging() && GC.getAILogging())
+					// Zone dominance counts every unit in a wide zone. The local
+					// assault forecast may still find a force near this city that
+					// can hold the field: an assessed ready wave, or bombardment.
+					bool bLocalForce = false;
+					if (CvStackingOffensiveAI::Enabled(m_pPlayer->GetID()) && CvStacking::GetInt("AIAssaultDominanceOverride",1) != 0)
 					{
-						CvString strLogString;
-						strLogString.Format("Zone %d, City of %s, is in enemy dominated zone - won't try to capture, X: %d, Y: %d, ",
-							pZone ? pZone->GetZoneID() : -1, pCity->getNameNoSpace().c_str(), pCity->getX(), pCity->getY());
-						LogTacticalMessage(strLogString);
+						const CvStackingOffensiveAI::AssaultPlan land=CvStackingOffensiveAI::AssessAssault(m_pPlayer->GetID(),pCity,DOMAIN_LAND);
+						const CvStackingOffensiveAI::AssaultPlan sea=CvStackingOffensiveAI::AssessAssault(m_pPlayer->GetID(),pCity,DOMAIN_SEA);
+						bLocalForce = land.bombard || sea.bombard || (land.ready && land.waveUnits>0) || (sea.ready && sea.waveUnits>0);
 					}
+					if (!bLocalForce)
+					{
+						if (GC.getLogging() && GC.getAILogging())
+						{
+							CvString strLogString;
+							strLogString.Format("Zone %d, City of %s, is in enemy dominated zone - won't try to capture, X: %d, Y: %d, ",
+								pZone ? pZone->GetZoneID() : -1, pCity->getNameNoSpace().c_str(), pCity->getX(), pCity->getY());
+							LogTacticalMessage(strLogString);
+						}
 
-					CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=enemy_dominance", pPlot->getX(), pPlot->getY());
-					continue;
+						CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=enemy_dominance", pPlot->getX(), pPlot->getY());
+						continue;
+					}
+					CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "CITY_GATE", "target=%d:%d reason=dominance_override", pPlot->getX(), pPlot->getY());
 				}
 			}
 
@@ -3663,6 +3677,8 @@ bool CvTacticalAI::ExecuteAttackWithUnits(CvPlot* pTargetPlot, eAggressionLevel 
 
 // Each domain has its own roles, routes and readiness. A gathering army must
 // not hold a ready fleet, or inherit readiness from whichever unit sorts first.
+// A bombarding force advances with its escorts; melee city attacks still wait
+// for readiness (CvStackingOffensiveAI::AllowCityAttack).
 bool CvTacticalAI::StageGatheringCityAssault(vector<int>& unitIDs, CvPlot* pTarget)
 {
 	if(!pTarget || !pTarget->isCity() || !m_pPlayer->IsAtWarWith(pTarget->getOwner())) return false;
@@ -3678,8 +3694,11 @@ bool CvTacticalAI::StageGatheringCityAssault(vector<int>& unitIDs, CvPlot* pTarg
 			const int domain=unit->getDomainType();
 			std::map<int,bool>::iterator ready=readiness.find(domain);
 			if(ready==readiness.end())
-				ready=readiness.insert(std::make_pair(domain,CvStackingOffensiveAI::AssessAssault(
-					m_pPlayer->GetID(),pTarget->getPlotCity(),unit->getDomainType()).ready)).first;
+			{
+				const CvStackingOffensiveAI::AssaultPlan plan=CvStackingOffensiveAI::AssessAssault(
+					m_pPlayer->GetID(),pTarget->getPlotCity(),unit->getDomainType());
+				ready=readiness.insert(std::make_pair(domain,plan.ready||plan.bombard)).first;
+			}
 			if(!ready->second)
 			{
 				gathering=true;

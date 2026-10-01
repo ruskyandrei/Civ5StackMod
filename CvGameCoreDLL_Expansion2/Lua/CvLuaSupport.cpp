@@ -16,6 +16,7 @@
 #include "../CvGameCoreDLLPCH.h"
 #include "../CustomMods.h"
 #include "CvLuaSupport.h"
+#include "../CvStackingDiagnostics.h"
 #include "CvLuaEnums.h"
 #include "CvLuaFractal.h"
 #include "CvLuaGameInfo.h"
@@ -372,9 +373,134 @@ void LuaSupport::DumpCallStack(lua_State* L, FILogFile* pLog)
 }
 
 //------------------------------------------------------------------------------
+namespace
+{
+	struct DeferredHookArg
+	{
+		ICvEngineScriptSystemArgs1::ArgType eType;
+		int iValue;
+		float fValue;
+		bool bValue;
+		std::string strValue;
+		DeferredHookArg() : eType(ICvEngineScriptSystemArgs1::ARGTYPE_NONE), iValue(0), fValue(0.f), bValue(false) {}
+	};
+	struct DeferredHook
+	{
+		std::string strName;
+		std::vector<DeferredHookArg> vArgs;
+	};
+	int s_iDeferredHookDepth = 0;
+	DWORD s_uiDeferredHookThread = 0;
+	std::vector<DeferredHook> s_vDeferredHooks;
+	unsigned int s_uiDeferredArgBase = 0; // diagnostic: detected argument index base
+	int s_iDeferredHookRefused = 0; // diagnostic: hooks run at once inside a scope
+
+	// Copies a hook's arguments for later. Anything that cannot be read back
+	// exactly is not deferred: the hook then runs at once, as before.
+	bool DeferHook(const char* szName, ICvEngineScriptSystemArgs1* args)
+	{
+		if (s_iDeferredHookDepth <= 0 || GetCurrentThreadId() != s_uiDeferredHookThread)
+			return false;
+		DeferredHook kHook;
+		kHook.strName = szName;
+		const unsigned int uiCount = args ? args->Count() : 0;
+		// The engine's argument indices may start at 0 or 1; detect which.
+		const unsigned int uiFirst = (uiCount > 0 && args->GetType(0) == ICvEngineScriptSystemArgs1::ARGTYPE_NONE) ? 1 : 0;
+		s_uiDeferredArgBase = uiFirst;
+		for (unsigned int i = 0; i < uiCount; ++i)
+		{
+			DeferredHookArg kArg;
+			kArg.eType = args->GetType(uiFirst + i);
+			bool bRead = true;
+			switch (kArg.eType)
+			{
+			case ICvEngineScriptSystemArgs1::ARGTYPE_NULL:
+				break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_BOOL:
+				bRead = args->GetBool(uiFirst + i, kArg.bValue);
+				break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_INT:
+				bRead = args->GetInt(uiFirst + i, kArg.iValue);
+				break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_FLOAT:
+				bRead = args->GetFloat(uiFirst + i, kArg.fValue);
+				break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_STRING:
+			{
+				char* szValue = NULL;
+				bRead = args->GetString(uiFirst + i, szValue) && szValue;
+				if (bRead)
+					kArg.strValue = szValue;
+				break;
+			}
+			default:
+				bRead = false;
+			}
+			if (!bRead)
+			{
+				++s_iDeferredHookRefused;
+				return false;
+			}
+			kHook.vArgs.push_back(kArg);
+		}
+		s_vDeferredHooks.push_back(kHook);
+		return true;
+	}
+}
+
+LuaSupport::DeferredHookScope::DeferredHookScope() : m_bActive(true)
+{
+	if (s_iDeferredHookDepth++ == 0)
+		s_uiDeferredHookThread = GetCurrentThreadId();
+}
+
+LuaSupport::DeferredHookScope::~DeferredHookScope()
+{
+	Flush();
+}
+
+void LuaSupport::DeferredHookScope::Flush()
+{
+	if (!m_bActive)
+		return;
+	m_bActive = false;
+	if (--s_iDeferredHookDepth > 0)
+		return;
+	std::vector<DeferredHook> vHooks;
+	vHooks.swap(s_vDeferredHooks);
+	if (!vHooks.empty() || s_iDeferredHookRefused > 0)
+		CvStackingDiagnostics::Record(1, NO_PLAYER, "LUA_HOOK_DEFER", "hooks=%u first=%s args=%u argBase=%u refused=%d",
+			(unsigned int)vHooks.size(), vHooks.empty() ? "-" : vHooks[0].strName.c_str(), vHooks.empty() ? 0u : (unsigned int)vHooks[0].vArgs.size(), s_uiDeferredArgBase, s_iDeferredHookRefused);
+	s_iDeferredHookRefused = 0;
+	ICvEngineScriptSystem1* pkScriptSystem = gDLL->GetScriptSystem();
+	if (!pkScriptSystem)
+		return;
+	for (size_t iHook = 0; iHook < vHooks.size(); ++iHook)
+	{
+		const DeferredHook& kHook = vHooks[iHook];
+		CvLuaArgsHandle args;
+		for (size_t i = 0; i < kHook.vArgs.size(); ++i)
+		{
+			const DeferredHookArg& kArg = kHook.vArgs[i];
+			switch (kArg.eType)
+			{
+			case ICvEngineScriptSystemArgs1::ARGTYPE_BOOL: args->Push(kArg.bValue); break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_INT: args->Push(kArg.iValue); break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_FLOAT: args->Push(kArg.fValue); break;
+			case ICvEngineScriptSystemArgs1::ARGTYPE_STRING: args->Push(kArg.strValue.c_str(), kArg.strValue.size()); break;
+			default: args->PushNULL(); break;
+			}
+		}
+		bool bResult = false;
+		LuaSupport::CallHook(pkScriptSystem, kHook.strName.c_str(), args.get(), bResult);
+	}
+}
+
 bool LuaSupport::CallHook(ICvEngineScriptSystem1* pkScriptSystem, const char* szName, ICvEngineScriptSystemArgs1* args, bool& value)
 {
 	if (MOD_API_DISABLE_LUA_HOOKS)
+		return false;
+	if (DeferHook(szName, args))
 		return false;
 
 	// Must release our lock so that if the main thread has the Lua lock and is waiting for the Game Core lock, we don't freeze

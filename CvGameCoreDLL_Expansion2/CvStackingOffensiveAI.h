@@ -17,8 +17,9 @@ namespace CvStackingOffensiveAI
         int desiredUnits, desiredSiege, cityDamage, enemyStrength, captureUnit, captureOwner, reason;
         int waveUnits,waveSiege,waveCapturers,waveStrength,waveDamage,waveSustain,waveFirstETA,waveLastETA;unsigned failedMask;
         bool ready, routeKnown,healingComplete;
+        bool bombard; // not ready, but ranged units may fire while the wave gathers
         AssaultPlan():phase(0),staging(-1),readyUnits(0),siege(0),ranged(0),capturers(0),inbound(0),
-            desiredUnits(0),desiredSiege(0),cityDamage(0),enemyStrength(0),captureUnit(-1),captureOwner(-1),reason(0),waveUnits(0),waveSiege(0),waveCapturers(0),waveStrength(0),waveDamage(0),waveSustain(0),waveFirstETA(-1),waveLastETA(-1),failedMask(0),ready(false),routeKnown(false),healingComplete(false){}
+            desiredUnits(0),desiredSiege(0),cityDamage(0),enemyStrength(0),captureUnit(-1),captureOwner(-1),reason(0),waveUnits(0),waveSiege(0),waveCapturers(0),waveStrength(0),waveDamage(0),waveSustain(0),waveFirstETA(-1),waveLastETA(-1),failedMask(0),ready(false),routeKnown(false),healingComplete(false),bombard(false){}
     };
     struct Demand
     {

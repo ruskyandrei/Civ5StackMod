@@ -69,12 +69,30 @@ semantic replay comparison like the previous changes.
 
 ### Offensive behavior and diagnostics
 
-- [ ] Siege waves rarely become ready: in the260–271 A/B (`docs/ai-ranged-fire-20261001.md`)
+- [x] Siege waves rarely become ready: in the260–271 A/B (`docs/ai-ranged-fire-20261001.md`)
   130 assault plans were mostly phase0/2 with failure masks30/63/191; relaxing the
   strength/damage thresholds changed no action. Investigate why counted siege units
   are outside the cohesive first wave (`waveSiege=0` with `siege=3`), their ETAs and
   staging, before tuning thresholds. Desired land forces are22 units/6 siege at
   capacity7.
+  Done 2026-10-01 (`docs/ai-siege-combined-20261001.md`): gathering units wait on
+  zero-danger tiles 5–6 hexes out, so2-move siege is two turns from firing range
+  and outside the one-turn first wave; peer cities with defenders never pass the
+  strength/damage checks, so peer wars in campaign102 had no city attacks at all.
+  Bombardment (`AIAssaultBombardStrengthPercent` 60) lets a force that can hold
+  the field advance and fire while the capture wave gathers;
+  `AIAssaultDominanceOverride` lets that force engage an enemy-dominated zone.
+  Weak forces still keep siege back (deliberate).
+- [x] Crash at a city capture (fresh campaign, turn233, Babylon taking Damascus):
+  access violation in `CvCity::GetStaticYield` from a Lua UI call, after an
+  assertion "Population of city should be at least1". `LuaSupport::CallHook`
+  releases the game core lock for every hook, and `acquireCity`/`CvCity::kill`
+  raise hooks (`SetPopulation` from `PreKill`, then the new city's) while the
+  city is at population0, deleted or half rebuilt, so UI scripts (EUI banners)
+  read it. Timing-dependent: the same capture replayed from the turn-230 save
+  did not crash. Fixed 2026-10-01: `LuaSupport::DeferredHookScope` queues those
+  hooks (5 per capture) and runs them once the city is consistent; decisions
+  identical. Saves and dump: `work/test-runs/campaign-c9-20261001/crash-t233`.
 
 - [x] Ensure unused legal ranged/siege shots from the current tile are not lost
   simply because the whole assault is gathering or future incoming damage is
@@ -107,7 +125,9 @@ semantic replay comparison like the previous changes.
   avoiding world scans, extra path queries or RNG.
   Done 2026-10-01: `CityTarget` keeps the adjacent match and accepts a unique
   enemy city in the second ring; two candidates stay unresolved.
-- [ ] (Confirmed, not yet changed) `CvArmyAI::GetDomainType` returns DOMAIN_SEA for
+- [x] (Fixed 2026-10-01, see `docs/ai-siege-combined-20261001.md`; a pre-war
+  combined invasion reaching its target is still to be observed end to end)
+  `CvArmyAI::GetDomainType` returns DOMAIN_SEA for
   ARMY_TYPE_COMBINED, so `ObserveOperation`, `LegacyOpeningReady`, the opening
   forecast and `TryReadyCoreForArmy` count only the ships of a combined invasion.
   The turn-269 save has no combined operation to test against.

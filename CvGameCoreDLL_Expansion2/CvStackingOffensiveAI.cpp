@@ -140,6 +140,17 @@ static int openingForecastTurn=-1;
     { return op && op->GetOperationState()!=AI_OPERATION_STATE_ABORTED && op->GetOperationState()!=AI_OPERATION_STATE_SUCCESSFUL_FINISH; }
     bool Usable(const CvUnit* u)
     { return u && u->plot() && u->GetCurrHitPoints()>0 && u->IsCombatUnit() && !u->IsStackingUnit() && !u->isCargo() && !u->isDelayedDeath() && u->getDomainType()!=DOMAIN_AIR; }
+    // CvArmyAI::GetDomainType reports DOMAIN_SEA for a combined army, whose
+    // embarked land troops are still part of the force.
+    bool InArmyDomain(const CvArmyAI* army,const CvUnit* u)
+    {
+        const DomainTypes domain=u->getDomainType();
+        return army->GetType()==ARMY_TYPE_COMBINED?domain==DOMAIN_LAND||domain==DOMAIN_SEA:domain==army->GetDomainType();
+    }
+    // Siege requirements of a combined army follow the land rules; its ranged
+    // ships and land siege both fill the siege role (AssaultWaveUnit::roles).
+    DomainTypes AssaultDomain(const CvArmyAI* army)
+    { return army->GetType()==ARMY_TYPE_COMBINED?DOMAIN_LAND:army->GetDomainType(); }
     bool AssignedElsewhere(const CvUnit* unit,const ObjectiveKey& goal)
     {
         if(!unit || unit->getArmyID()==-1) return false;
@@ -307,6 +318,36 @@ static int openingForecastTurn=-1;
         if(o.staging<0) o.staging=target->GetPlotIndex();
         return &o;
     }
+    // Summary diagnostic only: where land combat and siege units are while
+    // the player's land objectives gather (army, support commitment, in an
+    // own city, healing, otherwise free) and how far from the nearest one.
+    // Pure reads: no per-turn assessment cache is filled from here.
+    void LogRoster(PlayerTypes owner)
+    {
+        const int interval=Setting("AIAssaultObjectiveSummaryInterval",5);
+        if(interval<=0 || currentTurn%interval!=0 || !CvStackingDiagnostics::EnabledCategory(1,owner,"SIEGE_ROSTER")) return;
+        CvPlayer& player=GET_PLAYER(owner);
+        if(player.isMinorCiv() || player.isBarbarian()) return;
+        std::vector<const CvPlot*> targets;
+        for(std::map<ObjectiveKey,Objective>::const_iterator i=objectives.begin();i!=objectives.end();++i)
+            if(i->first.owner==owner && i->first.domain==DOMAIN_LAND) targets.push_back(GC.getMap().plotByIndexUnchecked(i->first.target));
+        if(targets.empty()) return;
+        int count[2][9]={{0}}; // [siege] army, committed, retained, healing, free, within 4, 8, 15, farther
+        int loop=0;
+        for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
+        {
+            if(!Usable(u) || u->getDomainType()!=DOMAIN_LAND) continue;
+            int* c=count[CvStackingOffensiveAI::IsSiegeUnit(u)?1:0];
+            ++c[u->getArmyID()!=-1?0:commitments.find(Key(owner,u->GetID()))!=commitments.end()?1:
+                u->plot()->isCity()&&u->plot()->getOwner()==owner?2:u->shouldHeal(false)?3:4];
+            int nearest=INT_MAX;
+            for(size_t t=0;t<targets.size();++t) nearest=min(nearest,plotDistance(*u->plot(),*targets[t]));
+            ++c[nearest<=4?5:nearest<=8?6:nearest<=15?7:8];
+        }
+        CvStackingDiagnostics::Record(1,owner,"SIEGE_ROSTER","objectives=%d siegeArmy=%d siegeCommitted=%d siegeInCity=%d siegeHealing=%d siegeFree=%d siegeNear4=%d siegeNear8=%d siegeNear15=%d siegeFar=%d otherArmy=%d otherCommitted=%d otherInCity=%d otherHealing=%d otherFree=%d otherNear4=%d otherNear8=%d otherNear15=%d otherFar=%d",
+            (int)targets.size(),count[1][0],count[1][1],count[1][2],count[1][3],count[1][4],count[1][5],count[1][6],count[1][7],count[1][8],
+            count[0][0],count[0][1],count[0][2],count[0][3],count[0][4],count[0][5],count[0][6],count[0][7],count[0][8]);
+    }
     void Sync(PlayerTypes owner)
     {
         Refresh(); if(synced[owner]==currentTurn) return;
@@ -319,6 +360,7 @@ static int openingForecastTurn=-1;
         for(CvCity* city=player.firstCity(&loop);city;city=player.nextCity(&loop))
             if(city->getProductionUnit()!=NO_UNIT && !city->IsBuildingUnitForOperation() && production.find(Key(owner,city->GetID()))==production.end())
                 CvStackingOffensiveAI::RecordProduction(city,city->getProductionUnit());
+        LogRoster(owner);
     }
     bool Matches(CvUnit* u,const ObjectiveKey& key,const Objective& o)
     {
@@ -1008,6 +1050,19 @@ namespace CvStackingOffensiveAI
         if(result.ready)result.reason=0;
         else if(o.waveComplete)result.reason=(wave.failed&ASSAULT_CAPTURE)?1:(wave.failed&ASSAULT_SIEGE)?2:(wave.failed&ASSAULT_DAMAGE)?3:(wave.failed&ASSAULT_COHESION)?6:4;
         if(!result.ready&&(o.wavePathUnknown||!o.captureKnown))result.failedMask|=ASSAULT_UNKNOWN;
+        // Bombardment: while the capture wave gathers, ranged and siege units
+        // within reach wear the city down, escorted by the rest of the force,
+        // when that force can hold the field and their sustained fire outpaces
+        // the city's healing. Melee city attacks still wait for readiness.
+        const int bombardPercent=Setting("AIAssaultBombardStrengthPercent",60);
+        if(!result.ready && bombardPercent>0 && o.waveComplete && result.enemyStrength>0)
+        {
+            int shooters=0,sustained=0;
+            for(size_t i=0;i<o.waveRows.size();++i)
+                if((o.waveRows[i].roles&2)!=0) { ++shooters; sustained+=o.waveRows[i].sustain; }
+            result.bombard=shooters>=Setting("AIAssaultBombardMinimumRanged",2) && sustained>healing &&
+                (long long)strength*100>=(long long)result.enemyStrength*bombardPercent;
+        }
         if(result.ready && o.firstReadyTurn<0) o.firstReadyTurn=currentTurn;
         result.phase=result.ready?1:0;
         if(o.phaseSince<0 || (previousPhase==1)!=result.ready) o.phaseSince=currentTurn;
@@ -1043,9 +1098,11 @@ namespace CvStackingOffensiveAI
         if(result.ready) result.routeKnown=true;
         if(o.phaseLogged!=result.phase || currentTurn%Setting("AIAssaultObjectiveSummaryInterval",5)==0)
         {
-            CvStackingDiagnostics::Record(1,owner,"ASSAULT_PLAN","target=%d domain=%d phase=%d reason=%d stage=%d ready=%d desired=%d siege=%d desiredSiege=%d ranged=%d capturers=%d inbound=%d damage=%d heal=%d hp=%d enemyStrength=%d captureUnit=%d captureOwner=%d captureEta=%d gatherAge=%d pathQueries=%d firstArrival=%d lastArrival=%d waveUnits=%d waveSiege=%d waveCapturers=%d waveStrength=%d waveDamage=%d waveSustain=%d waveFirstETA=%d waveLastETA=%d healingComplete=%d failedMask=%u; readiness forecast only",
+            int siegeEta[4]={0,0,0,0};
+            for(size_t i=0;i<o.waveRows.size();++i)if((o.waveRows[i].roles&4)!=0)++siegeEta[min(3,max(0,o.waveRows[i].eta))];
+            CvStackingDiagnostics::Record(1,owner,"ASSAULT_PLAN","target=%d domain=%d phase=%d reason=%d stage=%d ready=%d desired=%d siege=%d desiredSiege=%d ranged=%d capturers=%d inbound=%d damage=%d heal=%d hp=%d enemyStrength=%d captureUnit=%d captureOwner=%d captureEta=%d gatherAge=%d pathQueries=%d firstArrival=%d lastArrival=%d waveUnits=%d waveSiege=%d waveCapturers=%d waveStrength=%d waveDamage=%d waveSustain=%d waveFirstETA=%d waveLastETA=%d healingComplete=%d failedMask=%u siegeEta=%d/%d/%d/%d bombard=%d; readiness forecast only",
                 key.target,domain,result.phase,result.reason,result.staging,result.readyUnits,result.desiredUnits,result.siege,result.desiredSiege,
-                result.ranged,result.capturers,result.inbound,result.cityDamage,healing,hp,result.enemyStrength,o.captureID,o.captureOwner,o.captureEta,currentTurn-o.phaseSince,assaultQueries[owner],firstArrival==INT_MAX?-1:firstArrival,lastArrival,result.waveUnits,result.waveSiege,result.waveCapturers,result.waveStrength,result.waveDamage,result.waveSustain,result.waveFirstETA,result.waveLastETA,result.healingComplete,result.failedMask);
+                result.ranged,result.capturers,result.inbound,result.cityDamage,healing,hp,result.enemyStrength,o.captureID,o.captureOwner,o.captureEta,currentTurn-o.phaseSince,assaultQueries[owner],firstArrival==INT_MAX?-1:firstArrival,lastArrival,result.waveUnits,result.waveSiege,result.waveCapturers,result.waveStrength,result.waveDamage,result.waveSustain,result.waveFirstETA,result.waveLastETA,result.healingComplete,result.failedMask,siegeEta[0],siegeEta[1],siegeEta[2],siegeEta[3],result.bombard);
             o.phaseLogged=result.phase;
         }
         o.assault=result; return result;
@@ -1310,7 +1367,7 @@ namespace CvStackingOffensiveAI
             const AssaultPlan plan=AssessAssault(unit->getOwner(),city->getPlotCity(),unit->getDomainType());
             // Safe shots already available need not await the main assault.
             if(unit->IsCanAttackRanged() && unit->canRangeStrikeAt(tacticalTarget->getX(),tacticalTarget->getY())) return false;
-            return !plan.ready;
+            return !plan.ready && !(plan.bombard && unit->IsCanAttackRanged());
         }
         return false;
     }
@@ -1367,6 +1424,8 @@ namespace CvStackingOffensiveAI
         const AssaultPlan plan=AssessAssault(unit->getOwner(),city,unit->getDomainType());
         if(plan.ready) return true;
         if(!unit->IsCanAttackRanged()) return false;
+        // The tactical search scores where a bombarding shooter ends its turn.
+        if(plan.bombard) return ContinueSiege(unit->getOwner(),city);
         // Firing from the current tile does not advance into the attack footprint
         // and the search still scores where the shooter ends its turn, so a
         // gathering assault keeps these shots (see StationaryFireSafe).
@@ -1683,18 +1742,28 @@ namespace CvStackingOffensiveAI
         if(!IsCityAttack(op) || !Enabled(op->GetOwner()) || !Live(op)) return;
         CvArmyAI* army=op->GetArmy(0); CvPlot* target=CityTarget(op);
         if(!army || !target || !target->isCity() || target->getOwner()!=op->GetEnemy()) return;
-        Objective* o=Touch(op->GetOwner(),target,army->GetDomainType());
-        if(!o) return;
-        // Prefer the oldest still-active operation, preventing duplicate force credit.
-        CvAIOperation* old=GET_PLAYER(op->GetOwner()).getAIOperation(o->operation);
-        if(Live(old) && old->GetID()!=op->GetID() && old->GetTurnStarted()<=op->GetTurnStarted()) return;
-        o->operation=op->GetID();
-        CvPlot* stage=army->GetArmyAIState()==ARMYAISTATE_MOVING_TO_DESTINATION?army->GetCenterOfMass(true):op->GetMusterPlot();
-        if(stage) o->staging=stage->GetPlotIndex();
-        int count=0,strength=0;
-        for(CvUnit* u=army->GetFirstUnit();u;u=army->GetNextUnit(u))
-            if(Usable(u) && u->getDomainType()==army->GetDomainType()) { ++count; strength+=CvStackingAI::UnitStrength(u); }
-        o->coreUnits=max(o->coreUnits,count); o->coreStrength=max(o->coreStrength,strength);
+        // A combined army reports DOMAIN_SEA but carries land troops: its fleet
+        // and its troops each belong to their own domain's objective.
+        const bool combined=army->GetType()==ARMY_TYPE_COMBINED;
+        for(int pass=0;pass<(combined?2:1);++pass)
+        {
+            const DomainTypes domain=combined&&pass==1?DOMAIN_LAND:army->GetDomainType();
+            Objective* o=Touch(op->GetOwner(),target,domain);
+            if(!o) continue;
+            // Prefer the oldest still-active operation, preventing duplicate force credit.
+            CvAIOperation* old=GET_PLAYER(op->GetOwner()).getAIOperation(o->operation);
+            if(Live(old) && old->GetID()!=op->GetID() && old->GetTurnStarted()<=op->GetTurnStarted()) continue;
+            o->operation=op->GetID();
+            CvPlot* stage=army->GetArmyAIState()==ARMYAISTATE_MOVING_TO_DESTINATION?army->GetCenterOfMass(true):op->GetMusterPlot();
+            // Land reinforcements gather at the muster city, not the fleet's water tile.
+            const bool troops=combined && domain==DOMAIN_LAND;
+            if(troops && stage && stage->isWater()) stage=op->GetMusterPlot();
+            if(stage && !(troops && stage->isWater())) o->staging=stage->GetPlotIndex();
+            int count=0,strength=0;
+            for(CvUnit* u=army->GetFirstUnit();u;u=army->GetNextUnit(u))
+                if(Usable(u) && u->getDomainType()==domain) { ++count; strength+=CvStackingAI::UnitStrength(u); }
+            o->coreUnits=max(o->coreUnits,count); o->coreStrength=max(o->coreStrength,strength);
+        }
     }
     void ObserveSiege(PlayerTypes owner,CvCity* city)
     {
@@ -1915,7 +1984,7 @@ namespace CvStackingOffensiveAI
         CvPlayer& player=GET_PLAYER(op->GetOwner());
         for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
         {
-            if(!Usable(u) || u->getDomainType()!=army->GetDomainType() ||
+            if(!Usable(u) || !InArmyDomain(army,u) ||
                 (u->getArmyID()!=army->GetID() && !(u->getArmyID()==-1 && HasCommitment(u,target)))) continue;
             ++total;
             if(u->GetCurrHitPoints()*100<u->GetMaxHitPoints()*GD_INT_GET(AI_OPERATIONAL_PERCENT_HEALTH_FOR_OPERATION)) continue;
@@ -1927,7 +1996,7 @@ namespace CvStackingOffensiveAI
             capture+=CanCapture(u,target); ranged+=u->IsCanAttackRanged();
             siege+=u->getDomainType()==DOMAIN_SEA?u->IsCanAttackRanged():IsSiegeUnit(u);
         }
-        const int desiredSiege=KnownFortified(op->GetOwner(),target->getPlotCity())?DesiredSiegeUnits(op->GetOwner(),target->getPlotCity(),army->GetDomainType()):0;
+        const int desiredSiege=KnownFortified(op->GetOwner(),target->getPlotCity())?DesiredSiegeUnits(op->GetOwner(),target->getPlotCity(),AssaultDomain(army)):0;
         const bool ready=siege>=desiredSiege && CvStackingAIPolicy::OpeningReady(healthy,total,capture,ranged,strength,EnemyStrength(op->GetOwner(),target),
             Setting("AIWarOpeningMinimumUnits",4),Setting("AIWarOpeningReadyPercent",75),Setting("AIWarOpeningMinimumRanged",1),Setting("AIWarOpeningStrengthPercent",150));
         CvStackingDiagnostics::Record(1,op->GetOwner(),"WAR_READINESS","operation=%d target=%d total=%d staged=%d capture=%d ranged=%d siege=%d desiredSiege=%d strength=%d ready=%d",op->GetID(),target->GetPlotIndex(),total,healthy,capture,ranged,siege,desiredSiege,strength,ready);
@@ -1946,18 +2015,32 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
         std::map<ObjectiveKey,Objective>::iterator found=objectives.find(ObjectiveKey(owner,target->GetPlotIndex(),army->GetDomainType()));
         if(found==objectives.end()||found->second.operation!=op->GetID()||!found->second.waveComplete)return false;
         Objective& o=found->second;
+        // A combined army's troops are assessed by its land objective; the
+        // wave combines them with the fleet.
+        std::map<ObjectiveKey,Objective>::iterator troops=objectives.end();
+        if(army->GetType()==ARMY_TYPE_COMBINED)
+        {
+            AssessAssault(owner,target->getPlotCity(),DOMAIN_LAND);
+            troops=objectives.find(ObjectiveKey(owner,target->GetPlotIndex(),DOMAIN_LAND));
+            if(troops==objectives.end()||troops->second.operation!=op->GetID()||!troops->second.waveComplete)return false;
+        }
         std::vector<AssaultWaveUnit> eligibleRows;int omitted=0;
         try
         {
-            eligibleRows.reserve(o.waveRows.size());
-            for(size_t i=0;i<o.waveRows.size();++i)
+            for(int pass=0;pass<(troops==objectives.end()?1:2);++pass)
             {
-                const AssaultWaveUnit& row=o.waveRows[i];
-                if(row.army!=-1&&row.army!=army->GetID())continue;
-                if(!WaveRecordStillValid(owner,target,row) ||
-                    (row.army==-1&&!Matches(GET_PLAYER(owner).getUnit(row.unit),found->first,o)))
-                {++omitted;continue;}
-                eligibleRows.push_back(row);
+                const std::map<ObjectiveKey,Objective>::iterator source=pass==0?found:troops;
+                const std::vector<AssaultWaveUnit>& rows=source->second.waveRows;
+                eligibleRows.reserve(eligibleRows.size()+rows.size());
+                for(size_t i=0;i<rows.size();++i)
+                {
+                    const AssaultWaveUnit& row=rows[i];
+                    if(row.army!=-1&&row.army!=army->GetID())continue;
+                    if(!WaveRecordStillValid(owner,target,row) ||
+                        (row.army==-1&&!Matches(GET_PLAYER(owner).getUnit(row.unit),source->first,source->second)))
+                    {++omitted;continue;}
+                    eligibleRows.push_back(row);
+                }
             }
         }
         catch(const std::bad_alloc&){return false;} // Optional metadata uncertainty retains the original policy.
@@ -1971,7 +2054,7 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
             // Preserve the existing useful-fire policy for a currently visible
             // adjacent co-belligerent capturer, without crediting its army power.
             const CvUnit* ally=GET_PLAYER((PlayerTypes)o.captureOwner).getUnit(o.captureID);
-            if(CanCapture(ally,target)&&ally->getDomainType()==army->GetDomainType()&&
+            if(CanCapture(ally,target)&&InArmyDomain(army,ally)&&
                 ally->isNativeDomain(ally->plot())&&plotDistance(*ally->plot(),*target)<=1&&
                 ally->plot()->isVisible(GET_PLAYER(owner).getTeam())&&!ally->isInvisible(GET_PLAYER(owner).getTeam(),false)&&
                 !GET_PLAYER(owner).IsAtWarWith(ally->getOwner())&&GET_PLAYER(ally->getOwner()).IsAtWarWith(target->getOwner()))eligibleCapture=0;
@@ -1980,14 +2063,16 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
         // support. Only unchanged eligible rows contribute to this core; an
         // essential loss still fails the ordinary count/role/power predicates.
         AssaultWave wave=SelectFirstWave(eligibleRows,Setting("AIAssemblyMinimumCombatUnits",4),
-            EssentialSiege(owner,target->getPlotCity(),army->GetDomainType()),Setting("AIAssemblyMinimumRanged",2),
+            EssentialSiege(owner,target->getPlotCity(),AssaultDomain(army)),Setting("AIAssemblyMinimumRanged",2),
             shared.enemyStrength,Setting("AIAssemblyStrengthPercent",150),max(1,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()),
             eligibleCapture,Setting("AIAssaultFirstWaveMaximumTurns",1),
             Setting("AIAssaultWaveArrivalSpreadTurns",1),army->GetID(),Setting("AIAssemblyMinimumCombatUnits",4));
         bool complete=false;const int healing=target->getPlotCity()->GetAssaultHealingForecast(owner,wave.damage,&complete);
         ready=WaveCanSustain(wave,max(1,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()),
             healing,Setting("AIAssaultDamageHorizon",4),complete);
-        if(!ready&&!omitted&&(o.wavePathUnknown||!o.captureKnown))return false; // Pure path uncertainty stays unknown; changed insufficient cores cannot leak through count fallback.
+        const bool pathUnknown=o.wavePathUnknown||(troops!=objectives.end()&&troops->second.wavePathUnknown);
+        const bool captureKnown=o.captureKnown||(troops!=objectives.end()&&troops->second.captureKnown);
+        if(!ready&&!omitted&&(pathUnknown||!captureKnown))return false; // Pure path uncertainty stays unknown; changed insufficient cores cannot leak through count fallback.
         CvStackingDiagnostics::Record(1,owner,"OPERATION_READINESS","operation=%d army=%d target=%d core=%d ownCore=%d siege=%d capturers=%d strength=%d damage=%d sustained=%d healing=%d healingComplete=%d firstETA=%d lastETA=%d failedMask=%u ready=%d cohortOmitted=%d policy=capability_first_wave",
             op->GetID(),army->GetID(),target->GetPlotIndex(),wave.units,wave.own,wave.siege,wave.capture,wave.strength,wave.damage,wave.sustain,healing,complete,
             wave.first==INT_MAX?-1:wave.first,wave.last,wave.failed,ready,omitted);
@@ -2029,7 +2114,7 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
         const int maxTurns=Setting("AIWarOpeningMaximumTurns",3);
         for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
         {
-            if(!Usable(u)||u->getDomainType()!=army->GetDomainType()||
+            if(!Usable(u)||!InArmyDomain(army,u)||
                 (u->getArmyID()!=army->GetID()&&!(u->getArmyID()==-1&&HasCommitment(u,target))))continue;
             ++total;
             const int healthyPercent=visible?max(GD_INT_GET(AI_OPERATIONAL_PERCENT_HEALTH_FOR_OPERATION),Setting("AIAssaultHealthyPercent",65)):
@@ -2042,11 +2127,16 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
             int hit=0,retaliation=0,garrison=0;
             if(visible)
             {
-                if(!u->isNativeDomain(u->plot()))continue;
-                // Potential-war operation route is the existing estimate. This
-                // nominal damage forecast does not authorize an actual shot.
-                hit=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(target->getPlotCity(),u,u->plot(),retaliation,garrison);
-                if(hit<=0||retaliation>=u->GetCurrHitPoints())continue;
+                if(u->isNativeDomain(u->plot()))
+                {
+                    // Potential-war operation route is the existing estimate. This
+                    // nominal damage forecast does not authorize an actual shot.
+                    hit=TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(target->getPlotCity(),u,u->plot(),retaliation,garrison);
+                    if(hit<=0||retaliation>=u->GetCurrHitPoints())continue;
+                }
+                // Embarked troops of a combined invasion land to capture; no
+                // damage is forecast for them from the water.
+                else if(army->GetType()!=ARMY_TYPE_COMBINED||u->getDomainType()!=DOMAIN_LAND)continue;
             }
             const int reach=u->IsCanAttackRanged()?u->GetRange():1;
             const int travel=max(0,distance-reach),moves=max(1,u->baseMoves(false));
@@ -2060,13 +2150,13 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
             }
         }
         const int enemy=EnemyStrength(owner,target);
-        const int desiredSiege=KnownFortified(owner,target->getPlotCity())?DesiredSiegeUnits(owner,target->getPlotCity(),army->GetDomainType()):0;
+        const int desiredSiege=KnownFortified(owner,target->getPlotCity())?DesiredSiegeUnits(owner,target->getPlotCity(),AssaultDomain(army)):0;
         bool ready=siege>=desiredSiege&&CvStackingAIPolicy::OpeningReady(healthy,total,capture,ranged,strength,enemy,
             Setting("AIWarOpeningMinimumUnits",4),Setting("AIWarOpeningReadyPercent",75),Setting("AIWarOpeningMinimumRanged",1),Setting("AIWarOpeningStrengthPercent",150));
         AssaultWave wave;bool healingComplete=false;int healing=0;
         if(visible&&complete)
         {
-            wave=SelectFirstWave(forecast.rows,Setting("AIWarOpeningMinimumUnits",4),EssentialSiege(owner,target->getPlotCity(),army->GetDomainType()),
+            wave=SelectFirstWave(forecast.rows,Setting("AIWarOpeningMinimumUnits",4),EssentialSiege(owner,target->getPlotCity(),AssaultDomain(army)),
                 Setting("AIWarOpeningMinimumRanged",1),enemy,Setting("AIWarOpeningStrengthPercent",150),max(1,forecast.hp),captureEta,maxTurns,
                 Setting("AIAssaultWaveArrivalSpreadTurns",1),army->GetID(),Setting("AIWarOpeningMinimumUnits",4));
             healing=target->getPlotCity()->GetAssaultHealingForecast(owner,wave.damage,&healingComplete);

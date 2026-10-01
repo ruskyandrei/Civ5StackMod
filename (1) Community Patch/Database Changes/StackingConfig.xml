@@ -64,6 +64,15 @@
          unused attack fire from where they stand at an enemy unit, stack or
          city in range (healing units excepted). 0 disables this pass. -->
     <Row Name="AIEndTurnRangedFireEnabled" Value="1"/>
+    <!-- While the capture wave gathers, ranged/siege units within reach bombard
+         the city, escorted by the rest of the force, when its strength is at
+         least this share of the local enemy strength and the ranged units'
+         sustained fire outpaces the city's healing. 0 disables bombardment. -->
+    <Row Name="AIAssaultBombardStrengthPercent" Value="60"/>
+    <Row Name="AIAssaultBombardMinimumRanged" Value="2"/>
+    <!-- A ready or bombarding local force may engage a city in a zone whose
+         overall dominance favors the enemy. 0 restores VP's zone gate. -->
+    <Row Name="AIAssaultDominanceOverride" Value="1"/>
     <Row Name="AIAssaultReviewInterval" Value="3"/>
     <Row Name="AIAssaultObjectiveSummaryInterval" Value="5"/>
     <Row Name="AIAssaultWaveArrivalSpreadTurns" Value="1"/>
