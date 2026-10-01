@@ -125,6 +125,24 @@ and currently unattributed intervals. Flat instruction samples with folded PDB
 aliases do not identify a particular object container or prove whole-turn cost.
 DLL-only work does not include changing compatibility or registry settings.
 
+The quiet88r2/91OFF253 phase review accounts for most time outside planning:
+16.3–16.6 seconds lies in measured phase bounds, with about7.8 seconds between
+engine update entries. Very little same-thread CPU is recorded in that dispatch
+gap; this does not prove the whole process was idle. Processing the next AI
+immediately would change update-hook, timer, network, pause and turn-slice order,
+so there is no justified local batching shortcut yet.
+
+Measured non-PLAN envelopes include tactical work7.4–7.5 seconds, other player
+scopes6.5–6.7 seconds and homeland2.2 seconds. City doTurn alone is about2.9
+seconds. Envelopes overlap child timings; use interval unions. A promising
+legacy tactical seam is repeated land/naval distance-field flooding before
+every attack attempt, outside the planner and setup timers. Its own elapsed
+cost still needs measurement. Reuse needs exact topology, revealed-state,
+permissions and capability proof, plus the shared pathfinder's internal-state
+contract. Resource and city-state consistency validation is structurally
+improvable but bounded by a92/77ms enclosing interval in these replays; defer it.
+The detailed source review is `work/off-plan-cost-review-88-91.md`.
+
 ## Adoption and validation
 
 1. Compare actual old/new numerical kernels or storage operations, including

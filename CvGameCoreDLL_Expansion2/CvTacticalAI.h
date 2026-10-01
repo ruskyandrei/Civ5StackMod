@@ -1468,6 +1468,14 @@ public:
 	AddAssignmentResult addAssignment(const STacticalAssignment& newAssignment);
 	bool isUnique(int levelsToCheck=2) const;
 
+	// Only the const preferred-unit batch and its explicit EFD-only previews use this identity.
+	bool SharesVirtualStackInputs(const CvTacticalPosition& other) const
+	{
+	 return ePlayer == other.ePlayer && &tactPlotLookup.read() == &other.tactPlotLookup.read() &&
+	  &tactPlots.read() == &other.tactPlots.read() && &availableUnits.read() == &other.availableUnits.read() &&
+	  &notQuiteFinishedUnits.read() == &other.notQuiteFinishedUnits.read() && &finishedUnits.read() == &other.finishedUnits.read();
+	}
+
 	const CvTacticalPlot* getTactPlot(int plotindex) const; //get a reference to a local tact plot or higher up in the tree if we didn't modify it
 	CvTacticalPlot* getTactPlotMutable(int plotindex); //this is dangerous! the reference returned by one call may become invalid when calling this a second time
 	const vector<CvTacticalPlot>& getTactPlots() const { return tactPlots.read(); };
