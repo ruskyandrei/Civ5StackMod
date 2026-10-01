@@ -883,3 +883,28 @@ Evidence: `work/test-runs/perf-d88-indexed-store-off-251-255`, native
 manifest. Post-stop process deltas are a current snapshot, not historical heat
 attribution. Source remains the indexed candidate; installed DLL88 remains in
 place. The <30s objective is not achieved.
+
+## DLL88 quiet complete repeat
+
+After the user confirmed Blender work had finished and authorized testing, the
+fresh OFF251→255 repeat completed normally. Installed DLL and config hashes
+were unchanged. All699 ordered semantic records and both nonempty censuses
+match87, with all455 recorded six-pair hit/miss and callback-proof rows equal.
+All455 rows report the indexed backend; estimated bytes reach1,526,460.
+
+Interior252 took31.828s (PLAN8.904s),253 took57.531s (PLAN33.023s), versus
+87's32.313s/63.484s (9.665s/39.010s). The first complete pair saves0.485s on
+the lighter turn and5.953s, about9.4%, on the heavier turn. Heavy-turn planning
+falls about15.3%. These are individual campaign measurements, not statistical
+or general late-game guarantees. The source/cache/search/numerical policies
+were unchanged. Indexed storage is a useful component; the <30s target still
+requires substantial evaluation work to be removed. About24.5s lies outside
+estimated PLAN on253.
+
+Evidence: `work/test-runs/perf-d88-indexed-store-off-r2-251-255`, native
+`Stacking-20261001T092026-437-p13496-r1`, `comparison-d87.json`, phase reports,
+counter comparison and normal-exit proof. Exact game13496/start639264430833437524
+and service20784 closed normally at09:23:12UTC; the session file is absent.
+Temperature/address-space guards stayed within limits. The next candidate is
+the default-off destination-kernel shadow observer mechanically rebased to the
+indexed implementation. It measures repeated work; it does not replace scores.

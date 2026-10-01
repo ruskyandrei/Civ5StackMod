@@ -1,4 +1,4 @@
-"""Actual86 kernels/forecast graph + staged observer; deterministic engine model.
+"""Pinned kernels/forecast graph + staged observer; deterministic engine model.
 
 No core/game writes. Prerequisite stage-destination-kernel-probe.py and the
 tracked immediate-borrow/packet numerical extraction helpers. This verifies
@@ -6,35 +6,60 @@ observation neutrality/censorship and deliberate footprint failure detection,
 not native reuse completeness, benefit or full planner mutation coverage.
 """
 from pathlib import Path
-import hashlib,json,os,re,subprocess,sys
-ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'work/destination-kernel-probe-regression';OUT.mkdir(exist_ok=True)
-stage=ROOT/'work/destination-kernel-probe-staged';manifest=json.loads((stage/'manifest.json').read_text())
+import argparse,hashlib,json,os,re,subprocess,sys
+ROOT=Path(__file__).resolve().parents[1]
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--stage-directory',type=Path,default=Path('work/destination-kernel-probe-staged'))
+parser.add_argument('--output-directory',type=Path,default=Path('work/destination-kernel-probe-regression'))
+parser.add_argument('--emit-only',action='store_true')
+parser.add_argument('--bind-current',action='store_true',help='Bind whole current source to pinned control before emission')
+parser.add_argument('--production',action='store_true',help='Bind whole current source to reviewed candidate before emission/compilation')
+args=parser.parse_args()
+stage=args.stage_directory if args.stage_directory.is_absolute() else ROOT/args.stage_directory
+OUT=args.output_directory if args.output_directory.is_absolute() else ROOT/args.output_directory;OUT.mkdir(exist_ok=True)
+manifest=json.loads((stage/'manifest.json').read_text())
 control=(stage/'control.cpp').read_text(encoding='utf-8-sig');candidate=(stage/'CvTacticalAI.cpp').read_text(encoding='utf-8-sig')
 assert hashlib.sha256(control.encode()).hexdigest()==manifest['original_sha256']
 assert hashlib.sha256(candidate.encode()).hexdigest()==manifest['candidate_sha256']
 live=(ROOT/'CvGameCoreDLL_Expansion2/CvTacticalAI.cpp').read_text(encoding='utf-8-sig')
-assert live==control,'Numerical fixture requires frozen86 current Tactical control'
+indexed=manifest.get('indexed_backend',False)
+actual_whole_hashes={}
+if args.bind_current or args.production:
+ for name,digest in manifest['original_whole_files_sha256'].items():
+  actual=(ROOT/'CvGameCoreDLL_Expansion2'/name).read_text(encoding='utf-8-sig')
+  expected=manifest['candidate_sha256'] if args.production and name=='CvTacticalAI.cpp' else manifest['diagnostics_candidate_sha256'] if args.production and name=='CvStackingDiagnostics.cpp' else digest
+  actual_whole_hashes[name]=hashlib.sha256(actual.encode()).hexdigest()
+  assert actual_whole_hashes[name]==expected,'Whole current '+('candidate' if args.production else 'control')+' source mismatch: '+name
 generator=(ROOT/'work/test-immediate-forecast-borrow.py').read_text(encoding='utf-8-sig')
 prefix=generator[:generator.index("\ntests=r'''")]
 setup_start=prefix.index("stage=root/'work/immediate-forecast-borrow-stage'")
 setup_end=prefix.index('# Reuse only tracked extraction/services,',setup_start)
 # Bind fresh Git sources directly. Never require an ignored stage manifest or
 # a generated C++ scaffold merely to reproduce this new experiment.
-fresh_setup='''proof={'control':'c92e941cfaf5db4577ac555262a938e52bc3f877'}
+fresh_setup='''proof={'control':extraction_control}
 names=('CvTacticalAI.cpp','CvUnit.cpp','CvDangerPlots.cpp','CvStackingStrengthCache.h','CvStackingStrengthCache.cpp','CvDangerPlots.h','CvUnit.h','CvUnitCombat.cpp','CvPlot.cpp','CvStackingRules.h','CvStackingRules.cpp')
 original={n:subprocess.check_output(['git','show',proof['control']+':CvGameCoreDLL_Expansion2/'+n],cwd=root).decode('utf-8-sig').replace('\\r\\n','\\n') for n in names}
 candidate=dict(original);candidate['CvTacticalAI.cpp']=frozen86
-for n in names:
- assert (core/n).read_text(encoding='utf-8-sig')==candidate[n],'Actual frozen source mismatch: '+n
 old,new=original['CvTacticalAI.cpp'],candidate['CvTacticalAI.cpp']
-assert new.replace('bool cacheable = query.scratch != NULL || StackForecastContext();','bool cacheable = StackForecastContext();')==old
+if expect_indexed:assert old==new,'Indexed fixture control must be the complete pinned current source'
+else:assert new.replace('bool cacheable = query.scratch != NULL || StackForecastContext();','bool cacheable = StackForecastContext();')==old
 '''
 prefix=prefix[:setup_start]+fresh_setup+prefix[setup_end:]
-scope={'__file__':str(ROOT/'work/test-immediate-forecast-borrow.py'),'frozen86':control};arguments=sys.argv
+# The reused generator's numerical extraction must not silently read later
+# production Unit/Combat/Rules files when reproducing a historical control.
+template_line="template=(root/'work/test-packet-probe.py').read_text(encoding='utf-8-sig')"
+assert prefix.count(template_line)==1
+template_pin='''
+for name in ('CvUnit.h','CvUnitCombat.cpp','CvStackingRules.cpp','CvStackingRules.h'):
+ template=template.replace("(core/'"+name+"').read_text(encoding='utf-8-sig')","current['"+name+"']")
+'''
+prefix=prefix.replace(template_line,template_line+template_pin,1)
+scope={'__file__':str(ROOT/'work/test-immediate-forecast-borrow.py'),'frozen86':control,
+       'extraction_control':manifest['control'] if indexed else 'c92e941cfaf5db4577ac555262a938e52bc3f877','expect_indexed':indexed};arguments=sys.argv
 try:
  sys.argv=[arguments[0],'--production'];exec(compile(prefix,'actual86 extraction/strong provider only','exec'),scope)
 finally:sys.argv=arguments
-assert scope['new']==control,'Borrow generator candidate must be byte-exact frozen86'
+assert scope['new']==control,'Extraction control must be byte-exact pinned Tactical source'
 function=scope['function'];headers=scope['headers'];base=scope['base'];services=scope['services']
 base=base.replace('int GetID()const{return id;}','int GetDanger(const CvPlot*,const struct SUnitIDValueContainer&,int)const{return 87;}\n int GetID()const{return id;}',1)
 base=base.replace('namespace CvStacking{\n static bool enabled', 'static int fixtureJoinBonus=12;\nnamespace CvStacking{\n static bool enabled',1)
@@ -122,11 +147,31 @@ int main(){
  printf("DESTINATION KERNEL SHADOW:%u checks,%u failures; actual86 kernels+forecast graph/strong proof; conservative observed parent reuse, original work unchanged; no native ROI\n",checks,failures);return failures?1:0;
 }
 '''
+if indexed:
+ tests=tests.replace('unsigned oldLeaves=leafCalls;', 'Check("actual indexed backends active in both source kernels",Control::gUseIndexed&&Trial::gUseIndexed&&Control::gIndexed.Capacity()==6001&&Trial::gIndexed.Capacity()==6001);unsigned oldLeaves=leafCalls;',1)
+ tests=tests.replace('Check("bounded FIFO censors metadata only",', 'Check("indexed original result pools remain numerically/work neutral",Control::gIndexed.Total()==Trial::gIndexed.Total()&&Control::gIndexed.FIFOCount(0)==Trial::gIndexed.FIFOCount(0)&&Control::gIndexed.FIFOCount(1)==Trial::gIndexed.FIFOCount(1));Check("bounded FIFO censors metadata only",',1)
+ tests=tests.replace('actual86 kernels+forecast graph/strong proof','actual indexed kernels+forecast graph/strong proof')
 code=headers+scope['strength_header']+scope['strength_module']+scope['native_services']+base+services+engine+implementation+tests
 (OUT/'test.cpp').write_text(code,encoding='utf-8')
-if '--emit-only' in sys.argv:print('Actual86 kernel observer fixture emitted; no compilation');sys.exit(0)
+binding=dict(control=manifest['control'],diagnostics_control=manifest['diagnostics_control'],indexed_backend=indexed,
+             production_untouched=True,bound_current_control=args.bind_current,bound_current_production=args.production,
+             actual_whole_source_sha256=actual_whole_hashes,original_sha256=manifest['original_sha256'],candidate_sha256=manifest['candidate_sha256'],
+             fixture_sha256=hashlib.sha256(code.encode()).hexdigest(),whole_gameplay_reverse_exact=manifest['whole_gameplay_reverse_exact'],
+             complete_math_bindings=scope['math_bindings'],whole_strength_header_sha256=hashlib.sha256(scope['strength_header'].encode()).hexdigest(),
+             whole_strength_module_sha256=hashlib.sha256(scope['strength_module'].encode()).hexdigest(),
+             actual_context_and_provider=True,indexed_class_definition_count=code.count('class IndexedStore\n'),
+             indexed_scalar_lookup_definition_count=code.count('static bool FindStackDangerForecastScalar('),compiled=False,game_used=False,
+             scope='Complete pinned source kernels/cache/backend and strengthened capability module against explicit deterministic engine/position services. Source emission is not compilation or native neutrality/speed evidence.')
+if indexed:assert binding['indexed_class_definition_count']==2 and binding['indexed_scalar_lookup_definition_count']==2,'Both complete native indexed modules must be emitted'
+(OUT/('production-emission-proof.json' if args.production else 'emission-proof.json')).write_text(json.dumps(binding,indent=2)+'\n',encoding='utf-8')
+if args.emit_only:print(json.dumps(dict(status='emitted_only',**binding)));sys.exit(0)
 vc=ROOT/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=ROOT/'work/toolchain/sdk/windows';env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(ROOT/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(ROOT/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')
 for k in ('CL','_CL_','LINK'):env.pop(k,None)
 build=subprocess.run([str(vc/'Vc7/bin/cl.exe'),'/nologo','/EHsc','/MT','/O2','/Z7','/D_SECURE_SCL=0','/D_HAS_ITERATOR_DEBUGGING=0',str(OUT/'test.cpp'),'/Fe'+str(OUT/'test.exe')],cwd=OUT,env=env,capture_output=True,text=True,timeout=90);(OUT/'compile.log').write_text(build.stdout+build.stderr)
 if build.returncode:print(build.stdout+build.stderr);sys.exit(build.returncode)
-run=subprocess.run([str(OUT/'test.exe')],cwd=OUT,capture_output=True,text=True,timeout=40);print(run.stdout+run.stderr,end='');(OUT/'result.json').write_text(json.dumps(dict(control=manifest['control'],returncode=run.returncode,output=run.stdout+run.stderr,production_untouched=True,actual_kernel_source=True,whole_gameplay_reverse_exact=manifest['whole_gameplay_reverse_exact'],source_sha256=manifest['candidate_sha256'],fixture_sha256=hashlib.sha256(code.encode()).hexdigest(),scope='Actual86 virtual builder, first-match stats lookup, complete danger/stack kernels, forecast module and mathematical leaves/strong capability module. Deterministic engine/position services explicitly substitute native objects; observer never replaces work/results. Parent-child footprint and deliberate missing-setting control are measurements, not full dependency certification/native performance.'),indent=2));sys.exit(run.returncode)
+run=subprocess.run([str(OUT/'test.exe')],cwd=OUT,capture_output=True,text=True,timeout=40);print(run.stdout+run.stderr,end='')
+report=dict(binding)
+report.update(returncode=run.returncode,output=run.stdout+run.stderr,compiled=True,actual_kernel_source=True,source_sha256=manifest['candidate_sha256'],
+              scope='Pinned actual virtual builder, first-match stats lookup, complete danger/stack kernels, complete selected forecast backend and mathematical leaves/strong capability module. Deterministic engine/position services explicitly substitute native objects; observer never replaces work/results. Parent-child footprint and deliberate missing-setting control are measurements, not full dependency certification/native performance.')
+(OUT/('production-result.json' if args.production else 'result.json')).write_text(json.dumps(report,indent=2)+'\n',encoding='utf-8')
+sys.exit(run.returncode)

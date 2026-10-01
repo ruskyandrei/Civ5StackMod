@@ -50,14 +50,19 @@ packet uses nine/824 versus one/244. These exclude query preparation and CRT
 bookkeeping. Initial synthetic eviction-heavy traces run about4x faster. Their
 cleanup measurement assertion was corrected after finding that empty original
 containers retain newly allocated default buffers; the functional oracle passes.
-Native whole-turn benefit remains unmeasured until the matched trial completes.
+The subsequent quiet complete replay preserves699 ordered events, both world
+censuses and all455 recorded cache/proof counter rows. Interior252/253 take
+31.828s/57.531s versus32.313s/63.484s for87; heavy-turn planning falls
+39.010s→33.023s. This first pair supports a useful9.4% heavy-turn reduction,
+with a much smaller light-turn gain. It does not establish a general guarantee
+or meet the below30s objective.
 
 The first native trial was stopped at254 by the sustained CPU temperature guard
 while the user also had Blender work running. Its retained252/253 windows and
 606-event prefix match original behavior, with unchanged recorded hit/miss
 counters. There is no final census or verified normal stop, so native adoption
-and a clean performance gain remain unconfirmed. A quiet complete repeat is
-pending; see `performance-progress-20260930.md` for evidence and limits.
+were unconfirmed in that interrupted run. The later quiet repeat supplies the
+bounded evidence described above; see `performance-progress-20260930.md`.
 
 Reproduction uses `work/prepare-indexed-forecast-store.py`,
 `work/apply-indexed-forecast-store.py` and `work/test-indexed-forecast-store.py`.
