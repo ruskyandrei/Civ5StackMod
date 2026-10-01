@@ -1079,3 +1079,48 @@ absent, guards completion-disarmed. Evidence is
 `resident-counters252-253.json`. Best complete dense turn remains96's57.359s;
 the <30s objective is unmet. Next: independent overhead review and a separate
 bounded EIP diagnostic, not mixed into the clean timing comparison.
+
+## DLL97 diagnostic and DLL99 allocation-free revision
+
+One separated97 replay captured512 bounded EIP observations on the retained
+AI thread. Pause total57.9031ms, maximum4.5094ms, collector exited0;14 already
+suspended observations were skipped without changing their original count.
+The normal game/service closure is11:58:20UTC. All699 retained events and
+both censuses match clean97. Flat locations are diagnostic wall observations,
+not CPU shares. The folded pointer-table lookup has17 equal-address aliases;
+it cannot be labelled solely unit lookup or landmass work. The partial26.35s
+window does cover heavy player3 target25:25. Exact symbol/alias/phase evidence:
+`work/test-runs/perf-d97-eip-diagnostic-251-255`.
+
+Commit `0511f8a4f` replaces certificate key vectors with checked reads of the
+already-owned resident key and acquires the lexical parent proof once per call.
+64,358 actual-source oracle checks pass;14 whole production files bind to the
+compiled fixture. Original projection, numerical bodies, FIFO and budgets remain.
+Build97.516s, `work/msvc-output/Release/20261001-130414`;
+DLL `335AA54BBB0579EC30C452F55A2DA92795A572901672EE4EE95B532DE0D7938E`,
+PDB `97E0A8AC28CE4F551414BD2A8AC26C82F635528DE90F655F352A739CA8BD99A0`.
+Deployment2368 verified, backup `deployment-replaced-20261001-130724-283bd526`;
+graphics/saves unchanged.
+
+Clean99 matches97 and96's699 events and both censuses; all34 old fields, all
+five added counters and forecast physical estimates match97 in455 searches.
+Interior252/253 take32.391/60.250s (PLAN9.287/34.484s), versus97's32.469/59.156
+and96's31.266/57.359. The allocation removal is real in the fixture, but native
+speedup is not established. Short timings remain susceptible to background and
+scheduling variation; a post-run five-second process sample is not concurrent
+CPU attribution. No other application was closed or altered.
+
+Exact normal closure12:13:09UTC: game3600/service656 absent, session removed,
+both guards completion-disarmed. Evidence:
+`work/test-runs/perf-d99-slot-key-off-251-255`, native
+`Stacking-20261001T121019-867-p3600-r1`, comparison-d96/d97, phases252/253 and
+resident counter reports. Both resident production revisions are removed;
+Tactical source is restored byte-for-byte to96. The oracle/tools remain for
+future investigation. Best complete dense turn remains57.359s, <30s unmet.
+
+At the user's request, performance work is paused. No remaining candidate has
+a demonstrated10–20s gain. The ordered native-source/numerical snapshot redesign
+needs substantial lifecycle/callback proof and matched native testing. The
+returned88-byte strength-key copy is a smaller, uncompiled work-only experiment;
+it is not applied. Cleanup restores the previously tested96 DLL/PDB without
+launching the game or adding further gameplay changes.

@@ -56,3 +56,11 @@ Evidence is `work/test-runs/perf-d97-resident-key-off-251-255`.
 
 Reproduction sources, detailed proof and independent review are saved under
 `work/resident-key-elision*` and `work/resident-scalar-handles-stage.py`.
+
+The allocation-free slot-key revision also preserves all699 records, both
+censuses,34 legacy fields and all five added counters in455 searches. It takes
+32.391/60.250s on T252/253 (PLAN9.287/34.484s). These first pairs do not establish
+a benefit over96. Both resident revisions were therefore removed from production;
+the exact96 Tactical source is restored. Reproduction and rejected-candidate
+evidence remain available. The slot-key implementation and its64,358-check
+oracle are documented in `work/resident-slot-key.md`.

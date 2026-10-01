@@ -7812,7 +7812,6 @@ static volatile LONG gStackForecastOwnerThread = 0;
 static long gStackForecastSceneEpoch = 0;
 static unsigned long gStackForecastRevision = 0;
 static unsigned long gStackDangerHits = 0, gStackDangerMisses = 0;
-static unsigned long gResidentHits=0,gResidentCaptures=0,gResidentRejects=0,gPreparedBuilds=0,gPreparedReuses=0;
 static unsigned long gStackOutcomeBuilds = 0, gStackOutcomeReuses = 0, gStackOutcomeBypasses = 0;
 static size_t gStackOutcomeCurrentBytes = 0, gStackOutcomePeakBytes = 0;
 static unsigned long gStackDefenderHits = 0, gStackDefenderMisses = 0;
@@ -7863,14 +7862,13 @@ public:
   const CvUnit* defender;
   int* heap;
   unsigned char kind,used;
-  unsigned long scalarGeneration;
   int words[INLINE_WORDS];
-  Slot():hash(0),keyWords(0),members(0),hashPrev(-1),hashNext(-1),queueNext(-1),scalar(0),defender(NULL),heap(NULL),kind(0),used(0),scalarGeneration(0){}
+  Slot():hash(0),keyWords(0),members(0),hashPrev(-1),hashNext(-1),queueNext(-1),scalar(0),defender(NULL),heap(NULL),kind(0),used(0){}
   ~Slot(){delete[] heap;}
   const int* Data()const{return heap?heap:words;}
   size_t PayloadBytes()const{return (keyWords+2*members)*sizeof(int);}
  };
- IndexedStore():slots(NULL),buckets(NULL),slotCapacity(0),bucketCount(0),firstFree(-1),nextUnused(0),overflowBytes(0),scalarLifetime(1),nextScalarGeneration(0),scalarHandlesEnabled(true),scalarLifetimeExhausted(false)
+ IndexedStore():slots(NULL),buckets(NULL),slotCapacity(0),bucketCount(0),firstFree(-1),nextUnused(0),overflowBytes(0)
  {for(int i=0;i<2;++i){heads[i]=tails[i]=-1;counts[i]=queued[i]=0;}}
  ~IndexedStore(){Release();}
  void Init(size_t limit)
@@ -7889,11 +7887,10 @@ public:
  }
  void Clear()
  {
-  AdvanceScalarLifetime();
   for(size_t i=0;i<nextUnused;++i)
   {
    Slot& s=slots[i];delete[] s.heap;s.heap=NULL;s.used=0;s.keyWords=s.members=0;
-   s.hashPrev=s.queueNext=s.hashNext=-1;s.scalarGeneration=0;
+   s.hashPrev=s.queueNext=s.hashNext=-1;
   }
   for(size_t i=0;i<bucketCount;++i)buckets[i]=-1;
   for(int i=0;i<2;++i){heads[i]=tails[i]=-1;counts[i]=queued[i]=0;}
@@ -7901,7 +7898,6 @@ public:
  }
  void Release()
  {
-  AdvanceScalarLifetime();
   delete[] slots;delete[] buckets;slots=NULL;buckets=NULL;slotCapacity=bucketCount=nextUnused=overflowBytes=0;firstFree=-1;
   for(int i=0;i<2;++i){heads[i]=tails[i]=-1;counts[i]=queued[i]=0;}
  }
@@ -7923,60 +7919,6 @@ public:
   }
   return -1;
  }
- // Residence certificates are valid only within this IndexedStore object's
- // C++ lifetime. The production store is one process-lifetime static object.
- // Callers must also hold the original owning, callback-safe Context and bind
- // their exact input proof. These APIs certify residency, not dependencies.
- struct ScalarHandle
- {
-  const IndexedStore* table;int slot;unsigned long lifetime,generation;
-  ScalarHandle():table(NULL),slot(-1),lifetime(0),generation(0){}
- };
- bool CaptureScalarHandle(int handle,ScalarHandle& result)const
- {
-  if(!scalarHandlesEnabled||scalarLifetimeExhausted||!slots||handle<0||static_cast<size_t>(handle)>=slotCapacity)return false;
-  const Slot& value=slots[handle];
-  if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration==0)return false;
-  ScalarHandle captured;captured.table=this;captured.slot=handle;
-  captured.lifetime=scalarLifetime;captured.generation=value.scalarGeneration;
-  result=captured;return true;
- }
- bool TryReadScalarHandle(const ScalarHandle& handle,int& result)const
- {
-  // Check lifetime and bounds BEFORE any possibly released/recycled slot read.
-  if(handle.table!=this||!scalarHandlesEnabled||scalarLifetimeExhausted||handle.lifetime!=scalarLifetime||
-   !slots||handle.slot<0||static_cast<size_t>(handle.slot)>=slotCapacity||handle.generation==0)return false;
-  const Slot& value=slots[handle.slot];
-  if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration!=handle.generation)return false;
-  result=value.scalar;return true; // Only the copied integer escapes.
- }
-// Owner-only APIs copy data before callbacks; no key/slot reference escapes.
- bool TryCopyScalarPrefix(const ScalarHandle& handle,const int* fixed,int* out,size_t capacity,
-  size_t warmedCapacity,size_t& prefixWords)const
- {
-  if(handle.table!=this||!scalarHandlesEnabled||scalarLifetimeExhausted||handle.lifetime!=scalarLifetime||
-   !slots||handle.slot<0||static_cast<size_t>(handle.slot)>=slotCapacity||handle.generation==0)return false;
-  const Slot& value=slots[handle.slot];
-  if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration!=handle.generation||
-   value.keyWords<6||value.keyWords>warmedCapacity||!fixed||!out)return false;
-  const int* data=value.Data();if(!std::equal(fixed,fixed+4,data))return false;
-  const int members=data[4];
-  if(members<0||static_cast<size_t>(members)>(value.keyWords-6)/2)return false;
-  const size_t count=5+2*static_cast<size_t>(members);if(count>capacity)return false;
-  std::copy(data,data+count,out);prefixWords=count;return true;
- }
- bool TryMatchScalarSuffix(const ScalarHandle& handle,const int* suffix,size_t suffixWords,
-  size_t prefixWords,int& result)const
- {
-  if(handle.table!=this||!scalarHandlesEnabled||scalarLifetimeExhausted||handle.lifetime!=scalarLifetime||
-   !slots||handle.slot<0||static_cast<size_t>(handle.slot)>=slotCapacity||handle.generation==0)return false;
-  const Slot& value=slots[handle.slot];
-  if(!value.used||value.kind!=DANGER||value.keyWords%2!=0||value.members!=0||value.scalarGeneration!=handle.generation||
-   prefixWords>value.keyWords||suffixWords!=value.keyWords-prefixWords||!suffix)return false;
-  if(!std::equal(suffix,suffix+suffixWords,value.Data()+prefixWords))return false;
-  result=value.scalar;return true;
- }
-
  // Stable handle. The caller copies scalar/pointer/member data before Context.
  const Slot& At(int handle)const{return slots[handle];}
  int Insert(const StackForecastKey& key,Pending& pending,int kind,bool& inserted)
@@ -7987,7 +7929,7 @@ public:
   else{if(nextUnused>=slotCapacity)throw std::bad_alloc();handle=static_cast<int>(nextUnused++);}
   Slot& s=slots[handle];
   s.hash=StackForecastKeyHash()(key);s.keyWords=pending.keyWords;s.members=pending.members;
-  s.scalar=pending.scalar;s.defender=pending.defender;s.kind=static_cast<unsigned char>(kind);s.used=1;s.scalarGeneration=0;
+  s.scalar=pending.scalar;s.defender=pending.defender;s.kind=static_cast<unsigned char>(kind);s.used=1;
   s.heap=pending.heap;pending.heap=NULL;
   if(!s.heap&&pending.Words())std::memcpy(s.words,pending.words,pending.Words()*sizeof(int));
   if(s.heap)overflowBytes+=s.PayloadBytes();
@@ -8001,7 +7943,7 @@ public:
   if(s.hashPrev!=-1)slots[s.hashPrev].hashNext=s.hashNext;else buckets[bucket]=s.hashNext;
   if(s.hashNext!=-1)slots[s.hashNext].hashPrev=s.hashPrev;
   if(s.heap)overflowBytes-=s.PayloadBytes();
-  delete[] s.heap;s.heap=NULL;--counts[s.kind];s.used=0;s.keyWords=s.members=0;s.scalarGeneration=0;
+  delete[] s.heap;s.heap=NULL;--counts[s.kind];s.used=0;s.keyWords=s.members=0;
   s.hashPrev=s.queueNext=-1;s.hashNext=firstFree;firstFree=handle;
  }
  void Push(int handle)
@@ -8017,11 +7959,11 @@ public:
  }
  // O(1) FIFO count is separate from total entries, including pending packet.
  size_t FIFOCount(int kind)const{return queued[kind];}
- void QueuePush(int handle){Push(handle);++queued[slots[handle].kind];slots[handle].scalarGeneration=PublishScalarGeneration();}
+ void QueuePush(int handle){Push(handle);++queued[slots[handle].kind];}
  void QueuePop(int kind)
  {
   int handle=heads[kind];heads[kind]=slots[handle].queueNext;if(heads[kind]==-1)tails[kind]=-1;
-  slots[handle].queueNext=-1;--queued[kind];slots[handle].scalarGeneration=0;
+  slots[handle].queueNext=-1;--queued[kind];
  }
  int NextQueued(int handle)const{return slots[handle].queueNext;}
  void ResetQueued(){queued[0]=queued[1]=0;}
@@ -8036,24 +7978,6 @@ public:
 private:
  Slot* slots;int* buckets;size_t slotCapacity,bucketCount;int firstFree;size_t nextUnused;
  int heads[2],tails[2];size_t counts[2],queued[2],overflowBytes;
- // No lifetime identity is reused by Clear/Release/reInitialize. Exhaustion rejects
- // certificates while ordinary storage continues with the existing policy.
- unsigned long scalarLifetime,nextScalarGeneration;
- bool scalarHandlesEnabled,scalarLifetimeExhausted;
- void AdvanceScalarLifetime()
- {
-  if(scalarLifetimeExhausted){scalarHandlesEnabled=false;return;}
-  if(scalarLifetime==static_cast<unsigned long>(-1))
-  {scalarHandlesEnabled=false;scalarLifetimeExhausted=true;return;}
-  ++scalarLifetime;nextScalarGeneration=0;scalarHandlesEnabled=true;
- }
- unsigned long PublishScalarGeneration()
- {
-  if(!scalarHandlesEnabled||scalarLifetimeExhausted)return 0;
-  if(nextScalarGeneration==static_cast<unsigned long>(-1))
-  {scalarHandlesEnabled=false;return 0;}
-  return ++nextScalarGeneration;
- }
  IndexedStore(const IndexedStore&);IndexedStore&operator=(const IndexedStore&);
 };
 
@@ -8368,7 +8292,6 @@ struct StackForecastScope
   }
   InvalidateStackForecastScene();
   gStackDangerHits = gStackDangerMisses = gStackDefenderHits = gStackDefenderMisses = 0;
-  gResidentHits=gResidentCaptures=gResidentRejects=gPreparedBuilds=gPreparedReuses=0;
   gStackOutcomeBuilds = gStackOutcomeReuses = gStackOutcomeBypasses = 0;
   gStackOutcomeCurrentBytes = gStackOutcomePeakBytes = 0;
   gStackPacketHits = gStackPacketBuilds = gStackPacketBypasses = 0;
@@ -8753,9 +8676,9 @@ static void StoreStackDefenderForecast(const StackForecastKey& key,const CvUnit*
 // Backend queries copy results before any caller validation can clear storage.
 static size_t StackDangerForecastSize(){return gUseIndexed?gIndexed.Count(IndexedStore::DANGER):gStackDangerForecasts.size();}
 static size_t StackDefenderForecastSize(){return gUseIndexed?gIndexed.Count(IndexedStore::DEFENDER):gStackDefenderForecasts.size();}
-static bool FindStackDangerForecastScalar(const StackForecastKey& key,int& result,IndexedStore::ScalarHandle* certificate=NULL)
+static bool FindStackDangerForecastScalar(const StackForecastKey& key,int& result)
 {
- if(gUseIndexed){int handle=gIndexed.Find(key,IndexedStore::DANGER);if(handle==-1)return false;result=gIndexed.At(handle).scalar;if(certificate)gIndexed.CaptureScalarHandle(handle,*certificate);return true;}
+ if(gUseIndexed){int handle=gIndexed.Find(key,IndexedStore::DANGER);if(handle==-1)return false;result=gIndexed.At(handle).scalar;return true;}
  StackDangerForecasts::const_iterator hit=gStackDangerForecasts.find(key);
  if(hit==gStackDangerForecasts.end())return false;result=hit->second.scalar;return true;
 }
@@ -9504,51 +9427,6 @@ static __declspec(noinline) int ResolveStackDangerForecastMiss(const CvUnit* uni
  return result;
 }
 
-// A live UnitDanger call is the only admission route. Other full/solo roster
-// queries cannot inherit a resident arrival certificate accidentally.
-struct ResidentArrivalRequest
-{
- const CvUnit* unit;const CvPlot* plot;const CvTacticalPosition& position;
- const vector<const CvUnit*>& candidates;const SUnitIDValueContainer& damage;
- int extra;ResidentArrivalRequest* previous;
- ResidentArrivalRequest(const CvUnit* u,const CvPlot* p,int d,const CvTacticalPosition& s,
-  const vector<const CvUnit*>& c,const SUnitIDValueContainer& f);
- ~ResidentArrivalRequest();
-};
-static __declspec(thread) ResidentArrivalRequest* gResidentArrivalRequest=NULL;
-ResidentArrivalRequest::ResidentArrivalRequest(const CvUnit* u,const CvPlot* p,int d,const CvTacticalPosition& s,
- const vector<const CvUnit*>& c,const SUnitIDValueContainer& f):unit(u),plot(p),position(s),candidates(c),damage(f),extra(d),previous(gResidentArrivalRequest)
-{gResidentArrivalRequest=this;}
-ResidentArrivalRequest::~ResidentArrivalRequest(){gResidentArrivalRequest=previous;}
-struct ResidentScalarCertificate
-{
- const CvUnit* unit;int extra;bool canonical,valid;
- IndexedStore::ScalarHandle handle;
- ResidentScalarCertificate():unit(NULL),extra(0),canonical(false),valid(false){}
- size_t Bytes()const{return 0;} // The resident table already owns the exact key.
- void Release(){valid=false;}
-};
-struct ParentStackPreparationView;
-struct ResidentScalarKeyWork
-{
- enum { MAX_PREFIX_WORDS=128 }; // Optional shortcut only; oversized keys use original path.
- int prefix[MAX_PREFIX_WORDS];size_t count;unsigned long revision;long scene;
- ResidentScalarCertificate* certificate;ParentStackPreparationView* view;
- ResidentArrivalRequest* request;IndexedStore::ScalarHandle handle;
- ResidentScalarKeyWork():count(0),revision(0),scene(0),certificate(NULL),view(NULL),request(NULL){}
-};
-// The original owned danger-key loan protects this scratch through projection.
-// Private/nested/foreign callers never touch it; no Slot reference is retained.
-static ResidentScalarKeyWork gResidentScalarKeyWork;
-static bool PrepareResidentScalarKey(const CvUnit*,const CvPlot*,const vector<const CvUnit*>&,
- const SUnitIDValueContainer&,const SUnitIDValueContainer&,const int*,bool,bool,StackForecastKey&);
-static bool ReadPreparedResidentScalar(int&);
-static void CompletePreparedResidentScalarKey(StackForecastKey&);
-static void CaptureResidentScalarKey(const CvUnit*,const CvPlot*,const vector<const CvUnit*>&,
- const SUnitIDValueContainer&,const int*,bool,bool,const StackForecastKey&,const IndexedStore::ScalarHandle&);
-
-static bool HasResidentScalarCaptureContext(const CvUnit*,const CvPlot*,const vector<const CvUnit*>&,const SUnitIDValueContainer&,bool);
-
 static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerOutcomeBatch* outcome = NULL)
 {
@@ -9563,26 +9441,18 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
  CvStackingDiagnostics::PlanSampleScope keySample(CvStackingDiagnostics::PLAN_DANGER_KEY,cacheable); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (cacheable)
  {
-  const int fixed[4]={unit->GetID(),plot->GetPlotIndex(),friendlyDamage.GetValue(unit->GetID()),CvStacking::GetCityProtection(plot->getPlotCity())};
-  const bool canonical=!plot->isCity()&&CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled,1)!=0;
-  const bool residentPrepared=PrepareResidentScalarKey(unit,plot,candidates,friendlyDamage,enemyDamage,fixed,canonical,query.scratch!=NULL,key);
-  if(!residentPrepared)
-  {
-   for(int i=0;i<4;++i)key.state.push_back(fixed[i]);
-   AppendStackCandidates(key,candidates,friendlyDamage,canonical);
-   AppendStackDamageProjected(key,enemyDamage,unit,plot);
-  }
+  key.state.push_back(unit->GetID());
+  key.state.push_back(plot->GetPlotIndex());
+  key.state.push_back(friendlyDamage.GetValue(unit->GetID()));
+  key.state.push_back(CvStacking::GetCityProtection(plot->getPlotCity()));
+  AppendStackCandidates(key, candidates, friendlyDamage, !plot->isCity() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0);
+  AppendStackDamageProjected(key, enemyDamage, unit, plot);
   cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
-  int residentResult=0;
-  if(cacheable&&residentPrepared&&ReadPreparedResidentScalar(residentResult))
-  {++gStackDangerHits;return residentResult;}
-  if(residentPrepared)CompletePreparedResidentScalarKey(key);
   ObserveDestinationDangerKey(unit,plot,candidates,friendlyDamage,key,cacheable); // DESTINATION_KERNEL_SHADOW_DIAGNOSTIC_ONLY
-  int cachedResult=0;IndexedStore::ScalarHandle captured;
-  if (cacheable && FindStackDangerForecastScalar(key,cachedResult,query.scratch&&gResidentArrivalRequest&&HasResidentScalarCaptureContext(unit,plot,candidates,friendlyDamage,true)?&captured:NULL))
+  int cachedResult=0;
+  if (cacheable && FindStackDangerForecastScalar(key,cachedResult))
   {
    ++gStackDangerHits;
-   CaptureResidentScalarKey(unit,plot,candidates,friendlyDamage,fixed,canonical,query.scratch!=NULL,key,captured);
    return cachedResult;
   }
  }
@@ -9653,14 +9523,12 @@ static void GetVirtualFriendlyStack(const CvTacticalPosition& position, const Cv
 }
 
 // A preparation view lasts only through one parent's const preferred-unit batch.
-// No danger result is retained. An optional resident even-key certificate uses
-// the existing table result only while its slot lifetime remains valid. Borrowed query ownership is
+// No danger result or serialized key is retained. Borrowed query ownership is
 // the admission witness; a private/nested query always follows the old builder.
 struct ParentStackPreparationCell
 {
  int plotIndex;
  VirtualFriendlyStackBuffer base;
- ResidentScalarCertificate resident;
  ParentStackPreparationCell():plotIndex(-1) {}
 };
 struct ParentStackPreparationStorage
@@ -9674,27 +9542,23 @@ struct ParentStackPreparationStorage
  void Reset()
  {
   for (size_t i=0;i<count;++i)
-  {cells[i].resident.valid=false;cells[i].base.candidates.clear();cells[i].base.damage.clear();cells[i].plotIndex=-1;}
+  {cells[i].base.candidates.clear();cells[i].base.damage.clear();cells[i].plotIndex=-1;}
   count=0;
  }
  size_t CellBytes(size_t i) const
  {
   return cells[i].base.candidates.capacity()*sizeof(const CvUnit*)+
-   cells[i].base.damage.m_aExtraStorage.capacity()*sizeof(SUnitIDValueContainer::value_type)+cells[i].resident.Bytes();
+   cells[i].base.damage.m_aExtraStorage.capacity()*sizeof(SUnitIDValueContainer::value_type);
  }
  size_t RetainedBytes() const {return retainedBytes;}
  void ReleaseCell(size_t i)
  {
-  retainedBytes-=CellBytes(i);cells[i].base.release();cells[i].resident.Release();
+  retainedBytes-=CellBytes(i);cells[i].base.release();
  }
  void ReleasePayload()
  {
-  for(size_t i=0;i<MAX_CELLS;++i) {cells[i].base.release();cells[i].resident.Release();}
+  for(size_t i=0;i<MAX_CELLS;++i) cells[i].base.release();
   count=0;retainedBytes=0;
- }
- void DiscardResidentPayload()
- {
-  for(size_t i=0;i<MAX_CELLS;++i){retainedBytes-=cells[i].resident.Bytes();cells[i].resident.Release();}
  }
  void Release(){ReleasePayload();busy=false;}
 };
@@ -9752,7 +9616,7 @@ struct ParentStackPreparationView
   size_t lo=0,hi=storage.count;
   while(lo<hi){const size_t mid=lo+(hi-lo)/2;if(storage.lookup[mid].first<index)lo=mid+1;else hi=mid;}
   size_t cellIndex;
-  if(lo<storage.count&&storage.lookup[lo].first==index) {cellIndex=storage.lookup[lo].second;++gPreparedReuses;}
+  if(lo<storage.count&&storage.lookup[lo].first==index) cellIndex=storage.lookup[lo].second;
   else
   {
    if(storage.count==ParentStackPreparationStorage::MAX_CELLS) return false;
@@ -9761,10 +9625,8 @@ struct ParentStackPreparationView
    const size_t before=storage.CellBytes(cellIndex);
    try
    {
-    ++gPreparedBuilds;
     GetVirtualFriendlyStack(parent,plot,NULL,0,cell.base.candidates,cell.base.damage);
     storage.retainedBytes=storage.retainedBytes-before+storage.CellBytes(cellIndex);
-    if(storage.RetainedBytes()>gStackKeyPayloadLimit)storage.DiscardResidentPayload();
     if(storage.RetainedBytes()>gStackKeyPayloadLimit)
     {storage.ReleasePayload();disabled=true;return false;}
    }
@@ -9797,83 +9659,6 @@ private:
  ParentStackPreparationView(const ParentStackPreparationView&);
  ParentStackPreparationView& operator=(const ParentStackPreparationView&);
 };
-static ParentStackPreparationCell* ResidentArrivalCell(const CvUnit* unit,const CvPlot* plot,
- const vector<const CvUnit*>& candidates,const SUnitIDValueContainer& damage,bool ownedLoan)
-{
- ResidentArrivalRequest* request=gResidentArrivalRequest;
- if(!ownedLoan||!gUseIndexed||!request||request->unit!=unit||request->plot!=plot||
-  &request->candidates!=&candidates||&request->damage!=&damage)return NULL;
- ParentStackPreparationView* view=gParentStackPreparationView;
- if(!view||!view->borrowed||!view->CanPrepare(request->position,true))return NULL;
- unsigned long serial=0;long epoch=0;
- if(CvStackingDiagnostics::TryGetPlanSamplingContext(serial,epoch))return NULL;
- ParentStackPreparationStorage& storage=gParentStackPreparationStorage;
- const int index=plot->GetPlotIndex();size_t lo=0,hi=storage.count;
- while(lo<hi){const size_t middle=lo+(hi-lo)/2;if(storage.lookup[middle].first<index)lo=middle+1;else hi=middle;}
- if(lo==storage.count||storage.lookup[lo].first!=index)return NULL;
- return &storage.cells[storage.lookup[lo].second];
-}
-static bool ResidentScalarLexicalProof()
-{
- const ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- return work.certificate&&work.request&&gResidentArrivalRequest==work.request&&gParentStackPreparationView==work.view&&
-  work.view&&work.view->borrowed&&!work.view->disabled&&gParentStackPreparationStorage.busy&&
-  work.revision==gStackForecastRevision&&work.scene==gStackForecastSceneEpoch;
-}
-static bool HasResidentScalarCaptureContext(const CvUnit* unit,const CvPlot* plot,
- const vector<const CvUnit*>& candidates,const SUnitIDValueContainer& damage,bool ownedLoan)
-{
- if(!ownedLoan||!ResidentScalarLexicalProof())return false;
- const ResidentArrivalRequest& request=*gResidentScalarKeyWork.request;
- return request.unit==unit&&request.plot==plot&&&request.candidates==&candidates&&&request.damage==&damage;
-}
-static bool PrepareResidentScalarKey(const CvUnit* unit,const CvPlot* plot,const vector<const CvUnit*>& candidates,
- const SUnitIDValueContainer& damage,const SUnitIDValueContainer& enemy,const int* fixed,bool canonical,bool ownedLoan,StackForecastKey& key)
-{
- if(!ownedLoan)return false; // Private/foreign calls cannot disturb the owner's scratch.
- ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- work.certificate=NULL;work.view=NULL;work.request=NULL;
- ParentStackPreparationCell* cell=ResidentArrivalCell(unit,plot,candidates,damage,true);
- if(!cell)return false;
- work.certificate=&cell->resident;work.view=gParentStackPreparationView;work.request=gResidentArrivalRequest;
- work.revision=gStackForecastRevision;work.scene=gStackForecastSceneEpoch;
- ResidentScalarCertificate& certificate=cell->resident;
- if(!certificate.valid||certificate.unit!=unit||certificate.extra!=work.request->extra||certificate.canonical!=canonical||
-  !gIndexed.TryCopyScalarPrefix(certificate.handle,fixed,work.prefix,ResidentScalarKeyWork::MAX_PREFIX_WORDS,key.state.capacity(),work.count))
- {++gResidentRejects;return false;}
- work.handle=certificate.handle;
- // No retained slot/key pointer spans this original refreshing/callback seam.
- AppendStackDamageProjected(key,enemy,unit,plot);
- return true;
-}
-static bool ReadPreparedResidentScalar(int& result)
-{
- ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- if(!ResidentScalarLexicalProof()||!work.certificate->valid||gStackDangerScratch.state.empty())return false;
- if(!gIndexed.TryMatchScalarSuffix(work.handle,&gStackDangerScratch.state[0],gStackDangerScratch.state.size(),work.count,result))return false;
- ++gResidentHits;return true;
-}
-static void CompletePreparedResidentScalarKey(StackForecastKey& key)
-{
- const size_t suffix=key.state.size();ResidentScalarKeyWork& work=gResidentScalarKeyWork;
- for(size_t i=0;i<work.count;++i)key.state.push_back(work.prefix[i]);
- std::rotate(key.state.begin(),key.state.begin()+suffix,key.state.end());
- ++gResidentRejects;
-}
-static void CaptureResidentScalarKey(const CvUnit* unit,const CvPlot* plot,const vector<const CvUnit*>& candidates,
- const SUnitIDValueContainer& damage,const int* fixed,bool canonical,bool ownedLoan,const StackForecastKey& key,
- const IndexedStore::ScalarHandle& handle)
-{
- // The original post-key Context and existing full-key lookup precede this
- // allocation-free publication. No engine getters or callbacks intervene.
- if(!HasResidentScalarCaptureContext(unit,plot,candidates,damage,ownedLoan)||handle.table!=&gIndexed||handle.generation==0||key.state.size()<6)return;
- const int members=key.state[4];
- if(members<0||static_cast<size_t>(members)>(key.state.size()-6)/2||5+2*static_cast<size_t>(members)>ResidentScalarKeyWork::MAX_PREFIX_WORDS)return;
- ResidentScalarCertificate& certificate=*gResidentScalarKeyWork.certificate;
- certificate.unit=unit;certificate.extra=gResidentScalarKeyWork.request->extra;certificate.canonical=canonical;certificate.handle=handle;
- certificate.valid=true;++gResidentCaptures;
-}
-
 static void MarkParentStackPreparationChild(const CvTacticalPosition& from,const CvTacticalPosition& to)
 {if(gParentStackPreparationView) gParentStackPreparationView->MarkChild(from,to);}
 static void GetPreparedVirtualFriendlyStack(const CvTacticalPosition& position,const CvPlot* plot,
@@ -10085,14 +9870,12 @@ static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iS
    if (destinationStack)
    {
     const VirtualFriendlyStackBuffer& stack = destinationStack->Get(assumedPosition, pPlot, pUnit, iSelfDamage);
-    ResidentArrivalRequest residentArrival(pUnit,pPlot,iSelfDamage,assumedPosition,stack.candidates,stack.damage);
     iDanger = GetCachedStackDanger(pUnit, pPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt());
    }
    else
    {
     VirtualFriendlyStackQuery stack;
     GetPreparedVirtualFriendlyStack(assumedPosition, pPlot, pUnit, iSelfDamage, stack.candidates, stack.damage, stack.borrowed);
-    ResidentArrivalRequest residentArrival(pUnit,pPlot,iSelfDamage,assumedPosition,stack.candidates,stack.damage);
     iDanger = GetCachedStackDanger(pUnit, pPlot, stack.candidates, stack.damage, assumedPosition.GetUnitDamageDealt());
    }
   }
@@ -15972,7 +15755,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
 	{
 		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu callbackProofScans=%lu callbackProofFlags=%lu callbackValidationBypasses=%lu callbackSuspensions=%lu forecastBackend=%s forecastEstimatedBytes=%u residentHits=%lu residentCaptures=%lu residentRejects=%lu prepBuildAttempts=%lu prepReuseAttempts=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu callbackProofScans=%lu callbackProofFlags=%lu callbackValidationBypasses=%lu callbackSuspensions=%lu forecastBackend=%s forecastEstimatedBytes=%u; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
 			(unsigned int)(StackDangerForecastSize()+StackDefenderForecastSize()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
@@ -15981,7 +15764,7 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations,
 			gStackOutcomeBuilds,gStackOutcomeReuses,gStackOutcomeBypasses,(unsigned int)gStackOutcomeCurrentBytes,(unsigned int)gStackOutcomePeakBytes,
 			gStackPacketHits,gStackPacketBuilds,gStackPacketBypasses,
-			strength.capabilityScans,strength.capabilityFlags,strength.capabilityValidationBypasses,strength.capabilitySuspensions,gUseIndexed?"indexed":"legacy",(unsigned int)EstimatedStackForecastBytes(),gResidentHits,gResidentCaptures,gResidentRejects,gPreparedBuilds,gPreparedReuses);
+			strength.capabilityScans,strength.capabilityFlags,strength.capabilityValidationBypasses,strength.capabilitySuspensions,gUseIndexed?"indexed":"legacy",(unsigned int)EstimatedStackForecastBytes());
 	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,

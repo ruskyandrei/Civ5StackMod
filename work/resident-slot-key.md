@@ -1,5 +1,11 @@
 # Allocation-free resident slot-key candidate
 
+Status: tested as DLL99, then removed from production. The dense turn takes
+60.250s (PLAN34.484s), versus DLL96's57.359s (PLAN32.827s); no native benefit is
+established. All699 events, both censuses,34 old cache fields and five new
+counters match. Source and installed baseline are restored to96 at the user's
+pause request. This document preserves the experiment, not an active feature.
+
 Work-only replacement of DLL97's certificate key vectors. It targets the
 observed metadata tax rather than adding another cache or reducing search work.
 DLL97 was behavior-exact but slower than DLL96: turn25359.156s versus57.359s (root
