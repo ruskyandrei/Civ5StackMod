@@ -11,6 +11,7 @@
 #define CIV5_TACTICAL_AI_H
 
 #include "CvAStar.h"
+#include <memory>
 
 class FDataStream;
 
@@ -899,6 +900,30 @@ typedef tr1::unordered_map<DomainTypes, ReachablePlots> TCachedDistanceToTargetP
 class CvTacticalPosition;
 class CvTactPosStorage;
 
+// Private roster value: copies share ordered membership until a real removal.
+// Borrowed const views are consumed before mutation in all current callers;
+// they must not be retained across a detach/clear/reinitialization.
+class STacticalEnemyRoster
+{
+public:
+ const vector<const CvUnit*>& read() const { return data.get() ? *data : Empty(); }
+ vector<const CvUnit*>& write()
+ {
+  if (!data.get())
+   data.reset(new vector<const CvUnit*>());
+  else if (!data.unique())
+   data.reset(new vector<const CvUnit*>(*data));
+  return *data;
+ }
+ void push_back(const CvUnit* unit) { write().push_back(unit); }
+ void clear() { data.reset(); }
+ bool empty() const { return !data.get() || data->empty(); }
+ const CvUnit* front() const { return read().front(); }
+private:
+ static const vector<const CvUnit*>& Empty();
+ std::tr1::shared_ptr<vector<const CvUnit*> > data;
+};
+
 class CvTacticalPlot
 {
 public:
@@ -936,7 +961,7 @@ public:
 	void friendlyUnitMovingOut(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment);
 	bool removeEnemyUnitIfPresent(int iUnitID);
 	void clearCapturedCity();
-	const vector<const CvUnit*>& getEnemyUnits() const { return vEnemyUnits; }
+	const vector<const CvUnit*>& getEnemyUnits() const { return vEnemyUnits.read(); }
 	const vector<const CvUnit*>& getFixedFriendlyUnits() const { return vFixedFriendlyUnits; }
 	int getFixedFriendlyCount(DomainTypes eDomain) const;
 
@@ -962,7 +987,7 @@ public:
 
 protected:
 	const CvPlot* pPlot; //null if invalid
-	vector<const CvUnit*> vEnemyUnits; // Every surviving defender, including over-capacity stacks.
+	STacticalEnemyRoster vEnemyUnits; // Ordered surviving defenders; detach only on actual membership mutation.
 	vector<const CvUnit*> vFixedFriendlyUnits; // Owned units omitted from bounded search still occupy slots.
 	PlayerTypes eSimPlayer;
 	bool bEnemyCityPresent;

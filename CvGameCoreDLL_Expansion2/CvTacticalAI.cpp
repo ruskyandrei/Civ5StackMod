@@ -10523,6 +10523,13 @@ static STacticalAssignment* ScorePlotForAdmiralHeal(const SUnitStats& unit, cons
 	return result;
 }
 
+// Empty copies own no control block and perform no reference-count atomics.
+static const vector<const CvUnit*> gEmptyTacticalEnemyRoster;
+const vector<const CvUnit*>& STacticalEnemyRoster::Empty()
+{
+ return gEmptyTacticalEnemyRoster;
+}
+
 CvTacticalPlot::CvTacticalPlot(const CvPlot* plot, PlayerTypes ePlayer, const vector<const CvUnit*>& allOurUnits) :
 	pPlot(NULL), eSimPlayer(ePlayer), bEnemyCityPresent(false) //important, invalid by default
 {
@@ -10865,15 +10872,23 @@ int CvTacticalPlot::getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain) con
 
 bool CvTacticalPlot::removeEnemyUnitIfPresent(int iUnitID)
 {
- for (vector<const CvUnit*>::iterator it = vEnemyUnits.begin(); it != vEnemyUnits.end(); ++it)
+ const vector<const CvUnit*>& enemies = vEnemyUnits.read();
+ for (size_t index = 0; index < enemies.size(); ++index)
  {
-  if ((*it)->GetID() != iUnitID)
+  if (enemies[index]->GetID() != iUnitID)
    continue;
-  vEnemyUnits.erase(it);
-  aiEnemyDistance[TD_BOTH] = bEnemyCityPresent || !vEnemyUnits.empty() ? 0 : TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
+  // Search without detaching. Convert the matching iterator to an index before
+  // write(), so no iterator/reference into shared storage survives its copy.
+  vector<const CvUnit*>& remaining = vEnemyUnits.write();
+  remaining.erase(remaining.begin() + index);
+  aiEnemyDistance[TD_BOTH] = bEnemyCityPresent || !remaining.empty() ? 0 : TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
   aiEnemyDistance[TD_LAND] = aiEnemyDistance[TD_SEA] = bEnemyCityPresent ? 0 : TACTICAL_COMBAT_MAX_TARGET_DISTANCE;
-  for (size_t i = 0; i < vEnemyUnits.size(); ++i)
-   aiEnemyDistance[DomainForUnit(vEnemyUnits[i])] = 0;
+  for (size_t i = 0; i < remaining.size(); ++i)
+   aiEnemyDistance[DomainForUnit(remaining[i])] = 0;
+  // No reader in this method uses remaining after this last test. Drop the
+  // final empty payload so later empty-plot copies have no refcount traffic.
+  if (remaining.empty())
+   vEnemyUnits.clear();
   return true;
  }
  return false;
