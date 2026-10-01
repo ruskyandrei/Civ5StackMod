@@ -37,6 +37,7 @@ s=s[:a]+'''    {
     }'''+s[b:]
 assert not re.search(r'^(<<<<<<<|=======|>>>>>>>|\|\|\|\|\|\|\|)',s,re.M)
 files[off]=s
+change(off,'#include "CvMilitaryAI.h"','#include "CvMilitaryAI.h"\n#include "CvEconomicAI.h"')
 
 # Changing a commitment changes staffing credit at its previous objective too.
 # Keep this invalidation metadata-only, including release and failed transfer.

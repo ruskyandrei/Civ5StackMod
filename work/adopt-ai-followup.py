@@ -2,7 +2,8 @@
 from pathlib import Path
 import argparse, hashlib, json, subprocess
 ROOT=Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('--apply',action='store_true');a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--apply',action='store_true');p.add_argument('--verify-applied',action='store_true');a=p.parse_args()
+assert not (a.apply and a.verify_applied)
 stage=ROOT/'work/ai-followup-composed'
 proof=json.loads((stage/'finished-proof.json').read_text())
 hashes=proof['candidate_hashes'];targets={}
@@ -25,9 +26,12 @@ for test in ('healing','production','wave'):
 for rel,source in targets.items():
     original=subprocess.check_output(['git','show',proof['control']+':'+rel.as_posix()],cwd=ROOT)
     live=(ROOT/rel).read_bytes()
+    if a.verify_applied:
+        assert live.decode('utf-8-sig').replace('\r\n','\n')==source.read_text(encoding='utf-8-sig'),('Applied source changed',str(rel))
+        continue
     assert live.decode('utf-8-sig').replace('\r\n','\n')==original.decode('utf-8-sig').replace('\r\n','\n'),('Live source changed',str(rel))
     if a.apply:
         text=source.read_text(encoding='utf-8-sig')
         eol='\r\n' if b'\r\n' in live else '\n'
         (ROOT/rel).write_bytes((b'\xef\xbb\xbf' if live.startswith(b'\xef\xbb\xbf') else b'')+text.replace('\n',eol).encode())
-print(json.dumps({'validated':len(targets),'applied':a.apply,'control':proof['control']}))
+print(json.dumps({'validated':len(targets),'applied':a.apply,'verified_applied':a.verify_applied,'control':proof['control']}))

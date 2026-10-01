@@ -13,6 +13,7 @@
 #include "CvArmyAI.h"
 #include "CvAIOperation.h"
 #include "CvMilitaryAI.h"
+#include "CvEconomicAI.h"
 #include "CvTacticalAI.h"
 #include "CvDangerPlots.h"
 #include "CvTypes.h"
