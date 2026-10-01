@@ -33,5 +33,19 @@ The existing forecast estimatedBytes statistic excludes this separate storage.
 Reproduction tools are `work/prepare-parent-stack-preparation.py`,
 `work/test-parent-stack-preparation.py --production`, and the guarded
 `work/apply-parent-stack-preparation.py`. Template and independent review are
-saved alongside the work artifacts. Native benefit is currently unmeasured.
-The target remains below30 seconds per late-game turn.
+saved alongside the work artifacts.
+
+The DLL93 OFF251→255 replay completed normally and matched DLL91 OFF's699
+ordered planning/combat/capture records and both nonempty censuses. All34
+recorded non-timing cache fields match across455 searches, including packet,
+outcome, eviction, proof and physical-estimate fields. The separate preparation
+footprint remains excluded from that existing estimate. Interior252/253 took
+31.765/58.157 seconds (PLAN8.973/33.473s), against31.812/58.672
+(8.947/33.812s). This first pair shows only a small difference; it does not
+establish a substantial or general speed gain. The target remains unmet.
+
+Evidence is `work/test-runs/perf-d93-parent-preparation-off-251-255`, native
+`Stacking-20261001T103155-765-p28004-r1`. Exact normal game/service closure
+was10:34:42UTC; guards stayed within limits. The next step is a separate
+resident scalar key shortcut with exact original-key equality and live-slot
+validation. This preparation view by itself leaves that repeated work intact.

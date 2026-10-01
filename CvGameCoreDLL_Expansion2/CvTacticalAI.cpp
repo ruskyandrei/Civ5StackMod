@@ -6107,6 +6107,7 @@ std::set<int> TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(const CvUnit* pUn
 
 void TacticalAIHelpers::UpdatePlotDistanceToTarget(PlayerTypes ePlayer, CvPlot* pTargetPlot)
 {
+	CvStackingDiagnostics::TurnPhaseScope phase(ePlayer,"target_distance_fields"); // TARGET_DISTANCE_FIELD_TIMING_DIAGNOSTIC_ONLY
 	gDistanceToTargetPlots.clear();
 
 	SPathFinderUserData data(ePlayer, PT_LAND_UNIT_SIMPLE);

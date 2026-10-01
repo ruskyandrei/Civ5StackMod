@@ -168,7 +168,7 @@ def phase_interval(record):
 
 
 def family(name):
-    if name.startswith("tactical_") or name in ("immediate_city_opportunities", "stacking_offensive_moves"):
+    if name.startswith("tactical_") or name in ("immediate_city_opportunities", "stacking_offensive_moves", "target_distance_fields"):
         return "tactical_scopes"
     if name == "homeland_ai":
         return "homeland_scope"

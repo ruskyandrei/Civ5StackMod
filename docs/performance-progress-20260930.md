@@ -954,3 +954,36 @@ Reports include comparisons, phases252/253, `kernel-probes.json`,
 `kernel-repeat-stratification.json/.md` and `normal-exit.json`.
 Next is an actual-source parent-view preparation prototype. The <30s goal
 remains unmet; the best quiet complete heavy-turn result is57.531s.
+
+## DLL93 parent preparation replay complete
+
+Commit `e38b19798` shares ordered roster and first-match health preparation
+within one immutable parent batch and its witnessed EFD-only previews. Full
+keys, numerical kernels and original cache gates still execute. The actual-source
+preparation oracle passes295,462 checks; native math/backend substitutes check
+preparation and traffic, while sixteen unchanged dependency files and both whole
+candidate files are bound. See `parent-stack-preparation.md` for lifetime,
+allocation fallback and additional16,332B plus capped payload footprint.
+
+Build67.062s under `work/msvc-output/Release/20261001-112404`;
+DLL `858E2E5A33A71E223480A5C3DFC5B0B315F9734FD9657E75F8A4A5E8F6233383`,
+PDB `CEDB9391FD9F3F444103EB9526E79A039D9C385B518D6719440B0727A0CCAC03`.
+Deployment2368 files verified; backup
+`deployment-replaced-20261001-112736-fe34dd20`. Graphics/saves untouched.
+
+The OFF251→255 replay matches91 OFF's699 ordered semantic records and both
+nonempty censuses. All34 recorded non-timing PLAN_PERF fields match in all455
+searches; timing/yield scheduling and physical estimates were initially separated,
+and physical estimates also match. Extra preparation memory is excluded from
+that estimate. Interior252/253 took31.765/58.157s (PLAN8.973/33.473s),
+against31.812/58.672s (8.947/33.812s). This is a small first-pair difference,
+not a substantial speedup claim. Best complete heavy result remains88r2's57.531s;
+the <30s objective is not achieved.
+
+Exact normal closure10:34:42UTC, game28004/start639264473275575018 and
+service29240 gone, session absent, guards disarmed on completion. Temperatures
+and address space stayed within thresholds. Evidence:
+`work/test-runs/perf-d93-parent-preparation-off-251-255`, native
+`Stacking-20261001T103155-765-p28004-r1`, comparison-d91, native-counter comparison,
+phases252/253 and normal-exit proof. Next are the exact resident-key shortcut and
+a separate bounded timer for repeated legacy land/naval target-distance floods.
