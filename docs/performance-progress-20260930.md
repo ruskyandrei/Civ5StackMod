@@ -497,3 +497,21 @@ The next candidate mirrors24 hot XML settings into value/presence arrays,
 preserving string lookup and reentrant loader behavior. Its3,985 production
 checks and24,075 reentrant probes passed. Synthetic savings are modest;
 native performance and699-event/census comparison remain required.
+
+## DLL69 native lookup result and automatic benchmark shutdown
+
+DLL69 (`9c4b9915e`) completed251→255 with sampling OFF, the same Standard
+source/config/mods and all699 ordered native records plus nonempty censuses
+equal to65OFF. Interior252 took37.407s (PLAN12.029s),253 took79.218s
+(PLAN51.146s), versus38.016s/81.938s for65. This is a useful single paired
+observation; it still falls short of30s and needs broader late-game validation.
+Evidence is in `perf-d69-hot-settings-off-251-255/comparison-d65.json` and its
+phase reports. The original save remains unchanged.
+
+The separate workflow commit `d99b16dfc` passed its first native automatic-exit
+test: bounded human return at255, complete censuses/native archive/offline
+analyses, one acknowledged normal quit, confirmed exact game exit, one service
+stop, confirmed service exit and absent session file. No forced termination,
+reconnect or retry occurred; `normal-exit.json` records each stage. The game and
+service were both closed by02:42:56 UTC. These exit proofs are separate from
+the comparator's recorded semantic agreement.

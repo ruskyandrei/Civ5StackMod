@@ -124,4 +124,6 @@ same service once. It does not force-close, reconnect or retry an ambiguous
 command. `normal-exit.json` and the replay manifest record confirmation or the
 precise failure stage. Successful completion uses status
 `completed_game_closed_service_stopped`. The offline mocked shutdown regression
-passed25 checks; a real replay remains necessary to validate engine integration.
+passed25 checks. The first native trial, `perf-d69-hot-settings-off-251-255`,
+also confirmed bounded completion, acknowledged normal quit, exact game/service
+exit and absent session file without retries or forced termination.
