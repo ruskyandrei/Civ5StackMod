@@ -1394,6 +1394,8 @@ protected:
 	unsigned short nSaveMovement;
 
 	//------------
+	// Only normal append-only tactical expansion may skip its inherited prefix.
+	bool isUniqueWithSharedHistory(int levelsToCheck) const;
 	const vector<int>& getRangeAttackPlotsForUnit(const SUnitStats& unit) const;
 	void getPreferredAssignmentsForUnit(const SUnitStats& unit, int nMaxCount) const;
 	size_t addChild(CvTacticalPosition* pChild);

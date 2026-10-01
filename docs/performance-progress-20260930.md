@@ -469,3 +469,33 @@ unchanged. Allocation counts decrease in isolated repeated-copy fixtures;
 native timing/RSS and retained action comparison remain to be measured.
 See `docs/flat-tactical-plot-scores.md`. Broad nested CoW retention is deferred
 because actor/plot caps do not tightly bound retained history and nested vectors.
+
+## DLL65 matched replay and denser profile
+
+DLL65 (`1715cd68f`) completed both251→255 trials and both games quit normally.
+The sampling-off trial matches DLL64's699 native semantic records and all
+nonempty world censuses; the on trial matches the off trial's same records
+and snapshots. Off/on interior252:38.016/38.172s (PLAN12.718/12.772s);
+253:81.938/82.437s (PLAN54.071/54.151s). This is a modest gain from64, not a
+claim that the requested30s target is close or that one pair bounds overhead.
+
+Version2 sampling parsed116/143 complete rows for252/253 without schema errors.
+For253 the approximate known-plan inclusive envelopes are nextAssignments
+51.24s/2357samples, preferred47.34s/2914, dangerLeaf26.80s/4511,
+dangerKey6.52s/5457 and unitSimulation5.01s/1796. Unknown calls remain on
+unsampled small plans. These overlap and cannot be subtracted as exclusive
+budgets; tiny damage-math envelopes include the instrumentation floor.
+Data remains in `perf-d65-flat-scores-on-251-255/plan-samples253-live.json`.
+
+The next main-only shared-history trial passes111,472 actual-source checks
+with identical results, traversal/comparison order, first matches and counters.
+The existing public/default and support uniqueness methods stay unchanged.
+It changes no visited-node, branch, actor or cache limits. Native speed is
+unmeasured; see `docs/tactical-shared-history.md`.
+
+The suspected temporary-string allocation in GetInt was already eliminated
+before DLL47 (`c0e19fcb35`). Current actual lookup tests confirm zero allocation.
+A separate unapplied prototype mirrors24 hot XML settings in fixed indexed
+cells only after loading completes, preserving reentrant partial-loading and
+reset fallbacks. Its synthetic saving is about23ns per call; this alone cannot
+explain the whole danger-key envelope or satisfy the goal.
