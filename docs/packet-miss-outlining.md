@@ -24,4 +24,15 @@ epochs, callbacks, private/busy/nested/foreign paths, allocation failure and
 cleanup traces. Native services are deterministic substitutes; a matched game
 replay remains required. Both full Tactical source and twelve unchanged
 dependencies are bound in production mode. Whole-source reversal and the
-unchanged miss-tail hash are verified. Native benefit is currently unmeasured.
+unchanged miss-tail hash are verified.
+
+Full DLL96 assembly confirms a64-byte caller and2,212-byte miss helper, both
+with GS/EH. The matched251→255 replay completed normally at11:30:01UTC,
+preserving all699 recorded semantic events, both nonempty censuses and all34
+non-timing cache fields across455 searches; physical estimates also match94.
+Interior252/253 took31.266/57.359s (PLAN8.802/32.827s), against
+31.515/58.047s (8.997/33.331s). These small first-pair differences are not a
+general speedup guarantee or achievement of the <30s goal.
+Evidence: `work/test-runs/perf-d96-packet-miss-outline-off-251-255`, native
+`Stacking-20261001T112714-543-p33736-r1`, comparison/counter/phase reports and
+`work/packet-miss-outline-native96-proof/assembly-proof.json`.

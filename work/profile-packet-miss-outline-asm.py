@@ -1,8 +1,16 @@
 """Offline exact-function COFF frame/GS evidence; no compilation/attachment."""
 from pathlib import Path
-import hashlib,json,re,subprocess
+import argparse,hashlib,json,re,subprocess
 ROOT=Path(__file__).resolve().parents[1];OUT=ROOT/'work/packet-miss-outline-staged';LLVM=ROOT/'work/toolchain/llvm/bin/llvm-objdump.exe'
 objects=[('native94',ROOT/'work/msvc-build/Release/20261001-114416/obj/CvTacticalAI.obj'),('fixture',ROOT/'work/packet-miss-outline-regression/test.obj')]
+parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--native-object',type=Path)
+parser.add_argument('--label',default='native')
+parser.add_argument('--output-dir',type=Path)
+args=parser.parse_args()
+if args.native_object:objects=[(args.label,args.native_object)]
+if args.output_dir:OUT=args.output_dir
+OUT.mkdir(parents=True,exist_ok=True)
 report=[]
 for label,obj in objects:
     symbols=subprocess.check_output([str(LLVM),'--syms',str(obj)],text=True)

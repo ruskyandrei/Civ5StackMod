@@ -1019,3 +1019,35 @@ a separately reviewed packet-miss outline. DLL94 object assembly confirms the
 existing hit function reserves2,272 local bytes and pays GS/EH setup before its
 first fixed-danger gate. Native savings remain unmeasured. Goal <30s remains
 unmet; best complete dense-turn measurement remains57.531s.
+
+## DLL96 packet miss outline complete
+
+Commit `4cd0a4cfe` moves the exact existing miss tail into a noinline helper,
+retaining query/key/key-sampler lifetime in the caller. Original numerical
+body, policy and cache gates remain. The actual-source fixture passes23,563
+checks, including cleanup traces, callback/epoch and allocation exceptions;
+Tactical plus twelve full unchanged dependencies are bound. Native services
+are deterministic substitutes; the matched replay checks real integration.
+
+Build66.906s under `work/msvc-output/Release/20261001-121718`;
+DLL `4CBBEB119EBE22CFA8561E09EF018BA46FCF70213E184CA6B0EC83074C2B1B2F`,
+PDB `92CA92F421D40E73B71270EF03374D216C12B5E68C218D676251F0D7BD743F5A`.
+Native96 COFF confirms64 local bytes in the caller versus94's2,272, with a
+2,212-byte miss helper and GS/EH retained in both. This is static frame evidence,
+not a predicted CPU share. Deployment2368 files verified; backup
+`deployment-replaced-20261001-122324-94711969`, graphics/saves untouched.
+
+The OFF251→255 replay matches94's699 ordered semantic records, both censuses
+and all34 recorded non-timing cache fields across455 searches; physical
+estimates also match. Interior252/253 took31.266/57.359s
+(PLAN8.802/32.827s), versus31.515/58.047s (8.997/33.331s).
+The small first-pair gain does not establish a general late-game result. The
+<30s objective remains unmet. Exact normal game/service closure11:30:01UTC,
+game33736/start639264507136938901 and service34456 gone, session absent and
+guards disarmed on completion. Temperature/address-space checks stayed safe.
+
+Evidence: `work/test-runs/perf-d96-packet-miss-outline-off-251-255`, native
+`Stacking-20261001T112714-543-p33736-r1`, comparison/counter/phases reports and
+normal-exit proof. Assembly: `work/packet-miss-outline-native96-proof`.
+Next is the independently reviewed exact resident-key shortcut, with final
+warm-source-invalidation coverage being completed before build.
