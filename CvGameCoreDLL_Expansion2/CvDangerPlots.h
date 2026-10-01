@@ -19,6 +19,14 @@ typedef std::vector<std::pair<PlayerTypes,int>> DangerUnitVector;
 typedef std::vector<std::pair<PlayerTypes,int>> DangerCityVector;
 typedef std::set<std::pair<PlayerTypes,int>> UnitSet;
 
+class CvUnit;
+class CvPlot;
+struct SUnitIDValueContainer;
+// Optional internal exact selector memo for owned tactical previews. NULL keeps
+// the original selector; this never replaces the subsequent strike calculation.
+typedef const CvUnit* (*StackDangerDefenderSelector)(const CvUnit*, const CvPlot*, const CvPlot*,
+ const std::vector<const CvUnit*>&, const SUnitIDValueContainer&, bool, int);
+
 //todo: return more information on top of the total danger
 //might help to make better decisions in tactical AI
 //alternatively: try to check whether attacks are mutually exclusive b/c of units blocking each other
@@ -55,13 +63,13 @@ struct CvDangerPlotContents
 	};
 
 	int GetDanger(const CvUnit* pUnit, const SUnitIDValueContainer& extraUnitDamage, int iExtraDamage, AirActionType iAirAction);
-	int GetStackDanger(const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
+	int GetStackDanger(const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerDefenderSelector selector = NULL);
 	// The attack outcome is independent of the queried member inside this exact
 	// owner/team/friendly-city context; preserve ordered candidates and raw IDs.
 	// Output damage must not alias either immutable input injury container.
 	void GetStackDangerOutcome(PlayerTypes defendingOwner, TeamTypes defendingTeam, bool friendlyCity,
 	 const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
-	 const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage, bool& cityCanFall);
+	 const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage, bool& cityCanFall, StackDangerDefenderSelector selector = NULL);
 	int GetStackDangerFromOutcome(const CvUnit* pUnit, const SUnitIDValueContainer& friendlyDamage,
 	 const SUnitIDValueContainer& finalDamage, bool cityCanFall) const;
 	bool TryGetFixedStackDanger(const CvUnit* pUnit, int& result) const;
@@ -110,13 +118,13 @@ public:
 	int GetDanger(const CvPlot& pPlot, const CvUnit* pUnit, const SUnitIDValueContainer& unitDamageDealt, int iExtraDamage = 0, AirActionType iAirAction = AIR_ACTION_ATTACK);
 	int GetDanger(const CvCity* pCity, const CvUnit* pPretendGarrison = NULL, const SUnitIDValueContainer& unitDamageDealt = SUnitIDValueContainer());
 	int GetDanger(const CvPlot& pPlot, bool bFixedDamageOnly);
-	int GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage);
+	int GetStackDanger(const CvPlot& plot, const CvUnit* pUnit, const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerDefenderSelector selector = NULL);
 	// Also return the first member's result during the build. A caller that sees
 	// scene invalidation afterwards must not simulate that attack sequence twice.
 	bool GetStackDangerOutcome(const CvPlot& plot, const CvUnit* pUnit,
 	 const std::vector<const CvUnit*>& candidates, const SUnitIDValueContainer& friendlyDamage,
 	 const SUnitIDValueContainer& enemyDamage, SUnitIDValueContainer& finalDamage,
-	 bool& cityCanFall, int& result);
+	 bool& cityCanFall, int& result, StackDangerDefenderSelector selector = NULL);
 	bool TryGetStackDangerFromOutcome(const CvPlot& plot, const CvUnit* pUnit,
 	 const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& finalDamage,
 	 bool cityCanFall, int& result);

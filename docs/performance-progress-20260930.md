@@ -414,3 +414,22 @@ engine threading/configuration/logging equality. Next quiet off/on replay pair
 uses the same candidate DLL/config/save and251→255 so252 and253 are both interior
 observer turns. Required goal remains verified<30s per standard late-game turn,
 then an attempt at<20s; neither is proven by the current results.
+
+## DLL60 native sampling control and next exact optimization
+
+The quiet Standard-map replay pair completed251→255 with the same manual
+source, original dedicated-thread configuration and full logging. Sampling
+off/on retained identical699 planning/combat/capture records and all world
+censuses. Interior turn252 took39.031/39.099s and253 took84.422/84.782s;
+PLAN totals were13.275/13.316s and56.073/56.252s. Both games quit normally.
+These are one paired observation, not a statistical overhead bound.
+
+The samples identify repeated stack-danger defender comparisons as a substantial
+remaining search envelope. Inclusive sample estimates overlap and sparse parent
+samples can overestimate whole plans; they must not be added as CPU shares.
+The prepared optimization reuses the existing exact selector memo for owned
+danger previews, retaining the original final quick/next-turn strike and injury
+sequence. It conservatively bypasses scripted movement events, mixed owners and
+ambiguous identities. No scoring, mechanics, search limits or storage budgets
+change. Relevant actual-source regressions passed1,149,421 checks. Native timing
+and identical-save action comparison are the next validation step.

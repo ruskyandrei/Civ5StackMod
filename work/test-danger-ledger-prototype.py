@@ -37,6 +37,8 @@ int CvPlot::getTeam()const{return city?city->getTeam():owner;}
 '''
 container=unit[unit.index('struct SUnitIDValueContainer\n'):unit.index('\nnamespace std {',unit.index('struct SUnitIDValueContainer\n'))]
 contents=header[header.index('struct CvDangerPlotContents\n'):header.index('//++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++',header.index('struct CvDangerPlotContents\n'))]
+selector_start=header.index('typedef const CvUnit* (*StackDangerDefenderSelector)')
+selector_type=header[selector_start:header.index(';',selector_start)+1]
 air=function(danger,'static int StackAirStrikeChance(');expected=function(danger,'static int StackExpectedStrikeDamage(');city=function(danger,'static int SimulateStackCityThreats(');scalar=function(controlDanger,'int CvDangerPlotContents::GetStackDanger(')
 collateral=function(combat,'std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDamage(');friendly=function(plot,'bool CvPlot::isFriendlyCity(const CvUnit&')
 uses=re.findall(r'pUnit->([A-Za-z0-9_]+)\(',scalar)
@@ -128,19 +130,27 @@ tests+=r'''
 }
 '''
 currentScalar=function(danger,'int CvDangerPlotContents::GetStackDanger(')
+def without_optional_selector(body):
+ # This normalization is assertion-only. Compile complete actual callback
+ # signatures/bodies; prove NULL dispatch preserves every original statement.
+ assert body.count('(selector ? selector : CvUnitCombat::SelectStackDefender)')==1
+ return body.replace('(selector ? selector : CvUnitCombat::SelectStackDefender)',
+                     'CvUnitCombat::SelectStackDefender',1)
 if 'void CvDangerPlotContents::GetStackDangerOutcome(' in danger:
  outcomeSource=function(danger,'void CvDangerPlotContents::GetStackDangerOutcome(')
  currentField=outcomeSource[outcomeSource.index(' SUnitIDValueContainer interceptionUses;'):outcomeSource.rindex('}')]
  originalField=scalar[scalar.index(' SUnitIDValueContainer interceptionUses;'):scalar.rindex(' int result = max(0,')]
- assert currentField==originalField.replace('pUnit->getOwner()','defendingOwner').replace('pUnit->getTeam()','defendingTeam'), 'Attack-sequence duplication drift: review upstream math/dependencies'
+ assert without_optional_selector(currentField)==originalField.replace('pUnit->getOwner()','defendingOwner').replace('pUnit->getTeam()','defendingTeam'), 'Attack-sequence duplication drift: review upstream math/dependencies'
  extractionSource=function(danger,'int CvDangerPlotContents::GetStackDangerFromOutcome(')
  assert extractionSource[extractionSource.index(' int result = max(0,'):extractionSource.rindex('}')]==scalar[scalar.rindex(' int result = max(0,'):scalar.rindex('}')], 'Damage/hazard extraction drift'
- assert function(danger,'int CvDangerPlotContents::GetStackDanger(')==scalar, 'Scalar default changed: review baseline/callback ordering'
+ assert currentScalar.count('enemyDamage, StackDangerDefenderSelector selector)')==1
+ normalized=without_optional_selector(currentScalar).replace('enemyDamage, StackDangerDefenderSelector selector)', 'enemyDamage)',1)
+ assert normalized==scalar, 'Scalar default changed: review baseline/callback ordering'
  currentScalar+='\n'+outcomeSource+'\n'+extractionSource
 contents=contents.replace('\tint GetStackDanger(const CvUnit*', '\tint GetStackDangerControl(const CvUnit*,const std::vector<const CvUnit*>&,const SUnitIDValueContainer&,const SUnitIDValueContainer&);\n\tint GetStackDanger(const CvUnit*',1)
 controlScalar=scalar.replace('::GetStackDanger(', '::GetStackDangerControl(',1)
 tests=tests.replace('  OutcomeBatch batch(c,candidates,friendly,full);long begin=outcomeBuilds;', '  for(int i=0;i<5;++i)expect(\"original control equals actual refactor\",c.GetStackDangerControl(&defenders[i],candidates,friendly,full)==c.GetStackDanger(&defenders[i],candidates,friendly,full));\n  OutcomeBatch batch(c,candidates,friendly,full);long begin=outcomeBuilds;')
-fixture=prefix+container+services+context+friendly+contents+air+expected+collateral+city+controlScalar+currentScalar+prototype+tests
+fixture=prefix+container+services+context+friendly+selector_type+contents+air+expected+collateral+city+controlScalar+currentScalar+prototype+tests
 cpp=out/'test.cpp';cpp.write_text(fixture,encoding='utf-8')
 vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0';sdk=root/'work/toolchain/sdk/windows'
 env=os.environ.copy();env['PATH']=str(vc/'Vc7/bin')+';'+str(vc/'Common7/IDE')+';'+env.get('PATH','');env['INCLUDE']=str(root/'work/toolchain/sdk/vc9/include')+';'+str(sdk/'Include');env['LIB']=str(root/'work/toolchain/sdk/vc9/lib')+';'+str(sdk/'Lib')
