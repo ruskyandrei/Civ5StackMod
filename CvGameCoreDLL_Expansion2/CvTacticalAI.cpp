@@ -7882,6 +7882,109 @@ private:
  StackForecastPairQuery& operator=(const StackForecastPairQuery&);
 };
 
+// A const preferred-assignment call does not mutate its enemy wound ledger.
+// Bind only that lexical lifetime, never a persistent container-pointer cache.
+// Keep a separate loan: holding gStackSortScratch here would allocate a private
+// membership-sort vector for each scalar query in the same candidate loop.
+struct StackImmutableEnemyDamageScope;
+static StackImmutableEnemyDamageScope* gStackImmutableEnemyDamageScope = NULL;
+static vector<pair<int,int> > gStackImmutableEnemyDamageScratch;
+static bool gStackImmutableEnemyDamageScratchBusy = false;
+struct StackImmutableEnemyDamageScope
+{
+ const SUnitIDValueContainer& damage;
+ StackImmutableEnemyDamageScope* previous;
+ unsigned long revision;
+ long scene;
+ bool registered, borrowed, ready, oversized;
+ StackImmutableEnemyDamageScope(const SUnitIDValueContainer& immutableDamage):
+  damage(immutableDamage),previous(NULL),revision(0),scene(0),
+  registered(false),borrowed(false),ready(false),oversized(false)
+ {
+  // Check ownership before touching another thread's pointer or scratch flag.
+  if (!IsStackForecastOwner() || !StackForecastContext())
+   return;
+  registered = true;
+  previous = gStackImmutableEnemyDamageScope;
+  gStackImmutableEnemyDamageScope = this;
+  revision = gStackForecastRevision;
+  scene = gStackForecastSceneEpoch;
+  borrowed = !gStackImmutableEnemyDamageScratchBusy;
+  if (borrowed)
+  {
+   gStackImmutableEnemyDamageScratchBusy = true;
+   gStackImmutableEnemyDamageScratch.clear();
+  }
+ }
+ ~StackImmutableEnemyDamageScope()
+ {
+  if (!registered)
+   return;
+  gStackImmutableEnemyDamageScope = previous;
+  if (borrowed)
+  {
+   gStackImmutableEnemyDamageScratch.clear();
+   gStackImmutableEnemyDamageScratchBusy = false;
+  }
+ }
+ bool TryAppend(StackForecastKey& key, const SUnitIDValueContainer& queriedDamage,
+  const vector<int>* freshSourceIDs)
+ {
+  if (!borrowed || oversized || &damage != &queriedDamage || !StackForecastContext() ||
+   revision != gStackForecastRevision || scene != gStackForecastSceneEpoch)
+   return false;
+  vector<pair<int,int> >& entries = gStackImmutableEnemyDamageScratch;
+  if (!ready)
+  {
+   size_t count = 0;
+   for (SUnitIDValueContainer::const_iterator it = damage.begin(); it != damage.end(); ++it)
+    if ((*it).second != 0)
+     ++count;
+   // One bounded temporary fragment; no new memo entries or admission policy.
+   if (count > gStackKeyPayloadLimit / sizeof(pair<int,int>))
+   {
+    oversized = true;
+    return false;
+   }
+   entries.reserve(count);
+   if (entries.capacity() > gStackKeyPayloadLimit / sizeof(pair<int,int>))
+   {
+    vector<pair<int,int> >().swap(entries);
+    oversized = true;
+    return false;
+   }
+   for (SUnitIDValueContainer::const_iterator it = damage.begin(); it != damage.end(); ++it)
+    if ((*it).second != 0)
+     entries.push_back(*it);
+   std::sort(entries.begin(), entries.end());
+   ready = true;
+  }
+  const size_t countIndex = key.state.size();
+  key.state.push_back(0);
+  int count = 0;
+  for (size_t i = 0; i < entries.size(); ++i)
+   if (!freshSourceIDs || std::binary_search(freshSourceIDs->begin(), freshSourceIDs->end(), entries[i].first))
+   {
+    key.state.push_back(entries[i].first);
+    key.state.push_back(entries[i].second);
+    ++count;
+   }
+  key.state[countIndex] = count;
+  return true;
+ }
+private:
+ StackImmutableEnemyDamageScope(const StackImmutableEnemyDamageScope&);
+ StackImmutableEnemyDamageScope& operator=(const StackImmutableEnemyDamageScope&);
+};
+static bool AppendImmutableEnemyDamage(StackForecastKey& key, const SUnitIDValueContainer& damage,
+ const vector<int>* freshSourceIDs)
+{
+ if (!IsStackForecastOwner())
+  return false;
+ StackImmutableEnemyDamageScope* scope = gStackImmutableEnemyDamageScope;
+ return scope && scope->TryAppend(key, damage, freshSourceIDs);
+}
+
 // Virtual membership is rebuilt for each query, but its temporary storage can
 // survive between queries. Keep the borrow through all danger/score callbacks;
 // a nested query uses private storage instead of overwriting the outer stack.
@@ -7977,6 +8080,7 @@ struct StackForecastScope
    vector<int>().swap(gStackDangerScratch.state);
    vector<int>().swap(gStackDefenderScratch.state);
    vector<pair<int,int> >().swap(gStackSortScratch);
+   vector<pair<int,int> >().swap(gStackImmutableEnemyDamageScratch);
    gStackVirtualScratch.release();
    gStackDestinationScratch.release();
    gStackKeyPayloadBytes = 0;
@@ -8150,6 +8254,8 @@ static void AppendStackDamageProjected(StackForecastKey& key, const SUnitIDValue
  // IDs preserve the existing owner aliases and negative city-ID convention;
  // retain every exact nonzero HP value for those sources, never a hash alone.
  const vector<int>* sourceIDs = GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDangerDamageIDs(*plot);
+ if (AppendImmutableEnemyDamage(key, damage, sourceIDs))
+  return;
  if (!sourceIDs)
  {
   AppendStackDamage(key, damage);
@@ -10695,6 +10801,8 @@ void CvTacticalPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, 
 	CvUnit* pUnit = GET_PLAYER(getPlayer()).getUnit(unit.iUnitID);
 	if (!pUnit || !assumedUnitPlot)
 		return;
+
+	StackImmutableEnemyDamageScope immutableEnemyDamage(GetUnitDamageDealt());
 
 	CvTacticalPosition tempPosition;
 	int iOldPlotDistanceToTarget = bTargetDistanceRelevant ? TacticalAIHelpers::GetPlotDistanceToTarget(unit.iPlotIndex, pUnit->getDomainType()) : 0;

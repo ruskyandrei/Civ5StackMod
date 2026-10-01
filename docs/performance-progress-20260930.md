@@ -515,3 +515,19 @@ stop, confirmed service exit and absent session file. No forced termination,
 reconnect or retry occurred; `normal-exit.json` records each stage. The game and
 service were both closed by02:42:56 UTC. These exit proofs are separate from
 the comparator's recorded semantic agreement.
+
+## DLL71 legacy resource result
+
+The separately committed full-movement duplicate-check removal (`f43546572`)
+and sparse unit-resource metadata (`ee180b91d`) completed the same OFF replay.
+All699 native records and nonempty before/after censuses match69. Interior252
+took37.454s (PLAN11.902s),253 took78.703s (PLAN50.828s), versus37.407s/79.218s
+under69. This pair provides at most a small gain within run variation; the
+substantial fixture work reduction is not evidence of a large native speedup.
+Both game/service closed normally at02:56:06 UTC. Evidence is in
+`perf-d71-sparse-resources-off-251-255`.
+
+A separate roster fixture ran during save loading and ended at02:52:37;
+bounded autoplay continued at02:52:50.758. It did not overlap the retained
+252/253 timing intervals. That roster experiment has not passed its runtime
+fixture and is unapplied; its timeout is not a Civ V crash.

@@ -17,7 +17,7 @@ Construction starts with unavailable derived metadata. Every `CacheResults`
 attempt invalidates the list first, including failed/repeated loads. Successful
 loading rebuilds it using the current getters without changing the existing
 totals-map reload behavior. Incomplete metadata or a changed resource count
-uses the original full scan. Future writers to the protected quantity fields
+uses the original full scan. Future writers to the private quantity fields
 must also invalidate/rebuild this derived list. No new save fields are added.
 
 The production fixture passes577,586 checks using x86 VC9. It compiles complete
