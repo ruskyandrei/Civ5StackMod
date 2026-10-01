@@ -722,3 +722,26 @@ under `work/msvc-output/Release/20261001-061940`. Exact game/service closure was
 phase reports, `cache-comparison-d80.json` and normal-exit proof. Target below30s
 remains unmet. The next diagnostic-only candidate measures raw path danger
 and clear-terrain checks under the existing opt-in tactical sampler.
+
+## DLL82 path profiler replay
+
+The default-off raw path profiler passed its production-bound checks and was
+built as DLL82 (`6f4688d81`). Its OFF replay matched DLL81's699 ordered PLAN,
+combat and capture records and both censuses. Interior turns252/253 took
+35.891s/72.625s, versus35.906s/72.094s for81; this pair does not establish a
+speed improvement or a statistical overhead bound.
+
+The ON replay reached255 and closed normally with matching final censuses.
+Its native archive was contiguous0–3, but optional path samples exhausted the
+4096-row per-turn diagnostic budget at252/253. Explicit `TRUNCATED` and dropped
+counts explain missing later-player records (PLAN303 rather than455,
+COMBAT211 rather than243). Thus full native behavior equivalence is not
+established by this ON run. Its legacy event windows were36.000s/72.485s;
+phase and PLAN coverage is censored. These figures do not turn missing work
+into zero or show a performance improvement. A bounded, sparser sampler and
+repeat replay are required before interpreting the new samples broadly.
+
+Evidence is in `work/test-runs/perf-d82-path-profile-{off,on}-251-255`, including
+exact normal-exit manifests, comparisons and phase reports. Existing XML,
+search limits, candidate order and gameplay calculations were unchanged.
+The <30s goal remains unmet.
