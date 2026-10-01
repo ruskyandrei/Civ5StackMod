@@ -781,3 +781,30 @@ validation-only confirmed the exact process, native thread, module and SHA;
 no Civ V thread was suspended, so there is no EIP hotspot result to claim.
 Normal game/service closure occurred at06:46:32UTC. Evidence stays under
 `work/test-runs/perf-d84-bounded-path-on-eip-251-255`.
+
+## DLL85 callback safeguard and DLL86 immediate-validation replay
+
+DLL85 (`c92e941cf`) passed186,114 production-bound capability and combat checks.
+Its OFF replay matched84's699 ordered decisions and both censuses.252/253
+were36.406s/74.016s (PLAN11.158s/46.413s), versus36.047s/72.469s for84.
+All455 old/new hit and miss counter rows matched exactly: the additional
+1.55s slow-turn cost did not correspond to lost cache reuse. Proof metrics
+recorded1,188 scan attempts, flagsOR0, validation bypasses0, one suspension,
+and291 searches with admitted hits. Attempts alone are not published proofs.
+
+85ON also matched all699 records/censuses, at36.469s/74.469s. Its one automatic
+turn253 EIP capture completed512 observations with32.6814ms total measured
+pause and0.9576ms maximum; collectorCPU203.125ms. This was an instrumented
+run, not a clean speed control. The flat sample is approximate location data,
+not CPU shares. PDB folding aliases lookup functions, so city-labelled map
+samples cannot be assigned exclusively to city containers. Compatibility
+module observations are retained, but the user now requires DLL-focused work;
+no registry or compatibility setting was changed.
+
+DLL86 (`ef274591d`) removes two immediately duplicate validations, with11,547
+strict production checks. It matched85's699 records/censuses.252/253 took
+37.093s/74.297s (PLAN11.450s/46.698s); this pair establishes no speed gain.
+The <30s target remains unmet. The next investigation prioritizes larger exact
+state/evaluation and storage redesigns, with shadow numerical/assignment
+oracles, fallback for unknown dependencies and substantial native benefit as
+an integration requirement. No actor/search/cache limits are reduced.
