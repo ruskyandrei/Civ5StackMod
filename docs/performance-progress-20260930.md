@@ -548,3 +548,29 @@ The next diagnostic-only trial measures complete-key overlap among scalar
 danger misses, separately from existing local outcome reuse. Its opt-in,
 bounded metadata cohorts will be used to decide whether broader packet reuse
 has enough native opportunity to justify another representation change.
+
+## DLL74 diagnostic replay and observed overlap
+
+Diagnostic-only DLL74 (`f194cff95`) completed251→255 with tactical sampling ON.
+The deliberate cross-sampling comparison retains all699 native actions and
+nonempty censuses from73OFF. Interior252 took36.719s (PLAN11.487s),253
+75.250s (PLAN47.279s). This measures the combined profiler/probe run, not an
+optimization or statistical bound on instrumentation overhead. Exact game and
+service shutdown completed at03:27:07 UTC.
+
+All116/143 probe rows match sampled timing identities at252/253; no invalid
+rows, missing samples, source-unavailable observations or invalidated queries
+were reported. Turn253 retained17,182 cohort queries,8,616 admitted groups,
+8,566 repeats and15,925 queries doing fresh work. Of those fresh-work visits,
+7,321 repeated an earlier fresh query and6,048 introduced a different member;
+1,257 cohort queries already used the local batch. Metadata FIFO evicted149
+groups and cleared290 times. Its deterministic selection and bounds censor
+these counts: do not multiply them into saved simulations or seconds. The
+observed overlap supports testing wider shared outcomes using the existing
+forecast pool, rather than adding another competing result table.
+
+Evidence: `perf-d74-packet-probe-on-251-255/packet252.json`, `packet253.json`,
+phase reports and `comparison-d73.json`. The offline reader separately checks
+coverage, field/city admissions, bounds, duplicates and exact identity. New
+probe rows are excluded from historical turn-boundary anchors; all-event
+boundaries still include them. Goal below30s remains unmet.
