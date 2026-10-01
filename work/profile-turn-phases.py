@@ -1,7 +1,7 @@
 """Offline native TURN_PHASE interval profile; writes only the requested JSON.
 
 Inclusive phase/PLAN durations must never all be added together. The native
-Primary round bounds exclude newly added TURN_PHASE/TURN_UPDATE_GAP/PLAN_PACKET_PROBE rows for comparison with
+Primary round bounds exclude newly added phase/packet/kernel/path metadata rows for comparison with
 the old DLL. The original all-event profile-campaign-log.py bounds are retained
 separately; that older script does not exclude TURN_PHASE.
 PLAN location is estimated: its high precision timer stops before finalization.
@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 
 MOD = 1 << 32
-TIMING_CATEGORIES = ("TURN_PHASE", "TURN_UPDATE_GAP", "PLAN_PACKET_PROBE", "PATH_SAMPLE")
+TIMING_CATEGORIES = ("TURN_PHASE", "TURN_UPDATE_GAP", "PLAN_PACKET_PROBE", "PLAN_KERNEL_PROBE", "PATH_SAMPLE")
 HALF = MOD // 2
 SESSION = re.compile(r"^STACKDIAG\|SESSION\|(.+)$")
 RECORD = re.compile(r"^STACKDIAG\|(\d+)\|turn=(-?\d+)\|player=(-?\d+)\|([^|]+)\|(.*)$")
@@ -334,7 +334,7 @@ def analyze(records, turn, player_filter=None, quality=None):
             next_first_category=next_legacy["category"] if next_legacy else None,
             first_origin=first_legacy.get("origin") if first_legacy else None,
             next_first_origin=next_legacy.get("origin") if next_legacy else None,
-            convention="first native record excluding TURN_PHASE/TURN_UPDATE_GAP/PLAN_PACKET_PROBE/PATH_SAMPLE of selected turn to following turn; legacy-comparable event window, not an engine CPU timer"),
+            convention="first native record excluding TURN_PHASE/TURN_UPDATE_GAP/PLAN_PACKET_PROBE/PLAN_KERNEL_PROBE/PATH_SAMPLE of selected turn to following turn; legacy-comparable event window, not an engine CPU timer"),
         native_all_event_window=dict(start_tick=any_begin, next_turn_first_tick=any_next, duration_ms=any_duration,
             convention="all native rows, matching existing profile-campaign-log; new timing/probe rows can move these anchors"),
         all_event_coverage=dict(phase_union_ms=length(any_phases), estimated_PLAN_union_ms=length(any_plans),
@@ -497,6 +497,18 @@ def self_test():
            "probe exclusion cannot change historical PERF finalization anchor")
     expect("PLAN_PACKET_PROBE" in with_probe["native_round_window"]["convention"],
            "legacy anchor convention names probe exclusion")
+    kernel_rows = [rec(4, category="PLAN_KERNEL_PROBE", targetPlot=92, serial=1, thread=3)] + probe_base[:-1] + [
+                   rec(69, turn=8, category="PLAN_KERNEL_PROBE", targetPlot=92, serial=2, thread=3), probe_base[-1]]
+    unwrap(kernel_rows)
+    with_kernel = analyze(kernel_rows, 7)
+    expect(with_kernel["native_round_window"] == without_probe["native_round_window"],
+           "kernel metadata in selected/following turns cannot move legacy bounds")
+    expect(with_kernel["native_all_event_window"]["start_tick"] == 4
+           and with_kernel["native_all_event_window"]["next_turn_first_tick"] == 69,
+           "all-event anchors retain kernel metadata")
+    expect(with_kernel["PLAN_intervals"] == without_probe["PLAN_intervals"]
+           and with_kernel["PLAN_anchor_counts"] == without_probe["PLAN_anchor_counts"],
+           "kernel footer cannot move original PLAN finalization estimates")
     only_probe = [rec(5, category="PLAN_PACKET_PROBE"), rec(70, turn=8, category="PLAN_PACKET_PROBE")]
     unwrap(only_probe)
     expect(not analyze(only_probe, 7)["complete_native_boundary"]
