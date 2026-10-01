@@ -69,11 +69,12 @@ namespace CvStackingDiagnostics
     {
     public:
         explicit PlanSampleScope(PlanSamplePart part, bool eligible = true);
-        ~PlanSampleScope();
-        void Finish();
+        ~PlanSampleScope() { Finish(); }
+        void Finish() { if (sampled) FinishSampled(); }
     private:
         PlanSampleScope(const PlanSampleScope&);
         PlanSampleScope& operator=(const PlanSampleScope&);
+        void FinishSampled();
         bool sampled;
         PlanSamplePart part;
         unsigned long serial;

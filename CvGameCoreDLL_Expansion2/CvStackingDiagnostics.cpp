@@ -606,8 +606,7 @@ namespace CvStackingDiagnostics
         threadState=&planSamples;
         sampled=true;
     }
-    PlanSampleScope::~PlanSampleScope() { Finish(); }
-    void PlanSampleScope::Finish()
+    void PlanSampleScope::FinishSampled()
     {
         if(!sampled || threadState!=&planSamples) return;
         sampled=false;

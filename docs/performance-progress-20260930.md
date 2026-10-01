@@ -574,3 +574,46 @@ phase reports and `comparison-d73.json`. The offline reader separately checks
 coverage, field/city admissions, bounds, duplicates and exact identity. New
 probe rows are excluded from historical turn-boundary anchors; all-event
 boundaries still include them. Goal below30s remains unmet.
+
+## DLL77 roster and previous-score result
+
+Previous-score reuse (`9be3018e5`,72,260 production checks) and enemy-roster CoW
+(`cf8f842e2`,154,342 production checks) completed the same OFF replay. All699
+native records and nonempty before/after censuses match73OFF. Interior252 took
+36.266s (PLAN11.044s),253 took73.797s (PLAN46.153s), versus36.500s/74.656s for73.
+This is a modest combined gain in one paired run; no individual attribution or
+general late-game performance conclusion is justified. The game/service both
+closed normally at03:47:43 UTC. Configuration and graphics flags retain the
+original04B4AAA0A9360CADBB8EF0DA277441A11AF95DD50BFA8334D3BC179B29B627F3 hash.
+
+The next shared-outcome experiment remains work-only. It must preserve the
+cheap original scalar hits, keep packet/scalar entries under the same existing
+pool budget, preserve required source refreshes and validate city protection,
+actual city HP, raw ordered sources/hazards and scene state. Event-enabled
+city bombard paths conservatively bypass expanded reuse. Native timing remains
+unknown. Existing CP/VP source defaults city bombard events off; runtime option
+verification was unavailable while deployment cleared the database cache.
+The regenerated runtime database was checked read-only at04:12 UTC: both
+`EVENTS_CITY_BOMBARD` and `EVENTS_CAN_MOVE_INTO` are0; the separate
+`BALANCE_BOMBARD_RANGE_BUILDINGS` option is1. The proposed optimization still
+bypasses event-enabled configurations rather than assuming these defaults.
+
+Evidence: `perf-d77-rosters-prev-off-251-255/comparison-d73.json`, phase reports,
+guard logs and normal-exit proof. Best current controlled pair remains
+36.266s/73.797s, so the goal is still active and unmet.
+
+## DLL77 quiet engine threading retest
+
+`perf-d77-job-manager-251-255` completed with only
+`GameCoreThreadingUsesJobManager` changed0→1. All699 records and nonempty
+censuses match77OFF. Interior252 took35.875s (PLAN10.925s);253 took73.218s
+(PLAN45.802s). The subsecond changes do not establish a worthwhile general
+improvement. The exact game/service closed normally at04:19:20 UTC; the
+original config hash04B4AAA0... was restored. Unlike the earlier interrupted
+trial, no heat guard or Brave contention affected this run. Source, DLL,
+graphics, sampling and logging were held fixed.
+
+The next separate trial removes out-of-line `PlanSampleScope` completion calls
+when its existing `sampled` flag is false. It retains the selected completion
+body and constructor, with89 actual-source lifecycle/cadence checks passing.
+Native ROI is pending; it does not alter gameplay or reduce search limits.
