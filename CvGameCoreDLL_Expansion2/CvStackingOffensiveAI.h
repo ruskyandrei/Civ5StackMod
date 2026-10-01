@@ -67,7 +67,9 @@ namespace CvStackingOffensiveAI
     CvPlot* GetCaptureApproachNow(CvUnit* unit, CvCity* city);
     bool IsAssemblyHeld(const CvUnit* unit);
     void ReleaseAssemblyHold(CvUnit* unit);
-    bool AllowCityAttack(const CvUnit* unit, CvCity* city, const CvPlot* firing, bool capture);
+    // executing: a planned shot being carried out; a stationary shot is not
+    // re-vetoed by danger after other planned units have left its stack.
+    bool AllowCityAttack(const CvUnit* unit, CvCity* city, const CvPlot* firing, bool capture, bool executing=false);
     enum ProductionRole { PRODUCTION_CAPTURE=1, PRODUCTION_SIEGE=2, PRODUCTION_RANGED=4 };
     enum ProductionReason { PRODUCTION_NONE=0, PRODUCTION_ROLE=1, PRODUCTION_QUEUE_LIMIT=2,
         PRODUCTION_FORCE_LIMIT=3, PRODUCTION_SUPPLY=4, PRODUCTION_AFFORDABILITY=5,
@@ -108,5 +110,8 @@ namespace CvStackingOffensiveAI
     void RecordStageRouteProgress(CvUnit* unit,int target,int stage,int destination,int from,int expectedEnd);
     bool StageUnit(CvUnit* unit, const CvPlot* cityTarget);
     bool TryStationaryCityFire(CvUnit* unit, const CvPlot* cityTarget);
+    // After the tactical and homeland AI: idle ranged units with an unused
+    // attack fire at an enemy unit or city from where they stand.
+    int FireRemainingRangedShots(PlayerTypes owner);
     bool PrioritizeExisting(PlayerTypes owner, CvPlot* target, bool naval);
 }

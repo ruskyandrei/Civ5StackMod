@@ -55,6 +55,15 @@
     <Row Name="AIAssaultFiringPositionScanPlots" Value="96"/>
     <Row Name="AIAssaultFiringPositionRadiusMaximum" Value="6"/>
     <Row Name="AIAssaultStageDangerPercent" Value="0"/>
+    <!-- Ranged/siege units fire at a city from the tile they already occupy while
+         the assault gathers, unless their real stack's forecast danger exceeds
+         this share of current HP (then they may retreat instead). 0 restores
+         the stage-danger rule above. -->
+    <Row Name="AIStationaryFireDangerPercent" Value="50"/>
+    <!-- After the tactical and homeland AI finish, idle ranged/siege units with an
+         unused attack fire from where they stand at an enemy unit, stack or
+         city in range (healing units excepted). 0 disables this pass. -->
+    <Row Name="AIEndTurnRangedFireEnabled" Value="1"/>
     <Row Name="AIAssaultReviewInterval" Value="3"/>
     <Row Name="AIAssaultObjectiveSummaryInterval" Value="5"/>
     <Row Name="AIAssaultWaveArrivalSpreadTurns" Value="1"/>

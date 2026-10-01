@@ -69,7 +69,14 @@ semantic replay comparison like the previous changes.
 
 ### Offensive behavior and diagnostics
 
-- [ ] Ensure unused legal ranged/siege shots from the current tile are not lost
+- [ ] Siege waves rarely become ready: in the260–271 A/B (`docs/ai-ranged-fire-20261001.md`)
+  130 assault plans were mostly phase0/2 with failure masks30/63/191; relaxing the
+  strength/damage thresholds changed no action. Investigate why counted siege units
+  are outside the cohesive first wave (`waveSiege=0` with `siege=3`), their ETAs and
+  staging, before tuning thresholds. Desired land forces are22 units/6 siege at
+  capacity7.
+
+- [x] Ensure unused legal ranged/siege shots from the current tile are not lost
   simply because the whole assault is gathering or future incoming damage is
   positive. The user explicitly wants these units to fire when they can; ranged
   fire has no ordinary immediate ranged retaliation. Separate stationary firing
@@ -77,6 +84,13 @@ semantic replay comparison like the previous changes.
   Current guards require real-stack danger0 for stationary fire and singleton
   danger0 in the generic gathering fallback. Add bounded firing-refusal reasons
   per unit/turn without extra path or damage searches.
+  Done 2026-10-01: current-tile city shots use the real stack's forecast against
+  `AIStationaryFireDangerPercent` (50) in the early pass and the search; executed
+  plans are not re-vetoed. Refusals log `FIRE_REFUSAL`. Refused units mostly had
+  forecast danger above their HP yet stayed unharmed, so `AIEndTurnRangedFireEnabled`
+  adds a final pass after tactical/homeland AI: every idle ranged unit (no queued
+  mission, unused attack, not healing) fires at a unit, stack or city in range
+  (kills first; siege prefers cities). Logged as `END_TURN_FIRE`.
 - [ ] Recheck Rome's three siege units nearTegdaoust on145–155. They are counted,
   with a credible land capturer on145–150, but strength and sustained-damage
   predicates fail. On149, sustain102 minus healing19 over four turns gives332,
@@ -85,13 +99,19 @@ semantic replay comparison like the previous changes.
   back to full by164. Exact earlier per-unit firing vetoes are unlogged.
   Full-stack occupancy excludes the firing unit; VP's setup check is disabled,
   and the low-HP futile-fire rule cannot explain the full-health wait.
-- [ ] Fix combined/naval operation city-target resolution for VP's two-ring
+- [x] Fix combined/naval operation city-target resolution for VP's two-ring
   coastal waypoints. Confirmed case: Mongol operation5634 targets water2362
   `(74,26)`, two hexes fromCarthage2451 `(75,27)`, while our resolver searches
   only adjacent hexes. This loses objective recognition and custom reinforcement
   coordination. Use bounded resolution with enemy ownership and ambiguity checks,
   avoiding world scans, extra path queries or RNG.
-- [ ] Audit combined armies' land/sea role accounting: the army's sea domain
+  Done 2026-10-01: `CityTarget` keeps the adjacent match and accepts a unique
+  enemy city in the second ring; two candidates stay unresolved.
+- [ ] (Confirmed, not yet changed) `CvArmyAI::GetDomainType` returns DOMAIN_SEA for
+  ARMY_TYPE_COMBINED, so `ObserveOperation`, `LegacyOpeningReady`, the opening
+  forecast and `TryReadyCoreForArmy` count only the ships of a combined invasion.
+  The turn-269 save has no combined operation to test against.
+  Audit combined armies' land/sea role accounting: the army's sea domain
   currently causes opening/objective assessment to omit land members. Preserve
   actual landing routes, capturing capability and escorts; test each domain and
   cannon support through embarkation and tactical handoff.

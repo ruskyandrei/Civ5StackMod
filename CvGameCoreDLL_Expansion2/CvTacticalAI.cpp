@@ -15952,7 +15952,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		case A_RANGEATTACK:
 		{
 			bool bCityBefore = pToPlot->isEnemyCity(*pUnit);
-			if(bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+			if(bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false,true))
 			{
 				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
 				return false;
@@ -15982,7 +15982,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 		case A_RANGEKILL:
 		{
 			const bool bCityBefore=pToPlot->isEnemyCity(*pUnit);
-			if (bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+			if (bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false,true))
 			{
 				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",false,false,missionOrders,ordersBefore,diagnosticBefore);
 				return false;
@@ -16009,7 +16009,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			break;
 		}
 		case A_MELEEATTACK:
-			if(pToPlot->isEnemyCity(*pUnit) && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+			if(pToPlot->isEnemyCity(*pUnit) && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false,true))
 			{
 				if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,bPostcondition,missionOrders,ordersBefore,diagnosticBefore);
 				return false;
@@ -16047,7 +16047,7 @@ bool TacticalAIHelpers::ExecuteUnitAssignments(PlayerTypes ePlayer, const std::v
 			const bool bCityBefore=pToPlot->isEnemyCity(*pUnit);
 			if (vAssignments[i].eAssignmentType==A_MELEEKILL_NO_ADVANCE)
 			{
-				if (bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false))
+				if (bCityBefore && !CvStackingOffensiveAI::AllowCityAttack(pUnit,pToPlot->getPlotCity(),pFromPlot,false,true))
                 {
                     if (diagnose) RecordStackPlanExecutionFailure(ePlayer,vAssignments[i],i,"city_attack_gate",bPrecondition,false,missionOrders,ordersBefore,diagnosticBefore);
                     return false;

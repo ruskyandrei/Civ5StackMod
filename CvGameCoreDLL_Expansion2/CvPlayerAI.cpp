@@ -316,6 +316,7 @@ void CvPlayerAI::AI_unitUpdate(bool bUpdateHomelandAI)
 			CvStackingDiagnostics::TurnPhaseScope homelandPhase(GetID(),"homeland_ai");
 			GetHomelandAI()->Update(true);
 		}
+		CvStackingOffensiveAI::FireRemainingRangedShots(GetID());
 		GetTacticalAI()->CleanUp();
 	}
 	CvStackingDiagnostics::AfterPlayerUnitAI(*this);

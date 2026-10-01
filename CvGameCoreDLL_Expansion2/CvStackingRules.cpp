@@ -79,6 +79,8 @@ namespace
 		{"AIAssaultFiringPositionScanPlots", 96, 1, 192},
 		{"AIAssaultFiringPositionRadiusMaximum", 6, 1, 10},
 		{"AIAssaultStageDangerPercent", 0, 0, 50},
+		{"AIStationaryFireDangerPercent", 50, 0, 100},
+		{"AIEndTurnRangedFireEnabled", 1, 0, 1},
 		{"AIAssaultReviewInterval", 3, 1, 20},
 		{"AIAssaultObjectiveSummaryInterval", 5, 1, 50},
 		{"AIAssaultWaveArrivalSpreadTurns", 1, 0, 4},

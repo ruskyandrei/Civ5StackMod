@@ -1,5 +1,6 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingOffensiveAI.h"
+#include "CvUnitCombat.h"
 #include "CvStackingAI.h"
 #include "CvStackingAIPolicy.h"
 #include "CvStackingRules.h"
@@ -128,6 +129,7 @@ static int openingForecastTurn=-1;
     std::map<Key,ProductionClaim> production;
     std::map<Key,StalledProductionQueue> stalledProduction;
     std::map<Key,int> assemblyHolds;
+    std::map<Key,int> fireRefusals; // unit -> turn of its last logged FIRE_REFUSAL
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
     void AdvanceProductionGeneration(PlayerTypes owner);
     bool shuttingDown=false;
@@ -180,6 +182,7 @@ static int openingForecastTurn=-1;
         if(currentTurn==turn) return;
         currentTurn=turn;
         assemblyHolds.clear();
+        fireRefusals.clear();
         for(int i=0;i<MAX_PLAYERS;++i) { synced[i]=-1; captureQueries[i]=0; extraBatches[i]=0; assaultQueries[i]=0; }
         // One scalar signature per live owned-city queue prevents Sync from
         // recreating the same stalled claim and renewing an abandoned siege.
@@ -1053,6 +1056,28 @@ namespace CvStackingOffensiveAI
         const AssaultPlan plan=AssessAssault(unit->getOwner(),cityTarget->getPlotCity(),unit->getDomainType());
         return !plan.ready && plan.staging>=0?GC.getMap().plotByIndexUnchecked(plan.staging):NULL;
     }
+    // A shot from the tile a unit already occupies leaves its exposure unchanged;
+    // it only gives up a retreat. Allow it unless the forecast for the real stack
+    // expects the shooter to lose more than AIStationaryFireDangerPercent of its
+    // current HP (0 restores the AIAssaultStageDangerPercent rule).
+    bool StationaryFireSafe(const CvUnit* unit,const CvPlot* cityTarget,const char* source)
+    {
+        const int percent=std::max(Setting("AIAssaultStageDangerPercent",0),Setting("AIStationaryFireDangerPercent",50));
+        const int danger=unit->GetDanger();
+        if(danger<=unit->GetCurrHitPoints()*percent/100) return true;
+        const int turn=GC.getGame().getGameTurn();
+        const Key key(unit->getOwner(),unit->GetID());
+        std::map<Key,int>::iterator logged=fireRefusals.find(key);
+        if(logged==fireRefusals.end() || logged->second!=turn)
+        {
+            fireRefusals[key]=turn;
+            CvStackingDiagnostics::Record(1,unit->getOwner(),"FIRE_REFUSAL",
+                "unit=%d target=%d plot=%d source=%s reason=danger danger=%d hp=%d limitPercent=%d",
+                unit->GetID(),cityTarget->GetPlotIndex(),unit->plot()->GetPlotIndex(),source,
+                danger==INT_MAX?-1:danger,unit->GetCurrHitPoints(),percent);
+        }
+        return false;
+    }
     bool TryStationaryCityFire(CvUnit* unit,const CvPlot* cityTarget)
     {
         if(!Usable(unit) || !Enabled(unit->getOwner()) || !unit->canUseNow() || unit->TurnProcessed() || unit->isOutOfAttacks() ||
@@ -1060,12 +1085,11 @@ namespace CvStackingOffensiveAI
             !cityTarget->isVisible(GET_PLAYER(unit->getOwner()).getTeam()) || CvStackingAI::RetainCityUnit(unit) ||
             (HasCommitment(unit) && !HasCommitment(unit,cityTarget))) return false;
         const PlayerTypes owner=unit->getOwner();CvPlayer& player=GET_PLAYER(owner);
-        const int dangerLimit=unit->GetCurrHitPoints()*Setting("AIAssaultStageDangerPercent",0)/100;
         // This permits current-plot fire without advancing into another attack
         // footprint. Normal attack/setup/fortification rules still apply; the
         // real stack may protect a battery a singleton could not stage here.
         if(unit->IsCanAttackRanged() && unit->canRangeStrikeAt(cityTarget->getX(),cityTarget->getY()) &&
-            unit->GetDanger()<=dangerLimit &&
+            StationaryFireSafe(unit,cityTarget,"immediate") &&
             ContinueSiege(owner,cityTarget->getPlotCity()))
         {
             const int id=unit->GetID();
@@ -1075,6 +1099,71 @@ namespace CvStackingOffensiveAI
             return true;
         }
         return false;
+    }
+    // Runs once the tactical and homeland AI have finished a player's units. A
+    // ranged unit that can still fire and has no queued mission is staying
+    // where it is; firing from there leaves its exposure unchanged. Healing
+    // units keep their rest. Target: a predicted kill first; otherwise siege
+    // units prefer the weakest enemy city and other ranged units the defender
+    // losing the largest share of its HP, each falling back to the other kind.
+    // Futile sieges, cities at 1 HP and invisible or peaceful targets are skipped.
+    int FireRemainingRangedShots(PlayerTypes owner)
+    {
+        if(!Enabled(owner) || Setting("AIEndTurnRangedFireEnabled",1)==0) return 0;
+        CvPlayer& player=GET_PLAYER(owner);
+        std::vector<int> units; int loop=0;
+        for(CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
+            if(Usable(u) && u->IsCanAttackRanged() && !u->isOutOfAttacks() && u->canMove() &&
+                !u->IsBusy() && u->GetLengthMissionQueue()==0 && !u->shouldHeal(false))
+                units.push_back(u->GetID());
+        int shots=0;
+        const int limit=Setting("AIOffensiveSupportMaximumUnits",32);
+        std::vector<std::pair<const CvUnit*,int> > collateral;
+        for(size_t i=0;i<units.size() && shots<limit;++i)
+        {
+            CvUnit* unit=player.getUnit(units[i]);
+            if(!Usable(unit) || unit->isOutOfAttacks() || !unit->canMove()) continue;
+            const int range=std::min(5,std::max(1,unit->GetRange()));
+            CvPlot* city=NULL; int cityHP=INT_MAX;
+            CvPlot* field=NULL; int fieldScore=-1; bool fieldKill=false;
+            for(int j=1;j<RING_PLOTS[range];++j)
+            {
+                CvPlot* p=iterateRingPlots(unit->plot(),j);
+                if(!p || !p->isVisible(player.getTeam())) continue;
+                if(p->isCity())
+                {
+                    if(!player.IsAtWarWith(p->getOwner())) continue;
+                    const CvCity* c=p->getPlotCity();
+                    const int hp=c->GetMaxHitPoints()-c->getDamage();
+                    if(hp<=1 || hp>=cityHP || !unit->canRangeStrikeAt(p->getX(),p->getY())) continue;
+                    city=p; cityHP=hp;
+                    continue;
+                }
+                if(!p->isEnemyUnit(owner,true,true) || !unit->canRangeStrikeAt(p->getX(),p->getY())) continue;
+                CvUnit* defender=NULL; int damage=0;
+                CvUnitCombat::GetStackAttackPreview(unit,p,true,defender,damage,collateral);
+                if(!defender || damage<=0) continue;
+                const int hp=std::max(1,defender->GetCurrHitPoints());
+                const bool kill=damage>=hp;
+                int splash=0;
+                for(size_t k=0;k<collateral.size();++k) splash+=collateral[k].second;
+                // Kills rank by the size of the unit removed, others by the share
+                // of the defender's HP taken; collateral breaks ties.
+                const int score=(kill?1000000+hp*100:std::min(damage,hp)*1000/hp*100)+std::min(99,splash);
+                if(score>fieldScore) { field=p; fieldScore=score; fieldKill=kill; }
+            }
+            if(city && !ContinueSiege(owner,city->getPlotCity())) city=NULL;
+            CvPlot* target=fieldKill?field:IsSiegeUnit(unit)?(city?city:field):(field?field:city);
+            if(!target) continue;
+            const int id=units[i],from=unit->plot()->GetPlotIndex();
+            unit->PushMission(CvTypes::getMISSION_RANGE_ATTACK(),target->getX(),target->getY(),0,false,false,MISSIONAI_TACTMOVE);
+            ++shots;
+            unit=player.getUnit(id);
+            if(unit && !unit->isDelayedDeath() && !unit->canMove()) unit->SetTurnProcessed(true);
+            CvStackingDiagnostics::Record(1,owner,"END_TURN_FIRE","unit=%d plot=%d target=%d kind=%s predictedKill=%d cityHP=%d",
+                id,from,target->GetPlotIndex(),target==city?"city":"unit",target==field&&fieldKill,target==city?cityHP:-1);
+        }
+        return shots;
     }
     // Called only after the existing native path has produced a real move.
     // A stable stage/destination and its verified first-turn endpoint permit
@@ -1271,13 +1360,21 @@ namespace CvStackingOffensiveAI
         CvPlot* approach=path.size()>1?path.GetPlotByIndex((int)path.size()-2):unit->plot();
         return approach && unit->isNativeDomain(approach) && plotDistance(*approach,*city->plot())<=1?approach:NULL;
     }
-    bool AllowCityAttack(const CvUnit* unit,CvCity* city,const CvPlot* firing,bool capture)
+    bool AllowCityAttack(const CvUnit* unit,CvCity* city,const CvPlot* firing,bool capture,bool executing)
     {
         if(!unit || !city || !firing) return false;
         if(!Enabled(unit->getOwner()) || Setting("AIAssaultCoordinationEnabled",1)==0 || capture) return true;
         const AssaultPlan plan=AssessAssault(unit->getOwner(),city,unit->getDomainType());
         if(plan.ready) return true;
         if(!unit->IsCanAttackRanged()) return false;
+        // Firing from the current tile does not advance into the attack footprint
+        // and the search still scores where the shooter ends its turn, so a
+        // gathering assault keeps these shots (see StationaryFireSafe).
+        if(firing==unit->plot() && Setting("AIStationaryFireDangerPercent",50)>0)
+        {
+            if(!executing && !StationaryFireSafe(unit,city->plot(),"search")) return false;
+            return ContinueSiege(unit->getOwner(),city);
+        }
         // Generic combat searches may target a different city than their main
         // target. Enforce assembly on that actual city, preserving safe fire.
         const std::vector<const CvUnit*> alone(1,unit);const SUnitIDValueContainer noDamage;
@@ -1521,14 +1618,24 @@ namespace CvStackingOffensiveAI
         CvPlot* waypoint=op?op->GetTargetPlot():NULL;
         if(!waypoint) return NULL;
         if(waypoint->isCity()) return waypoint;
-        // VP's naval/combined operation stores the adjacent water tile, not the city.
+        // VP's naval/combined operation stores a coastal water tile within two
+        // rings of the city (GetCoastalWaterNearPlot), not the city itself.
         if(!op->IsNavalOperation()) return NULL;
         for(int i=1;i<RING1_PLOTS;++i)
         {
             CvPlot* p=iterateRingPlots(waypoint,i);
             if(p && p->isCity() && p->getOwner()==op->GetEnemy()) return p;
         }
-        return NULL;
+        // Second ring: only an unambiguous enemy city is the target.
+        CvPlot* found=NULL;
+        for(int i=RING1_PLOTS;i<RING2_PLOTS;++i)
+        {
+            CvPlot* p=iterateRingPlots(waypoint,i);
+            if(!p || !p->isCity() || p->getOwner()!=op->GetEnemy()) continue;
+            if(found) return NULL;
+            found=p;
+        }
+        return found;
     }
     void Handoff(CvAIOperation* op)
     {
@@ -1555,7 +1662,7 @@ namespace CvStackingOffensiveAI
     void Reset()
     {
         ResetOpeningReadiness(); ResetProductionPolicy();
-        objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); currentTurn=-1; shuttingDown=false;
+        objectives.clear(); commitments.clear(); failures.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); fireRefusals.clear(); currentTurn=-1; shuttingDown=false;
         if(continuityGeneration==0xffffffffUL) continuityGenerationExhausted=true; else ++continuityGeneration;
     }
     void Shutdown()
