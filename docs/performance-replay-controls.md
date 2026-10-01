@@ -107,3 +107,21 @@ Job-manager workers may migrate thread IDs; missing same-thread gap records are
 lost instrumentation coverage, not evidence of zero waits. Compare complete
 native windows and retained behavior/censuses, and inspect thread distributions.
 Always close the exact game normally and restore the config after the test.
+
+## Optional automatic normal shutdown
+
+`run-behavior-replay.py --quit-after-complete` closes the tested game after the
+bounded replay finishes. The default still leaves it open. Before any commands,
+the option pins Windows process handles and creation times for the game, its
+existing Lua service and both guards. It also binds the session file's identity
+and its whitelisted service PID; credentials are never included in evidence.
+
+Shutdown requires the expected human return, unchanged source save, complete
+nonempty after-censuses, archived native logs and successful offline analyses.
+A fresh live read must confirm the stop. The harness requests normal quit once
+through the existing service, waits for the exact game to exit, then stops that
+same service once. It does not force-close, reconnect or retry an ambiguous
+command. `normal-exit.json` and the replay manifest record confirmation or the
+precise failure stage. Successful completion uses status
+`completed_game_closed_service_stopped`. The offline mocked shutdown regression
+passed25 checks; a real replay remains necessary to validate engine integration.

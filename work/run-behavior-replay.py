@@ -42,7 +42,11 @@ qualify as identical performance controls.
 Commands and structured responses are archived with numbered files, alongside
 Lua.log, rolling native segments, save/DLL identities, snapshots and analyzer
 JSON. The expected human stop signals guards immediately, before final snapshots.
-The game is left open for caller-controlled inspection/normal shutdown. Unsafe
+The game is left open for caller-controlled inspection/normal shutdown by default.
+Optional --quit-after-complete verifies the census/archive/analyzers, requests
+normal quit once through the existing service, waits at most30s for the exact
+bound process, then stops that one service and records normal-exit.json. It never
+forces termination or retries an unknown response. Unsafe
 stop states are paused when the socket remains usable, then reported as failures;
 they never silently qualify as a successful expected stop. No dispatched mutation
 is retried after a timeout. --resume-prepared only recovers verified paused
@@ -54,6 +58,8 @@ harness; its benchmark semantics/defaults are not modified by this script.
 from __future__ import annotations
 
 import argparse
+import ctypes
+from ctypes import wintypes
 import importlib.util
 import json
 from pathlib import Path
@@ -377,12 +383,262 @@ FLUSH = "Game.FlushStackingDiagnostics();return Game.GetStackingDiagnosticsStatu
 PAUSE_UNEXPECTED = "local active=Game.GetActivePlayer();Game.SetPausePlayer(active);return {turn=Game.GetGameTurn(),pausePlayer=Game.GetPausePlayer(),activePlayer=active}"
 
 
+class ExactExitProcess:
+    """Pin the original Windows process object, including PID-reuse races."""
+    def __init__(self, pid, expected_ticks=None, names=()):
+        if type(pid) is not int or pid <= 0:
+            raise ValueError("Invalid shutdown process PID")
+        self.pid, self.handle = pid, None
+        self.kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        self.kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        self.kernel.OpenProcess.restype = wintypes.HANDLE
+        self.kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)] * 4
+        self.kernel.GetProcessTimes.restype = wintypes.BOOL
+        self.kernel.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+        self.kernel.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        self.kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        self.kernel.WaitForSingleObject.restype = wintypes.DWORD
+        self.kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        self.kernel.CloseHandle.restype = wintypes.BOOL
+        self.handle = self.kernel.OpenProcess(0x100000 | 0x1000, False, pid)
+        if not self.handle:
+            raise OSError("Shutdown process is missing or inaccessible: PID " + str(pid))
+        try:
+            times = [wintypes.FILETIME() for _ in range(4)]
+            if not self.kernel.GetProcessTimes(self.handle, *(ctypes.byref(t) for t in times)):
+                raise OSError("Cannot read shutdown process start time")
+            self.start_ticks = ((times[0].dwHighDateTime << 32) | times[0].dwLowDateTime) + 504911232000000000
+            path = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(path))
+            if not self.kernel.QueryFullProcessImageNameW(self.handle, 0, path, ctypes.byref(size)):
+                raise OSError("Cannot read shutdown process image")
+            self.name = Path(path.value).stem.lower()
+            if ((expected_ticks is not None and self.start_ticks != expected_ticks)
+                    or (names and self.name not in names) or not self.alive()):
+                raise ValueError("Exact shutdown PID/start/image did not match")
+        except Exception:
+            self.close()
+            raise
+
+    def alive(self):
+        value = self.kernel.WaitForSingleObject(self.handle, 0)
+        if value == 258:
+            return True
+        if value == 0:
+            return False
+        raise OSError("Cannot read bound shutdown process state")
+
+    def close(self):
+        if self.handle:
+            self.kernel.CloseHandle(self.handle)
+            self.handle = None
+
+
+def session_stamp(path):
+    # Filesystem identity only: never extract, display or archive a credential.
+    stat = Path(path).stat()
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+
+
+def session_service_pid(path):
+    # Whitelist only PID metadata. The auth token is never an identity field,
+    # accessed here, returned, displayed or copied into replay evidence.
+    value = json.loads(Path(path).read_text(encoding="utf-8"))
+    pid = value.get("pid") if isinstance(value, dict) else None
+    if type(pid) is not int or pid <= 0:
+        raise ValueError("Persistent session has no valid service PID metadata")
+    return pid
+
+
+class NormalExitBinding:
+    def __init__(self, args, watcher, guard_pids):
+        self.processes = []
+        self.session = Path(args.session).resolve(strict=True)
+        self.stamp = session_stamp(self.session)
+        service_pid = watcher.get("Service")
+        if (type(service_pid) is not int or service_pid <= 0
+                or len({args.game_pid, service_pid, *guard_pids}) != 4):
+            raise ValueError("Optional shutdown requires the exact existing Service PID in watcher manifest")
+        if session_service_pid(self.session) != service_pid:
+            raise ValueError("Persistent session PID differs from the exact existing service")
+        try:
+            self.game = ExactExitProcess(args.game_pid, args.start_ticks, ("civilizationv_dx11",))
+            self.processes.append(self.game)
+            self.service = ExactExitProcess(service_pid, names=("python", "pythonw", "python3"))
+            self.processes.append(self.service)
+            self.guards = []
+            for pid in guard_pids:
+                process = ExactExitProcess(pid, names=("pwsh", "powershell"))
+                self.processes.append(process)
+                self.guards.append(process)
+            self.verify()
+        except Exception:
+            self.close()
+            raise
+
+    def verify(self, *, game_required=True, guards_required=True):
+        if session_stamp(self.session) != self.stamp:
+            raise ValueError("Bound persistent service session changed; do not reconnect")
+        if session_service_pid(self.session) != self.service.pid:
+            raise ValueError("Bound persistent session PID changed; do not reconnect")
+        if not self.service.alive() or (game_required and not self.game.alive()):
+            raise ValueError("Bound game/service process lost; do not retry")
+        if guards_required and any(not process.alive() for process in self.guards):
+            raise ValueError("Bound watchdog process lost before verified stop")
+
+    def proof(self):
+        return {"GamePID": self.game.pid, "GameStartTicks": self.game.start_ticks,
+                "ServicePID": self.service.pid, "ServiceStartTicks": self.service.start_ticks,
+                "GuardPIDs": [p.pid for p in self.guards], "GuardStartTicks": [p.start_ticks for p in self.guards],
+                "SessionPath": str(self.session), "SessionFileIdentity": list(self.stamp)}
+
+    def close(self):
+        for process in self.processes:
+            process.close()
+
+
+def control_quit(session):
+    # A new local IPC client, using the already-connected service; no engine
+    # connection is opened. The convenience command already implements quit.
+    try:
+        result = subprocess.run([sys.executable, "-B", str(ROOT / "tools/civ5_control.py"),
+                                 "--session", str(session), "--timeout", "10", "quit"],
+                                capture_output=True, text=True, timeout=30)
+    except subprocess.TimeoutExpired as exc:
+        def decoded(value):
+            return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+        return {"acknowledged": False, "timedOut": True, "stdout": decoded(exc.stdout), "stderr": decoded(exc.stderr)}
+    try:
+        response = json.loads(result.stdout)
+    except (ValueError, TypeError):
+        response = None
+    return {"exitCode": result.returncode, "stdout": result.stdout, "stderr": result.stderr, "result": response,
+            "acknowledged": (result.returncode == 0 and isinstance(response, dict)
+                             and response.get("ok") is True and response.get("values") == ["quit requested"])}
+
+
 class BehaviorReplay(perf.Replay):
     def __init__(self, args):
         super().__init__(args)
         self.status_source, self.prepare_source, self.continue_source = lua_sources(args)
         self.view_source = lua_view_preparation(args)
         self.deadline = None
+        self.exit_binding = None
+        self.normal_exit_proof = None
+
+    def call(self, *args, **kwargs):
+        if self.exit_binding:
+            self.exit_binding.verify(guards_required=not self.safe_stop)
+        result = super().call(*args, **kwargs)
+        if self.exit_binding:
+            self.exit_binding.verify(guards_required=not self.safe_stop)
+        return result
+
+    def states(self, *args, **kwargs):
+        if self.exit_binding:
+            self.exit_binding.verify(guards_required=not self.safe_stop)
+        result = super().states(*args, **kwargs)
+        if self.exit_binding:
+            self.exit_binding.verify(guards_required=not self.safe_stop)
+        return result
+
+    def close_exit_binding(self):
+        if self.exit_binding:
+            self.exit_binding.close()
+
+    def quit_after_complete(self):
+        if not getattr(self.args, "quit_after_complete", False):
+            return None
+        path = self.run / "normal-exit.json"
+        if path.exists():
+            raise ValueError("A normal shutdown attempt already exists; never repeat it")
+        proof = {"requested": True, "utc": perf.utc(), "status": "validating",
+                 "quitDispatched": False, "quitAcknowledged": False, "gameExitConfirmed": False,
+                 "serviceStopDispatched": False, "forcedTermination": False, "mutationRetried": False}
+        self.normal_exit_proof = proof
+        def record():
+            perf.write_json(path, proof)
+            self.manifest["NormalExit"] = proof.copy()
+            self.save_manifest()
+        try:
+            record()
+            if (not self.safe_stop or not self.exit_binding
+                    or not stopped(self.manifest.get("Stopped", {}), self.args.stop_turn, self.args.return_player)
+                    or self.manifest.get("Status") != "completed_stopped_game_open"
+                    or self.manifest.get("SaveSHA256After") != self.args.save_sha
+                    or not self.manifest.get("AnalysisCompletedUTC")
+                    or type(self.manifest.get("UnitCount")) is not int or self.manifest["UnitCount"] <= 0
+                    or type(self.manifest.get("CityCount")) is not int or self.manifest["CityCount"] <= 0
+                    or not (self.run / "world-after.json").is_file()
+                    or not any((self.run / "native-segments").glob("*.log"))):
+                raise ValueError("Normal quit requires verified stop, nonempty census, archive and completed analyses")
+            census = json.loads((self.run / "world-after.json").read_text(encoding="utf-8-sig"))
+            if not isinstance(census, dict) or census.get("expectedTurn") != self.args.stop_turn or not isinstance(census.get("players"), list):
+                raise ValueError("After census does not establish the expected bounded stop")
+            units, cities = 0, 0
+            for player in census["players"]:
+                if (not isinstance(player, dict) or not isinstance(player.get("units"), (list, dict))
+                        or not isinstance(player.get("cities"), (list, dict))
+                        or isinstance(player["units"], dict) and player["units"]
+                        or isinstance(player["cities"], dict) and player["cities"]):
+                    raise ValueError("Invalid after census arrays")
+                units += len(player["units"])
+                cities += len(player["cities"])
+            if units != self.manifest["UnitCount"] or cities != self.manifest["CityCount"]:
+                raise ValueError("After census counts differ from verified manifest")
+            for script in ("summarize-stacking-diagnostics.py", "analyze-assault-campaign.py", "profile-campaign-log.py"):
+                result = json.loads((self.run / (script + ".result.json")).read_text(encoding="utf-8-sig"))
+                if result.get("exitCode") != 0:
+                    raise ValueError("Normal quit requires every offline analyzer to succeed")
+            self.exit_binding.verify(guards_required=False)
+            proof.update(self.exit_binding.proof())
+            live = self.call("InGame", self.status_source, "verify-stop-before-normal-quit", timeout=10)[0]
+            if not stopped(live, self.args.stop_turn, self.args.return_player):
+                raise ValueError("Completed replay state changed before normal quit")
+            proof.update(status="requesting_quit", quitDispatched=True, quitDispatchedUTC=perf.utc())
+            record()
+            self.progress("normal-quit-request", gamePID=self.args.game_pid)
+            reply = control_quit(self.args.session)
+            proof["quitResponse"] = reply
+            record()
+            if reply.get("acknowledged") is not True:
+                raise ValueError("Normal quit response unknown or rejected; no retry or service reconnect")
+            proof.update(quitAcknowledged=True, status="waiting_game_exit")
+            record()
+            began = time.monotonic()
+            deadline = began + 30
+            while self.exit_binding.game.alive():
+                self.exit_binding.verify(game_required=False, guards_required=False)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Normal quit acknowledged but exact game process did not exit within30s")
+                time.sleep(min(.1, max(0, deadline-time.monotonic())))
+            proof.update(gameExitConfirmed=True, gameExitUTC=perf.utc(), gameExitWaitSeconds=time.monotonic()-began)
+            record()
+            self.exit_binding.verify(game_required=False, guards_required=False)
+            proof.update(status="stopping_service", serviceStopDispatched=True)
+            record()
+            # /stop shuts down only the bound existing HTTP service. It does
+            # not reconnect to the engine or issue any additional Lua action.
+            stop = tuner.call_service(self.args.session, "stop", {"timeout": 5}, 5)
+            proof["serviceStopResponse"] = stop
+            record()
+            if not isinstance(stop, dict) or stop.get("ok") is not True or stop.get("stopping") is not True:
+                raise ValueError("Service stop response unknown or rejected; never retry")
+            deadline = time.monotonic() + 5
+            while self.exit_binding.service.alive() or self.exit_binding.session.exists():
+                if self.exit_binding.session.exists() and session_stamp(self.exit_binding.session) != self.exit_binding.stamp:
+                    raise ValueError("Service session replaced after stop; do not stop its replacement")
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Service accepted stop but exact process/session remain after5s")
+                time.sleep(min(.05, max(0, deadline-time.monotonic())))
+            proof.update(status="completed", serviceExitConfirmed=True, sessionFileAbsent=True, completedUTC=perf.utc())
+            self.manifest["Status"] = "completed_game_closed_service_stopped"
+            record()
+            return proof
+        except Exception as exc:
+            proof.update(status="failed", error=str(exc), failedUTC=perf.utc())
+            record()
+            raise
 
     def game_setup(self):
         live = validate_game_setup(self.call("InGame", GAME_SETUP, "read-game-setup")[0], self.args.start_turn)
@@ -455,6 +711,8 @@ class BehaviorReplay(perf.Replay):
         if len(set(guards)) != 2 or self.args.game_pid in guards:
             raise ValueError("Invalid guard identities")
         perf.exact_process(self.args.game_pid, self.args.start_ticks, guards)
+        if getattr(self.args, "quit_after_complete", False):
+            self.exit_binding = NormalExitBinding(self.args, watcher, guards)
         save = self.args.save.resolve(strict=True)
         if save.suffix.lower() != ".civ5save" or perf.sha(save) != self.args.save_sha:
             raise ValueError("Source save SHA does not match expected preserved source")
@@ -468,6 +726,10 @@ class BehaviorReplay(perf.Replay):
             if self.manifest.get("ViewMode", "preserve") != self.args.view_mode:
                 raise ValueError("Resume view mode changed")
             validate_resume_sampling(self.manifest, self.args.tactical_sampling)
+            if self.manifest.get("QuitAfterComplete", False) != getattr(self.args, "quit_after_complete", False):
+                raise ValueError("Resume normal-shutdown preference changed")
+            if self.exit_binding and self.manifest.get("NormalExitBinding") != self.exit_binding.proof():
+                raise ValueError("Resume game/service/guard/session shutdown binding changed")
             if any(self.manifest.get(key) != value for key, value in expected.items()) or Path(self.manifest["Save"]).resolve() != save:
                 raise ValueError("Resume source/process/behavior settings changed")
             if self.manifest.get("ContinuedUTC") or self.manifest.get("Stopped") or self.manifest.get("Status") not in ("preparing", "armed", "failed"):
@@ -506,6 +768,8 @@ class BehaviorReplay(perf.Replay):
                              "PID": self.args.game_pid, "StartTicks": self.args.start_ticks, "StartedUTC": perf.utc(),
                              "ExpectedDLLSHA256": self.args.expected_dll_sha, "WatchCity": self.args.watch_city,
                              "Limits": "First/return turns partial; human-source mode explicitly performs VP slot-change diplomacy/production/research/policy decisions; compare identical source/preparation only"}
+            if self.exit_binding:
+                self.manifest.update(QuitAfterComplete=True, NormalExitBinding=self.exit_binding.proof())
             self.save_manifest()
             if "InGame" in self.states("initial-contexts"):
                 raise ValueError("Begin from a fresh game's main menu")
@@ -623,7 +887,10 @@ class BehaviorReplay(perf.Replay):
                              UnitCount=sum(len(p["units"]) for p in after["players"]), CityCount=sum(len(p["cities"]) for p in after["players"]))
         self.save_manifest()
         self.analyze()
-        self.progress("behavior-replay-complete", run=str(self.run), nativeRun=self.manifest["NativeRun"], gameLeftOpen=True)
+        self.manifest["AnalysisCompletedUTC"] = perf.utc()
+        self.save_manifest()
+        exit_proof = self.quit_after_complete()
+        self.progress("behavior-replay-complete", run=str(self.run), nativeRun=self.manifest["NativeRun"], gameLeftOpen=exit_proof is None)
 
 
 def self_test():
@@ -998,6 +1265,8 @@ def main():
     parser.add_argument("--maximum-seconds", type=float, default=1800)
     parser.add_argument("--poll-seconds", type=float, default=15)
     parser.add_argument("--resume-prepared", action="store_true")
+    parser.add_argument("--quit-after-complete", action="store_true",
+                        help="After verified stop/census/archive/analyses, request normal quit once and stop the exact existing service; default leaves game open")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     args.expected_mods = EXPECTED_MODS.copy()
@@ -1032,8 +1301,13 @@ def main():
     except Exception as exc:
         failure = {"ok": False, "utc": perf.utc(), "error": str(exc), "safeStopObserved": replay.safe_stop,
                    "watchdogsLeftArmed": not replay.safe_stop, "mutationRetried": False, "gameLeftOpen": True}
+        if args.quit_after_complete:
+            failure["normalExit"] = replay.normal_exit_proof
+            failure["gameLeftOpen"] = False if (replay.normal_exit_proof or {}).get("gameExitConfirmed") else None
         replay.record_failure(failure)
         print(json.dumps(failure), flush=True);return 1
+    finally:
+        replay.close_exit_binding()
 
 
 if __name__ == "__main__":
