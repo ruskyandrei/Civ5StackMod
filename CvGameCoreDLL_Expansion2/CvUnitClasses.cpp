@@ -174,6 +174,8 @@ CvUnitEntry::CvUnitEntry(void) :
 	m_ppiEraUnitCombatType(NULL),
 	m_ppiEraUnitPromotions(NULL),
 	m_piResourceQuantityTotals(),
+	m_vResourceQuantityCheckIDs(),
+	m_iResourceQuantityCheckInfoCount(-1),
 	m_pbFreePromotions(NULL),
 
 	m_paszEarlyArtDefineTags(NULL),
@@ -230,6 +232,9 @@ CvUnitEntry::~CvUnitEntry(void)
 
 bool CvUnitEntry::CacheResults(Database::Results& kResults, CvDatabaseUtility& kUtility)
 {
+	// A failed/repeated load must not expose stale derived metadata.
+	m_iResourceQuantityCheckInfoCount = -1;
+	m_vResourceQuantityCheckIDs.clear();
 	if(!CvBaseInfo::CacheResults(kResults, kUtility))
 		return false;
 
@@ -660,6 +665,8 @@ bool CvUnitEntry::CacheResults(Database::Results& kResults, CvDatabaseUtility& k
 		//Trim extra memory off container since this is mostly read-only.
 		std::map<int, int>(m_piResourceQuantityTotals).swap(m_piResourceQuantityTotals);
 	}
+	// Both resource requirements and total-quantity rows are now loaded.
+	CacheResourceQuantityCheckIDs();
 	// Calculate military Power and cache it
 	DoUpdatePower();
 
@@ -1581,6 +1588,26 @@ int CvUnitEntry::GetResourceQuantityTotal(int i) const
 	}
 
 	return 0;
+}
+
+// Only positive requirements/totals can enter the live resource checks. Keep
+// their union in original ascending ID order, independent of feature flags.
+void CvUnitEntry::CacheResourceQuantityCheckIDs()
+{
+ m_iResourceQuantityCheckInfoCount = -1;
+ m_vResourceQuantityCheckIDs.clear();
+ const int count = GC.getNumResourceInfos();
+ for (int resource = 0; resource < count; ++resource)
+  if (GetResourceQuantityRequirement(resource) > 0 || GetResourceQuantityTotal(resource) > 0)
+   m_vResourceQuantityCheckIDs.push_back(resource);
+ m_iResourceQuantityCheckInfoCount = count;
+}
+
+const std::vector<int>* CvUnitEntry::GetResourceQuantityCheckIDs() const
+{
+ // Custom/reloading databases with a changed resource count retain the full
+ // original scan; default/failed entry loads use that same path.
+ return m_iResourceQuantityCheckInfoCount == GC.getNumResourceInfos() ? &m_vResourceQuantityCheckIDs : NULL;
 }
 
 /// Initial set of promotions for this unit

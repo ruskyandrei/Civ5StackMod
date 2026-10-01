@@ -39912,8 +39912,10 @@ bool CvPlayer::HasResourceForNewUnit(const UnitTypes eUnit, const bool bNoRequir
 	CvString strTotalResources;
 	CvString strNetNegResources;
 
-	for (int iResourceLoop = 0; iResourceLoop < GC.getNumResourceInfos(); iResourceLoop++)
+	const std::vector<int>* resourceIDs = pUnitInfo->GetResourceQuantityCheckIDs();
+	for (int iResourceCheck = 0; iResourceCheck < (resourceIDs ? (int)resourceIDs->size() : GC.getNumResourceInfos()); iResourceCheck++)
 	{
+		const int iResourceLoop = resourceIDs ? (*resourceIDs)[iResourceCheck] : iResourceCheck;
 		const ResourceTypes eResource = static_cast<ResourceTypes>(iResourceLoop);
 
 		int iResourceTotal = pUnitInfo->GetResourceQuantityTotal(eResource);
