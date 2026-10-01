@@ -80,7 +80,7 @@ namespace
     void InvalidatePlanSampleEpoch() { InterlockedIncrement(&planSampleEpoch); }
     // END PLAN_SAMPLE_DIAGNOSTIC_ONLY
     // BEGIN PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
-    enum { PATH_QUERY_STRIDE=8, PATH_CALL_STRIDE=16, PATH_REPEAT_SLOTS=128, PATH_REPEAT_PROBES=16 };
+    enum { PATH_QUERY_STRIDE=128, PATH_ROW_LIMIT=128, PATH_CALL_STRIDE=16, PATH_REPEAT_SLOTS=128, PATH_REPEAT_PROBES=16 };
     struct PathRepeatSlot { bool used; int plot,hp,maxHP;long scene; };
     struct PathProfileState
     {
@@ -98,6 +98,10 @@ namespace
     static __declspec(thread) PathProfileState pathProfile={};
     static __declspec(thread) unsigned long pathProfileSerial=0;
     static __declspec(thread) long pathProfileDisabledEpoch=-1;
+    // Shared under Lock: earliest completed selected queries, across threads.
+    static int pathProfileRowTurn=-1,pathProfilePreviousCapTurn=-1;
+    static unsigned int pathProfileRows=0;
+    static unsigned __int64 pathProfileCappedSelected=0,pathProfilePreviousCappedSelected=0;
     // END PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
     struct EntryCosts
     {
@@ -428,6 +432,7 @@ namespace CvStackingDiagnostics
         ++phaseGeneration;
         InvalidatePlanSampleEpoch(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
         tacticalSamplingOverride=-1; // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+        pathProfileRowTurn=pathProfilePreviousCapTurn=-1;pathProfileRows=0;pathProfileCappedSelected=pathProfilePreviousCappedSelected=0; // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
         clearUpdateGapState();
         closeFile(); level = -1; rowTurn = -1; memoryTurn = -1; rows = 0;
         initialized = false; failed = false; suppressed = false; optionsLoaded = false;
@@ -662,6 +667,13 @@ namespace CvStackingDiagnostics
         if(interval<=0 || GC.getGame().getGameTurn()%interval || !gDLL->HasGameCoreLock())return;
         const unsigned long phase=((unsigned long)unit*1664525UL+(unsigned long)player*97UL+(unsigned long)pathType*13UL)&(PATH_QUERY_STRIDE-1);
         if((serial+phase)&(PATH_QUERY_STRIDE-1))return;
+        const int turn=GC.getGame().getGameTurn();
+        if(pathProfileRowTurn!=turn)
+        {
+            pathProfilePreviousCapTurn=pathProfileRowTurn;pathProfilePreviousCappedSelected=pathProfileCappedSelected;
+            pathProfileRowTurn=turn;pathProfileRows=0;pathProfileCappedSelected=0;
+        }
+        if(pathProfileRows>=PATH_ROW_LIMIT) { ++pathProfileCappedSelected;return; }
         LARGE_INTEGER frequency,now;
         if(!QueryPerformanceFrequency(&frequency)||frequency.QuadPart<=0)return;
         memset(pathProfile.counter,0,sizeof(pathProfile.counter));memset(pathProfile.seen,0,sizeof(pathProfile.seen));
@@ -691,6 +703,10 @@ namespace CvStackingDiagnostics
         if(pathProfile.epoch!=ReadPlanSampleEpoch()||pathProfile.generation!=phaseGeneration||
             pathProfile.thread!=GetCurrentThreadId()||pathProfile.turn!=GC.getGame().getGameTurn()||
             !categoryEnabledUnlocked(1,pathProfile.actor,"PATH_SAMPLE"))return;
+        // Recheck at completion: concurrent selected queries share one cap.
+        if(pathProfileRowTurn!=pathProfile.turn)return;
+        if(pathProfileRows>=PATH_ROW_LIMIT) { ++pathProfileCappedSelected;return; }
+        ++pathProfileRows;
         LARGE_INTEGER now;unsigned __int64 queryTicks=0;bool queryAvailable=false;
         if(pathProfile.queryClock)
         {
@@ -700,9 +716,9 @@ namespace CvStackingDiagnostics
         }
         const PlanSampleCounter& danger=pathProfile.counter[PATH_RAW_DANGER];const PlanSampleCounter& terrain=pathProfile.counter[PATH_CLEAR_TERRAIN];
         Record(1,pathProfile.actor,"PATH_SAMPLE",
-            "unit=%d pathType=%d origin=%s serial=%lu thread=%lu nodeGeneration=%lu flags=%lu startX=%d startY=%d goalX=%d goalY=%d queryStride=%u queryPhase=%lu callStride=%u callPhase=%lu startTick=%lu endTick=%lu sourceEpochStart=%ld sourceEpochEnd=%ld eventFlags=%d trackingSlots=128 trackingProbeLimit=16 repeatCoverage=observed_lower_bound_if_untracked_nonzero qpcFrequency=%I64u qpcReads=%I64u clockFailures=%I64u queryAvailable=%d queryTicks=%I64u nestedQueries=%I64u nodeCacheHits=%I64u nodeCacheBuilds=%I64u rawDangerCalls=%I64u trackedDangerCalls=%I64u untrackedDangerCalls=%I64u repeatedPlotCalls=%I64u sameSceneHPRepeats=%I64u dirtyDangerCalls=%I64u actorMismatches=%I64u dangerSelected=%I64u dangerSamples=%I64u dangerTicks=%I64u dangerMaxTicks=%I64u terrainCalls=%I64u terrainSelected=%I64u terrainSamples=%I64u terrainTicks=%I64u terrainMaxTicks=%I64u semantics=inclusive_same_thread_wall_samples repeatSemantics=bounded_plot_scene_actor_HP_opportunities_not_validated_cache_hits overlap=nested_queries_and_PLAN_not_additive; subset of systematic sampled queries; no raw-result reuse; missing samples unknown; callback masks do not exclude legacy loading listeners",
+            "unit=%d pathType=%d origin=%s serial=%lu thread=%lu nodeGeneration=%lu flags=%lu startX=%d startY=%d goalX=%d goalY=%d queryStride=%u queryPhase=%lu turnRowLimit=%u turnRowOrdinal=%u capAfterThisRow=%d previousCapTurn=%d previousCappedSelectedQueries=%I64u rowCoverage=earliest_completed_selected_queries_after_cap_later_unknown callStride=%u callPhase=%lu startTick=%lu endTick=%lu sourceEpochStart=%ld sourceEpochEnd=%ld eventFlags=%d trackingSlots=128 trackingProbeLimit=16 repeatCoverage=observed_lower_bound_if_untracked_nonzero qpcFrequency=%I64u qpcReads=%I64u clockFailures=%I64u queryAvailable=%d queryTicks=%I64u nestedQueries=%I64u nodeCacheHits=%I64u nodeCacheBuilds=%I64u rawDangerCalls=%I64u trackedDangerCalls=%I64u untrackedDangerCalls=%I64u repeatedPlotCalls=%I64u sameSceneHPRepeats=%I64u dirtyDangerCalls=%I64u actorMismatches=%I64u dangerSelected=%I64u dangerSamples=%I64u dangerTicks=%I64u dangerMaxTicks=%I64u terrainCalls=%I64u terrainSelected=%I64u terrainSamples=%I64u terrainTicks=%I64u terrainMaxTicks=%I64u semantics=inclusive_same_thread_wall_samples repeatSemantics=bounded_plot_scene_actor_HP_opportunities_not_validated_cache_hits overlap=nested_queries_and_PLAN_not_additive; subset of systematic sampled queries; bounded early cap biases coverage; later selected queries unknown until a following turn row; no raw-result reuse; missing samples unknown; callback masks do not exclude legacy loading listeners",
             pathProfile.unit,pathProfile.pathType,pathProfile.verify?"verify":"search",serial,pathProfile.thread,pathProfile.nodeGeneration,pathProfile.flags,pathProfile.startX,pathProfile.startY,pathProfile.goalX,pathProfile.goalY,
-            PATH_QUERY_STRIDE,pathProfile.queryPhase,PATH_CALL_STRIDE,pathProfile.phase,pathProfile.startedTick,GetTickCount(),pathProfile.scene,CvStackingStrengthCache::SceneEpoch(),pathProfile.eventFlags,
+            PATH_QUERY_STRIDE,pathProfile.queryPhase,PATH_ROW_LIMIT,pathProfileRows,pathProfileRows==PATH_ROW_LIMIT?1:0,pathProfilePreviousCapTurn,pathProfilePreviousCappedSelected,PATH_CALL_STRIDE,pathProfile.phase,pathProfile.startedTick,GetTickCount(),pathProfile.scene,CvStackingStrengthCache::SceneEpoch(),pathProfile.eventFlags,
             pathProfile.frequency,pathProfile.clockReads,pathProfile.clockFailures,queryAvailable?1:0,queryTicks,pathProfile.nested,pathProfile.cacheHits,pathProfile.cacheBuilds,
             danger.calls,pathProfile.tracked,pathProfile.untracked,pathProfile.repeats,pathProfile.samePhysicalRepeats,pathProfile.dirty,pathProfile.actorMismatch,
             danger.selected,danger.samples,danger.ticks,danger.maximum,terrain.calls,terrain.selected,terrain.samples,terrain.ticks,terrain.maximum);

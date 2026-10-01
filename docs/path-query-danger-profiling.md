@@ -4,12 +4,24 @@ The existing tactical-sampling opt-in now measures path queries as well as
 combat planning. It remains off by default. This adds diagnostics, with no
 danger-result reuse, path-cost changes or reduced search limits.
 
-One in eight outer queries is selected; one in sixteen raw-danger/clear-terrain
+One in128 outer queries is selected; one in sixteen raw-danger/clear-terrain
 calls is timed. Each selected query emits one `PATH_SAMPLE` row identifying
 its actor/unit, path type, search or verification, generation, flags, endpoints
 and source epochs. It reports call counts, sampled ticks and node-cache counts.
 Nested queries suppress their own rows; measured wall intervals can overlap
 other queries and PLAN. They must not be added as independent CPU costs.
+
+At most128 selected query completions attempt a row per native-run turn,
+shared across threads. This retains the earliest selected completions and
+biases coverage if the cap is reached. The next turn's row reports the prior
+turn's denied selected-query count; until then later work remains unknown.
+The cap is checked before starting timing and again at completion. It resets
+on load/reset. This is a diagnostic bound, not a gameplay or search limit.
+
+The original DLL82 one-in-eight stream exhausted the ordinary4096-row budget
+in the dense replay and dropped later-player PLAN/combat records. This sparse
+revision is intended to leave that existing budget available; a native replay
+must verify complete retention. Historical stride8 rows remain readable.
 
 Repeat observations use128 fixed TLS slots and at most16 probes per call.
 Saturation/collisions are counted as untracked work. Matching plot, scene and
@@ -37,6 +49,11 @@ The parser/anchor fixture passes33 checks. Both wall and CPU helpers exclude
 windows. The reader reports missing successful samples as unknown timing,
 and never scales observed repeats into saved time. Native OFF/ON replay checks
 must verify behavior and quantify instrumentation cost before interpretation.
+
+The sparse revision passes110 production-bound source checks and50
+backwards-compatible parser/anchor checks. Its formatter has49 fields and49
+arguments, with a maximum fixture row of1700 bytes. Complete original path
+and node behavior stays unchanged; no raw danger result is cached.
 
 Reproduction: `work/prepare-path-query-profile.py`,
 `work/test-path-query-profile.py --production`, and

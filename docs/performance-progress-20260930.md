@@ -745,3 +745,19 @@ Evidence is in `work/test-runs/perf-d82-path-profile-{off,on}-251-255`, includin
 exact normal-exit manifests, comparisons and phase reports. Existing XML,
 search limits, candidate order and gameplay calculations were unchanged.
 The <30s goal remains unmet.
+
+## DLL83 hash trial rejected
+
+DLL83 (`a1a6b88a1`) matched all699 ordered records and both censuses against
+82OFF. Exact normal game/service closure occurred at06:23:21UTC. Interior
+252 took36.125s (PLAN10.886s),253 took72.953s (PLAN45.224s), compared with
+35.891s/72.625s for82OFF. Despite synthetic long-key gains, this controlled
+pair shows no turn-time benefit. The original forecast hash is restored;
+fixtures and the measured experiment are retained for review. No numerical,
+FIFO, capacity or search change was needed for the trial or restoration.
+
+The next build reduces optional path sampling to one in128 queries and caps
+its row attempts at128 per native-run turn. The cap's coverage bias is
+explicit in records and the reader, including previous-turn denied counts.
+110 adopted source and50 parser/anchor checks passed. This diagnostic bound
+preserves path behavior and leaves the original gameplay/search limits intact.
