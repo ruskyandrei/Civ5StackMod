@@ -11240,7 +11240,7 @@ bool CvTacticalPosition::makeNextAssignments(int iMaxBranches, int iMaxChoicesPe
 
 		//try to detect duplicates ...
 		bool isConsistent = (a != RESULT_NOT_ADDED && b != RESULT_NOT_ADDED);
-		if (isConsistent && pNewChild->isUniqueWithSharedHistory(TACTSIM_UNIQUENESS_CHECK_GENERATIONS))
+		if (isConsistent && pNewChild->isUnique(TACTSIM_UNIQUENESS_CHECK_GENERATIONS))
 		{
 			//do we need to keep working on this one?
 			if (pNewChild->isEarlyFinish() || pNewChild->isExhausted())
@@ -12462,173 +12462,6 @@ bool SComboMove::addMove(const STacticalAssignment& move)
 }
 
 //try to detect whether this new position is equivalent to one we already have
-// Normal tactical expansion preserves the ancestor's assigned-history prefix.
-// Keep this context local to one check: no persistent cache or mutable-history API.
-struct TacticalHistoryEquivalenceContext
-{
-    size_t first;
-    int referenceScore;
-    bool referenceScoreReady;
-    TacticalHistoryEquivalenceContext(const CvBasePosition* reference, size_t sharedPrefix)
-        : first(std::max(reference->getFirstInterestingAssignment(), sharedPrefix)),
-          referenceScore(0), referenceScoreReady(false) {}
-};
-
-static bool tacticalPositionIsEquivalentWithSharedHistory(const CvBasePosition* ref, const CvBasePosition* other, TacticalHistoryEquivalenceContext& context)
-{
-	//self comparison is false by definition!
-	if (ref == other)
-		return false;
-
-	//"ref" is the new position we are evaluating. the "other" may already have finish moves tacked on, so size may be larger!
-	if (ref->GetNumAssignments() > other->GetNumAssignments())
-		return false;
-
-	//now check the scores (ignoring any extra moves in other)
-	// The identical shared prefix cancels in the score comparison. Initialize
-	// only after the original self/length guards; many pairs need no history work.
-	if (!context.referenceScoreReady)
-	{
-		for (size_t i = context.first; i < ref->GetNumAssignments(); ++i)
-			context.referenceScore += ref->GetAssignment(i).Score();
-		context.referenceScoreReady = true;
-	}
-	const int iRefScore = context.referenceScore;
-	int iOtherScore = 0;
-	for (size_t i = context.first; i < ref->GetNumAssignments(); ++i)
-		iOtherScore += other->GetAssignment(i).Score();
-	if (iRefScore != iOtherScore)
-		return false;
-
-	//now check for simple (A.B -> B.A) and less simple (A.B.C -> C.A.B | B.C.A), (A.B.C.D -> D.A.B.C | C.D.A.B | B.C.D.A ) permutations
-	size_t A = INT_MAX;
-	size_t B = INT_MAX;
-	size_t C = INT_MAX;
-	size_t D = INT_MAX;
-	bool mismatch = false;
-	//the "other" may have more moves assigned but they should all be of type FINISH ...
-	//for performance do the iteration in reverse; we expect the differences at the end
-	for (size_t cursor = ref->GetNumAssignments(); cursor > context.first; )
-	{
-		const size_t i = --cursor;
-		//ignore matching elements
-		if (ref->GetAssignment(i) == other->GetAssignment(i))
-			continue;
-
-		//remember where the differences occurred
-		if (A == INT_MAX)
-			A = i;
-		else if (B == INT_MAX)
-			B = i;
-		else if (C == INT_MAX)
-			C = i;
-		else if (D == INT_MAX)
-			D = i;
-
-		//if we found two differences, check if the elements are flipped
-		if (A != INT_MAX && B != INT_MAX)
-		{
-			//simple flip?
-			if (C == INT_MAX)
-			{
-				if (ref->GetAssignment(A) == other->GetAssignment(B) && ref->GetAssignment(B) == other->GetAssignment(A))
-				{
-					//go on checking
-					A = INT_MAX;
-					B = INT_MAX;
-				}
-				else
-				{
-					//check for a three-element permutation before giving up
-				}
-			}
-			else //C != INT_MAX
-			{
-				if (D == INT_MAX)
-				{
-					bool CAB = ref->GetAssignment(A) == other->GetAssignment(C) &&
-						ref->GetAssignment(B) == other->GetAssignment(A) &&
-						ref->GetAssignment(C) == other->GetAssignment(B);
-					bool BCA = ref->GetAssignment(A) == other->GetAssignment(B) &&
-						ref->GetAssignment(B) == other->GetAssignment(C) &&
-						ref->GetAssignment(C) == other->GetAssignment(A);
-
-					if (CAB || BCA)
-					{
-						//go on checking
-						A = INT_MAX;
-						B = INT_MAX;
-						C = INT_MAX;
-					}
-					else
-					{
-						//check for a four-element permutation before giving up
-					}
-				}
-				else //D != INT_MAX
-				{
-					bool DABC = ref->GetAssignment(A) == other->GetAssignment(D) &&
-						ref->GetAssignment(B) == other->GetAssignment(A) &&
-						ref->GetAssignment(C) == other->GetAssignment(B) &&
-						ref->GetAssignment(D) == other->GetAssignment(C);
-					bool CDAB = ref->GetAssignment(A) == other->GetAssignment(C) &&
-						ref->GetAssignment(B) == other->GetAssignment(D) &&
-						ref->GetAssignment(C) == other->GetAssignment(A) &&
-						ref->GetAssignment(D) == other->GetAssignment(B);
-					bool BCDA = ref->GetAssignment(A) == other->GetAssignment(B) &&
-						ref->GetAssignment(B) == other->GetAssignment(C) &&
-						ref->GetAssignment(C) == other->GetAssignment(D) &&
-						ref->GetAssignment(D) == other->GetAssignment(A);
-
-					if (DABC || CDAB || BCDA)
-					{
-						//go on checking
-						A = INT_MAX;
-						B = INT_MAX;
-						C = INT_MAX;
-						D = INT_MAX;
-					}
-					else
-					{
-						//real difference or more complex permutations
-						mismatch = true;
-						break;
-					}
-				}
-			}
-		}
-	}
-
-	//gotcha - there might be an "unfinished" mismatch!
-	if (A != INT_MAX)
-		mismatch = true;
-
-	if (mismatch)
-	{
-		giDifferentPos++;
-		return false;
-	}
-	else
-	{
-		giEquivalentPos++;
-		return true;
-	}
-}
-
-static bool tacticalPositionIsEquivalentToAnyChildWithSharedHistory(const CvTacticalPosition* ref, const CvTacticalPosition* current, TacticalHistoryEquivalenceContext& context)
-{
-	//go depth first
-	const vector<CvTacticalPosition*>& children = current->getChildren();
-	for (size_t i = 0; i < children.size(); i++)
-	{
-		bool bMatch = tacticalPositionIsEquivalentToAnyChildWithSharedHistory(ref, children[i], context);
-		if (bMatch)
-			return bMatch;
-	}
-
-	return tacticalPositionIsEquivalentWithSharedHistory(ref, current, context);
-}
-
 static bool tacticalPositionIsEquivalentToAnyChild(const CvTacticalPosition* ref, const CvTacticalPosition* current)
 {
 	//go depth first
@@ -12655,21 +12488,6 @@ bool CvTacticalPosition::isUnique(int levels) const
 
 	//then recurse downwards to all leaves
 	return !tacticalPositionIsEquivalentToAnyChild(this, start);
-}
-
-bool CvTacticalPosition::isUniqueWithSharedHistory(int levels) const
-{
-	//go up x levels
-	const CvTacticalPosition* start = this;
-	while (start->parentPosition && levels > 0)
-	{
-		start = start->parentPosition;
-		levels--;
-	}
-
-	//then recurse downwards to all leaves
-	TacticalHistoryEquivalenceContext context(this, start->GetNumAssignments());
-	return !tacticalPositionIsEquivalentToAnyChildWithSharedHistory(this, start, context);
 }
 
 struct TacticalPosition_PairCompareFirst
