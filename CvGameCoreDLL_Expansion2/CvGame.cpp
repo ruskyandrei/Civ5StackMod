@@ -83,6 +83,7 @@ extern "C" __declspec(dllimport) long __stdcall CoCreateGuid(GUID* pguid);
 #include "LintFree.h"
 
 int GetNextGlobalID() { return GC.getGame().GetNextGlobalID(); }
+unsigned long g_ulTContainerCacheThread = 0;
 int GetJonRand(int iRange) { return GC.getGame().getJonRandNum(iRange,"generic"); }
 
 struct stringHash
@@ -1618,6 +1619,7 @@ bool ExternalPause()
 void CvGame::update()
 {
 	CvStackingDiagnostics::UpdateBoundaryScope updateBoundary(CvStackingDiagnostics::UPDATE_GAME);
+	g_ulTContainerCacheThread = GetCurrentThreadId(); // see TContainer::Get
 	if(IsWaitingForBlockingInput())
 	{
 		if(!GC.GetEngineUserInterface()->isDiploActive())

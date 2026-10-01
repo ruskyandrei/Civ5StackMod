@@ -14,7 +14,6 @@ class CvCity;
 namespace CvStacking
 {
 	void ResetCache();
-	bool IsEnabled();
 	bool CityRangedAttacksEnabled();
 	int GetInt(const char* szName, int iFallback);
 	enum HotSettingKey
@@ -45,7 +44,30 @@ namespace CvStacking
 		HOT_AIStackLeaveProtectorPenalty,
 		HOT_SETTING_COUNT
 	};
-	int GetIntByKey(HotSettingKey eKey, int iFallback);
+	// The loaded configuration's hot values, published once loading has finished
+	// and cleared by ResetCache. Callers inline the lookup instead of calling into
+	// the rules cache millions of times per turn; before loading they take the
+	// original path.
+	struct HotState
+	{
+		bool bReady;
+		bool bEnabled;
+		bool abPresent[HOT_SETTING_COUNT];
+		int aiValues[HOT_SETTING_COUNT];
+	};
+	extern HotState g_kHotState;
+	bool IsEnabledUncached();
+	int GetIntByKeyUncached(HotSettingKey eKey, int iFallback);
+	inline bool IsEnabled()
+	{
+		return g_kHotState.bReady ? g_kHotState.bEnabled : IsEnabledUncached();
+	}
+	inline int GetIntByKey(HotSettingKey eKey, int iFallback)
+	{
+		if (g_kHotState.bReady && (unsigned int)eKey < (unsigned int)HOT_SETTING_COUNT)
+			return g_kHotState.abPresent[eKey] ? g_kHotState.aiValues[eKey] : iFallback;
+		return GetIntByKeyUncached(eKey, iFallback);
+	}
 
 	int GetCapacity(const CvUnit* pUnit, const CvPlot* pDestination = NULL);
 	int GetCapacity(PlayerTypes eOwner, DomainTypes eDomain, bool bInCity = false);

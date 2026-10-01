@@ -1,5 +1,126 @@
 # Stacking development TODO
 
+## DLL102 campaign follow-up — 2026-10-01
+
+The user stopped this campaign around267 because Babylon repeatedly took over a
+minute and the UI froze during its processing. The last monitor checkpoint is269;
+the game is now closed and the campaign heartbeat is paused. Target350 was not
+reached. Preserve the campaign's saves/logs; do not automatically resume it.
+Evidence folder: `work/test-runs/campaign102-20261001-offense01`.
+
+### Priority: Babylon late-game tactical performance
+
+Resolved 2026-10-01; see `docs/performance-c102-late-game.md`. Replaying the269
+save: DLL102 took93.2/621.1/405.6s for269–271; the current build takes17.6/
+25.4/23.9/26.2s for269–272 with all2,343 retained AI events identical.
+
+- [x] Investigate Babylon's repeated stalls on263,264 and267, including UI freezes
+  of20 seconds or longer. On263, Babylon's unit-AI scope took135.782s, with134.637s
+  in nine tactical searches. Three searches aroundRabat `(19,40)` consumed46.160s,
+  60.359s and27.944s; the60.359s search followed a failed melee postcondition.
+  The full round took168.047s. Other measured Babylon work was about1.9s, so
+  diagnostics and the new offensive-transfer phase are not the main measured cost.
+- [x] Determine why those searches selected the legacy forecast backend with all
+  danger/defender/strength caches inactive. Adjacent searches use indexed caching
+  and are much faster. Log the actual eligibility/bypass reason from already
+  computed flags; do not assume aircraft are responsible without input evidence.
+  Preserve unsupported-unit and callback correctness while retaining acceleration
+  for supported work where possible.
+  Cause: `StackPreviewInputsSupported` rejected every search containing an AIR
+  actor (only the legacy `CanLoadAt` carrier-rebasing hook differs for them).
+  `AITacticalCacheAirActors`=1 keeps the caches; the same search ran18× faster
+  with identical results. Set it to0 for a mod with a side-effecting listener.
+- [ ] Audit stacked melee-kill simulation and postconditions. Unit9087 attacked the
+  expected defender9151 but did not advance, triggering the expensive retry.
+  Verify death, overkill, remaining defenders and legal movement before attributing
+  this to RNG or an execution failure. A successful kill with another enemy still
+  occupying the hex must not be mistaken for a failed attack.
+- [ ] (Still open) Melee-kill retries: about3.8% of searches in the269–272 replay
+  were retried after a postcondition, mostly legitimately; audit the rest.
+- [x] Reproduce from the closest preserved save, compare263/264/267 phase/search
+  traces, and measure responsiveness and complete-turn time. Retain tactical
+  capability rather than hiding the cost by reducing army/search limits. The
+  earlier59.4–59.6s saved253 replay does not qualify this new dense position.
+  Evidence: `babylon263-performance-review.json`;264/267 comparison pending.
+
+### Performance — parked options (not scheduled)
+
+Measured on the269–272 replay after the2026-10-01 work; each would need an exact
+semantic replay comparison like the previous changes.
+- Engine update gaps (~6s/turn): the engine suspends GameCore between a player's
+  activation and first unit update (0.5–1.3s per major). No thread is CPU-bound;
+  earlier engine-setting trials did not help. Only worth revisiting with engine
+  insight (e.g. what the main thread waits for).
+- Tactical search (~10s/turn on the dense turn): profile is flat. Remaining big
+  lever is reusing exact danger/stack outcomes across sibling positions instead
+  of recomputing per position (immutable battle snapshot; see
+  `docs/performance-checkpoint-20261001.md`). Smaller: per-plot copy-on-write for
+  `CvTacticalPlot` vectors (~3–5%), fewer forecast-scene invalidations if UI
+  yields could prove no state change.
+- Pathfinding danger: `PathEndTurnCost` runs the full stack-danger simulation for
+  every end-turn plot (~3% of game-core time); a per-query memo keyed by unit/plot
+  and danger revision could remove most of it.
+- Remaining allocations: about6% inside searches and12% outside (pathfinder
+  node lists, city yield lists, tactical plot list growth for stacks over four).
+- Yield interval: `AITacticalYieldPositions` is2000; larger values help further
+  only marginally and lengthen UI pauses.
+- Quitting mid-turn crashed the DLL102 baseline at DLL+0x15038 (shutdown race near
+  the rules cache); not investigated.
+
+### Offensive behavior and diagnostics
+
+- [ ] Ensure unused legal ranged/siege shots from the current tile are not lost
+  simply because the whole assault is gathering or future incoming damage is
+  positive. The user explicitly wants these units to fire when they can; ranged
+  fire has no ordinary immediate ranged retaliation. Separate stationary firing
+  from movement/assembly safety and deliberate retreat/other useful attacks.
+  Current guards require real-stack danger0 for stationary fire and singleton
+  danger0 in the generic gathering fallback. Add bounded firing-refusal reasons
+  per unit/turn without extra path or damage searches.
+- [ ] Recheck Rome's three siege units nearTegdaoust on145–155. They are counted,
+  with a credible land capturer on145–150, but strength and sustained-damage
+  predicates fail. On149, sustain102 minus healing19 over four turns gives332,
+  versus547.5 required for438 cityHP with the incomplete-information margin.
+  One Roman ranged shot on158 deals26 cityHP and21 collateral; the city heals
+  back to full by164. Exact earlier per-unit firing vetoes are unlogged.
+  Full-stack occupancy excludes the firing unit; VP's setup check is disabled,
+  and the low-HP futile-fire rule cannot explain the full-health wait.
+- [ ] Fix combined/naval operation city-target resolution for VP's two-ring
+  coastal waypoints. Confirmed case: Mongol operation5634 targets water2362
+  `(74,26)`, two hexes fromCarthage2451 `(75,27)`, while our resolver searches
+  only adjacent hexes. This loses objective recognition and custom reinforcement
+  coordination. Use bounded resolution with enemy ownership and ambiguity checks,
+  avoiding world scans, extra path queries or RNG.
+- [ ] Audit combined armies' land/sea role accounting: the army's sea domain
+  currently causes opening/objective assessment to omit land members. Preserve
+  actual landing routes, capturing capability and escorts; test each domain and
+  cannon support through embarkation and tactical handoff.
+- [ ] Trace Mongol cannon allocation fromOldSarai1032 throughHsia1570 toward
+  Carthage. Large armies also targetDublin/Amsterdam, and some transfers head
+  towardPrague. Bulk city-defense retention is not supported by the retained
+  evidence; Hsia is safe at203 but threatened by215. Confirm individual cannon
+  IDs, competing commitments, staging and movement before blaming terrain or
+  readiness alone. Mongol–Carthage peace interrupts179–189; they make peace again
+  by220, so the apparent idle attack in the222 screenshot is legally unable to
+  fire. Preserve war-state checks when applying the stationary-fire rule.
+- [ ] Investigate Babylon's reported nuclear strike nearSalé and lack of conquest
+  follow-up around266. Verify the strike, target/war state, actual post-strikeHP,
+  surviving defenders, fallout routes and a legally available melee capturer.
+  Coordinate nuclear attacks with exploitation forces when conquest is intended;
+  distinguish deliberate economic/defensive nuclear targets from capture plans.
+  This observation is not yet verified from the attack ledger.
+- [x] Check Geneva's survival on216: four Songhai ranged shots leave123HP; healing
+  raises it to147. On217, three shots reduce it to1 and unit5328 captures it.
+  This is a one-turn delay, not a prolonged1HP siege. A legal missed melee finish
+  on216 is not established; candidate truncation/other field combat merits review
+  only with actual legality and unit-state evidence.
+
+Case reports: `tegdaoust-offense-review.json`, `tegdaoust-fire-gates-review.json`,
+`mongodb-hsia-offense-review.json`, `mongolia-defense-cityfire-review.json`,
+`geneva-turn216-review.json`, and `tegdaoust-t151-review/findings.json`.
+All new policy numbers should remain XML-configurable, with performance checks.
+These are follow-up tasks; no gameplay change was made during this campaign.
+
 ## AI follow-up checkpoint — 2026-09-30
 
 - [x] Commit exact performance improvements and confirm the preserved late-game round at 28.875s and 29.735s with Summary diagnostics; retain the replay as a regression check. Results apply to this saved position, not all campaigns.

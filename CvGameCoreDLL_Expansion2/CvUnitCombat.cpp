@@ -262,21 +262,21 @@ struct StackCollateralOrder
 	}
 };
 
-std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDamage(
+void CvUnitCombat::GetStackCollateralDamageInto(std::vector<std::pair<const CvUnit*, int> >& result,
 	const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
 	int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
 	const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison, int iGarrisonDamage, int iExtraCityDamage)
 {
-	std::vector<std::pair<const CvUnit*, int> > result;
+	result.clear();
 	if (!CvStacking::IsEnabled() || !pAttacker || !pTargetPlot || iPrimaryHitDamage <= 0)
-		return result;
+		return;
 	int iLimit = min(CvStacking::GetCollateralTargetLimit(pAttacker), MAX_DAMAGE_MEMBER_COUNT);
 	if (iLimit <= 0)
-		return result;
+		return;
 	int iPercent = max(0, CvStacking::GetIntByKey(CvStacking::HOT_CollateralPercent, 20));
 	int iBaseDamage = static_cast<int>((static_cast<int64>(iPrimaryHitDamage) * iPercent) / 100);
 	if (iBaseDamage <= 0)
-		return result;
+		return;
 	int iProtection = pTargetPlot->isCity() ? CvStacking::GetCityProtection(pTargetPlot->getPlotCity(),iExtraCityDamage) : 0;
 	int iMitigated = static_cast<int>((static_cast<int64>(iBaseDamage) * max(0, 100 - iProtection)) / 100);
 	if (iProtection < 100)
@@ -295,7 +295,12 @@ std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDama
 		int iFloor = static_cast<int>((static_cast<int64>(pUnit->GetMaxHitPoints()) * iFloorPercent + 99) / 100);
 		int iDamage = min(iMitigated, max(0, iHP - iFloor));
 		if (iDamage > 0)
+		{
+			// One allocation instead of geometric growth; the sort below fixes the order.
+			if (result.empty() && result.capacity() < candidates.size())
+				result.reserve(candidates.size());
 			result.push_back(std::make_pair(pUnit, iDamage));
+		}
 	}
 	std::sort(result.begin(), result.end(), StackCollateralOrder());
 	if (result.size() > static_cast<size_t>(iLimit))
@@ -307,6 +312,16 @@ std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDama
 		bGarrisonIncluded = bGarrisonIncluded || result[i].first == pGarrison;
 	if (pGarrison && iGarrisonDamage > 0 && !bGarrisonIncluded && result.size() >= MAX_DAMAGE_MEMBER_COUNT)
 		result.resize(MAX_DAMAGE_MEMBER_COUNT - 1);
+}
+
+std::vector<std::pair<const CvUnit*, int> > CvUnitCombat::GetStackCollateralDamage(
+	const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
+	int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
+	const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison, int iGarrisonDamage, int iExtraCityDamage)
+{
+	std::vector<std::pair<const CvUnit*, int> > result;
+	GetStackCollateralDamageInto(result, pAttacker, pTargetPlot, pPrimaryDefender, iPrimaryHitDamage, candidates,
+		extraDamage, pGarrison, iGarrisonDamage, iExtraCityDamage);
 	return result;
 }
 

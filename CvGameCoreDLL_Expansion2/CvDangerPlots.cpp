@@ -78,9 +78,9 @@ bool CvDangerPlots::UpdateDangerSingleUnit(const CvUnit* pLoopUnit, bool bIgnore
 	if (pLoopUnit->IsCanAttackRanged())
 	{
 		//for ranged every tile we can enter with movement left is a base for attack
-		std::set<int> attackableTiles = TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(pLoopUnit,reachablePlots,false,false);
+		const vector<int> attackableTiles = TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(pLoopUnit,reachablePlots,false,false);
 
-		for (std::set<int>::iterator attackTile=attackableTiles.begin(); attackTile!=attackableTiles.end(); ++attackTile)
+		for (vector<int>::const_iterator attackTile=attackableTiles.begin(); attackTile!=attackableTiles.end(); ++attackTile)
 		{
 			CvPlot* pAttackTile = GC.getMap().plotByIndexUnchecked(*attackTile);
 			AssignUnitDangerValue(pLoopUnit, pAttackTile);
@@ -892,6 +892,7 @@ int CvDangerPlotContents::GetDanger(const CvUnit* pUnit, const SUnitIDValueConta
  if (CvStacking::IsEnabled() && pUnit->IsCombatUnit() && !pUnit->isCargo())
  {
   vector<const CvUnit*> candidates;
+  candidates.reserve(m_pPlot->getNumUnits() + 1);
   for (int i = 0; i < m_pPlot->getNumUnits(); ++i)
   {
    const CvUnit* other = m_pPlot->getUnitByIndex(i);
@@ -1163,6 +1164,7 @@ static int SimulateStackCityThreats(const CvDangerPlotContents& contents, const 
  int result = 0;
  cityCanFall = false;
  SUnitIDValueContainer interceptionUses;
+ vector<pair<const CvUnit*, int> > collateral; // reused by every attacker
  for (DangerUnitVector::const_iterator it = contents.m_apUnits.begin(); it != contents.m_apUnits.end(); ++it)
  {
   const CvUnit* attacker = GET_PLAYER(it->first).getUnit(it->second);
@@ -1181,7 +1183,7 @@ static int SimulateStackCityThreats(const CvDangerPlotContents& contents, const 
   int retaliation = 0, garrisonHit = 0;
   const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnCity(city, attacker, from, retaliation, garrisonHit,
    false, attackerDamage, extraCityDamage + result, garrison ? damage.GetValue(garrison->GetID()) : 0, true, true, garrison);
-  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, city->plot(), NULL,
+  CvUnitCombat::GetStackCollateralDamageInto(collateral, attacker, city->plot(), NULL,
    hit, candidates, damage, garrison, garrisonHit, extraCityDamage + result);
   result += StackExpectedStrikeDamage(hit, strikeChance);
   if (garrison)
@@ -1241,6 +1243,7 @@ int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const
   return result;
  }
  SUnitIDValueContainer interceptionUses;
+ vector<pair<const CvUnit*, int> > collateral; // reused by every attacker
  for (DangerUnitVector::const_iterator it = m_apUnits.begin(); it != m_apUnits.end(); ++it)
  {
   const CvUnit* attacker = GET_PLAYER(it->first).getUnit(it->second);
@@ -1261,7 +1264,7 @@ int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const
   int retaliation = 0;
   const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(defender, attacker, m_pPlot, from, retaliation, false,
    attackerDamage, damage.GetValue(defender->GetID()), true, true);
-  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, m_pPlot, defender, hit,
+  CvUnitCombat::GetStackCollateralDamageInto(collateral, attacker, m_pPlot, defender, hit,
    candidates, damage);
   // Resolve the entire strike using its pre-hit state, then select anew.
   if (defender)
@@ -1306,6 +1309,7 @@ void CvDangerPlotContents::GetStackDangerOutcome(PlayerTypes defendingOwner, Tea
   return;
  }
  SUnitIDValueContainer interceptionUses;
+ vector<pair<const CvUnit*, int> > collateral; // reused by every attacker
  for (DangerUnitVector::const_iterator it = m_apUnits.begin(); it != m_apUnits.end(); ++it)
  {
   const CvUnit* attacker = GET_PLAYER(it->first).getUnit(it->second);
@@ -1326,7 +1330,7 @@ void CvDangerPlotContents::GetStackDangerOutcome(PlayerTypes defendingOwner, Tea
   int retaliation = 0;
   const int hit = TacticalAIHelpers::GetSimulatedDamageFromAttackOnUnit(defender, attacker, m_pPlot, from, retaliation, false,
    attackerDamage, damage.GetValue(defender->GetID()), true, true);
-  const vector<pair<const CvUnit*, int> > collateral = CvUnitCombat::GetStackCollateralDamage(attacker, m_pPlot, defender, hit,
+  CvUnitCombat::GetStackCollateralDamageInto(collateral, attacker, m_pPlot, defender, hit,
    candidates, damage);
   // Resolve the entire strike using its pre-hit state, then select anew.
   if (defender)
@@ -1376,6 +1380,7 @@ int CvDangerPlotContents::GetDanger(const CvCity* pCity, const CvUnit* pPretendG
  if (CvStacking::IsEnabled())
  {
   vector<const CvUnit*> candidates;
+  candidates.reserve(m_pPlot->getNumUnits() + 1);
   for (int i = 0; i < m_pPlot->getNumUnits(); ++i)
   {
    const CvUnit* unit = m_pPlot->getUnitByIndex(i);

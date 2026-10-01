@@ -900,6 +900,67 @@ typedef tr1::unordered_map<DomainTypes, ReachablePlots> TCachedDistanceToTargetP
 class CvTacticalPosition;
 class CvTactPosStorage;
 
+// Vector with inline storage for the few units on one tactical plot. The search
+// copies whole plot vectors for every child position; with std::vector each
+// occupied plot cost heap allocations on every copy. Only the operations the
+// tactical code uses are provided; T must be cheap to copy.
+template <class T, unsigned int N>
+class TactSmallVec
+{
+public:
+	typedef T value_type;
+	typedef T* iterator;
+	typedef const T* const_iterator;
+
+	TactSmallVec() : m_data(m_inline), m_size(0), m_capacity(N) {}
+	TactSmallVec(const TactSmallVec& other) : m_data(m_inline), m_size(0), m_capacity(N) { assignFrom(other); }
+	~TactSmallVec() { if (m_data != m_inline) delete[] m_data; }
+	TactSmallVec& operator=(const TactSmallVec& other) { if (this != &other) assignFrom(other); return *this; }
+
+	size_t size() const { return m_size; }
+	bool empty() const { return m_size == 0; }
+	T& operator[](size_t i) { return m_data[i]; }
+	const T& operator[](size_t i) const { return m_data[i]; }
+	iterator begin() { return m_data; }
+	iterator end() { return m_data + m_size; }
+	const_iterator begin() const { return m_data; }
+	const_iterator end() const { return m_data + m_size; }
+	void clear() { m_size = 0; }
+	void push_back(const T& value) { if (m_size == m_capacity) grow(m_capacity * 2); m_data[m_size++] = value; }
+	iterator erase(iterator it)
+	{
+		for (iterator next = it + 1; next != end(); ++next)
+			*(next - 1) = *next;
+		--m_size;
+		return it;
+	}
+
+private:
+	void grow(unsigned int capacity)
+	{
+		T* data = new T[capacity];
+		for (unsigned int i = 0; i < m_size; i++)
+			data[i] = m_data[i];
+		if (m_data != m_inline)
+			delete[] m_data;
+		m_data = data;
+		m_capacity = capacity;
+	}
+	void assignFrom(const TactSmallVec& other)
+	{
+		m_size = 0;
+		if (other.m_size > m_capacity)
+			grow(other.m_size);
+		for (unsigned int i = 0; i < other.m_size; i++)
+			m_data[i] = other.m_data[i];
+		m_size = other.m_size;
+	}
+
+	T* m_data;
+	unsigned int m_size, m_capacity;
+	T m_inline[N];
+};
+
 // Private roster value: copies share ordered membership until a real removal.
 // Borrowed const views are consumed before mutation in all current callers;
 // they must not be retained across a detach/clear/reinitialization.
@@ -938,7 +999,9 @@ public:
 	void setNumAdjacentEnemies(eTactPlotDomain eDomain, int iValue) { aiEnemyCombatUnitsAdjacent[eDomain]=static_cast<unsigned char>(iValue); }
 	int getNumAdjacentFriendlies(eTactPlotDomain eDomain, int iIgnoreUnitPlot) const;
 	int getNumAdjacentFriendliesEndTurn(eTactPlotDomain eDomain) const;
-	const vector<STacticalUnit>& getUnitsAtPlot() const { return vUnitsHere; }
+	typedef TactSmallVec<STacticalUnit, 4> UnitList;
+	typedef TactSmallVec<const CvUnit*, 4> FixedUnitList;
+	const UnitList& getUnitsAtPlot() const { return vUnitsHere; }
 
 	bool isEnemy(eTactPlotDomain eDomain = TD_BOTH) const { return aiEnemyDistance[eDomain]==0; }
 	bool isEnemyCity() const { return bEnemyCityPresent; }
@@ -962,7 +1025,7 @@ public:
 	bool removeEnemyUnitIfPresent(int iUnitID);
 	void clearCapturedCity();
 	const vector<const CvUnit*>& getEnemyUnits() const { return vEnemyUnits.read(); }
-	const vector<const CvUnit*>& getFixedFriendlyUnits() const { return vFixedFriendlyUnits; }
+	const FixedUnitList& getFixedFriendlyUnits() const { return vFixedFriendlyUnits; }
 	int getFixedFriendlyCount(DomainTypes eDomain) const;
 
 	unsigned char getEnemyDistance(eTactPlotDomain eDomain = TD_BOTH) const;
@@ -988,10 +1051,10 @@ public:
 protected:
 	const CvPlot* pPlot; //null if invalid
 	STacticalEnemyRoster vEnemyUnits; // Ordered surviving defenders; detach only on actual membership mutation.
-	vector<const CvUnit*> vFixedFriendlyUnits; // Owned units omitted from bounded search still occupy slots.
+	FixedUnitList vFixedFriendlyUnits; // Owned units omitted from bounded search still occupy slots.
 	PlayerTypes eSimPlayer;
 	bool bEnemyCityPresent;
-	vector<STacticalUnit> vUnitsHere; //which (simulated) units are in this plot?
+	UnitList vUnitsHere; //which (simulated) units are in this plot?
 
 	unsigned char aiEnemyDistance[3]; //distance to attack targets, not civilians. recomputed every time an enemy is killed or discovered
 	unsigned char aiEnemyCombatUnitsAdjacent[3]; //recomputed every time an enemy is killed or discovered
@@ -1491,6 +1554,7 @@ public:
 	size_t getNumPlots() const { return (int)tactPlots.read().size(); }
 	int getTotalNumFriendlyUnits() const { return (int)nOurOriginalUnits; }
 	int GetUnitDamage(int iUnitID) const;
+	bool HasKilledEnemyUnit(const CvTacticalPlot& plot) const;
 	int GetCityDamage(int iCityID) const;
 	void ChangeUnitDamage(int iUnitID, int iChange);
 	void ChangeCityDamage(int iCityID, int iChange);
@@ -1654,7 +1718,7 @@ namespace TacticalAIHelpers
 
 	ReachablePlots GetAllPlotsInReachThisTurn(const CvUnit* pUnit, const CvPlot* pStartPlot, int iFlags, int iMinMovesLeft=0, int iStartMoves=-1, const PlotIndexContainer& plotsToIgnoreForZOC=PlotIndexContainer());
 	vector<int> GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, const CvPlot* pBasePlot, bool bOnlyWithEnemy, bool bIgnoreVisibility);
-	std::set<int> GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, ReachablePlots& basePlots, bool bOnlyWithEnemy,  bool bIgnoreVisibility);
+	vector<int> GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, ReachablePlots& basePlots, bool bOnlyWithEnemy,  bool bIgnoreVisibility); //sorted, unique
 	void UpdatePlotDistanceToTarget(PlayerTypes ePlayer, CvPlot* pTargetPlot);
 	int GetPlotDistanceToTarget(int iPlotIndex, DomainTypes eRelevantDomain);
 

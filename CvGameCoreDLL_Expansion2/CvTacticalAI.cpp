@@ -6068,12 +6068,16 @@ vector<int> TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit
 	return resultSet;
 }
 
-std::set<int> TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, ReachablePlots& basePlots, bool bOnlyWithEnemy, bool bIgnoreVisibility)
+vector<int> TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(const CvUnit* pUnit, ReachablePlots& basePlots, bool bOnlyWithEnemy, bool bIgnoreVisibility)
 {
-	std::set<int> resultSet;
+	vector<int> resultSet;
 
-	if (!pUnit || !pUnit->IsCanAttackRanged())
+	if (!pUnit || !pUnit->IsCanAttackRanged() || basePlots.empty())
 		return resultSet;
+
+	// Ascending and unique, like the std::set this replaced, without one tree node per
+	// attackable plot. The bitmap answers the "already attackable" test.
+	vector<bool> attackable(GC.getMap().numPlots(), false);
 
 	int iRange = min(5,max(1,pUnit->GetRange()));
 	for (ReachablePlots::const_iterator base=basePlots.begin(); base!=basePlots.end(); ++base)
@@ -6095,15 +6099,19 @@ std::set<int> TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(const CvUnit* pUn
 
 			//if the plot is already know to be attackable, don't check again
 			//the reverse is not true: from another base plot the attack might work!
-			if (!pLoopPlot || resultSet.find(pLoopPlot->GetPlotIndex())!=resultSet.end())
+			if (!pLoopPlot || attackable[pLoopPlot->GetPlotIndex()])
 				continue;
 
 			if (!bOnlyWithEnemy || pLoopPlot->isEnemyCity(*pUnit) || pLoopPlot->isEnemyUnit(pUnit->getOwner(),true,!bIgnoreVisibility))
 				if (pUnit->canEverRangeStrikeAt(pLoopPlot->getX(), pLoopPlot->getY(), pBasePlot, bIgnoreVisibility))
-					resultSet.insert(pLoopPlot->GetPlotIndex());
+				{
+					attackable[pLoopPlot->GetPlotIndex()] = true;
+					resultSet.push_back(pLoopPlot->GetPlotIndex());
+				}
 		}
 	}
 
+	std::sort(resultSet.begin(), resultSet.end());
 	return resultSet;
 }
 
@@ -7217,8 +7225,8 @@ vector<pair<CvPlot*, bool>> TacticalAIHelpers::GetTargetsInRange(const CvUnit * 
 	if (pUnit->IsCanAttackRanged())
 	{
 		//for ranged every tile we can enter with movement left is a base for attack
-		std::set<int> attackableTiles = TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(pUnit,reachablePlots,true,false);
-		for (std::set<int>::const_iterator attackTile=attackableTiles.begin(); attackTile!=attackableTiles.end(); ++attackTile)
+		const vector<int> attackableTiles = TacticalAIHelpers::GetPlotsUnderRangedAttackFrom(pUnit,reachablePlots,true,false);
+		for (vector<int>::const_iterator attackTile=attackableTiles.begin(); attackTile!=attackableTiles.end(); ++attackTile)
 		{
 			CvPlot* pAttackTile = GC.getMap().plotByIndexUnchecked(*attackTile);
 			bool bCanKill = CanKillTarget(pUnit,pAttackTile);
@@ -8017,6 +8025,8 @@ static bool StackForecastContext()
 static StackForecastKey gStackDangerScratch, gStackDefenderScratch;
 static vector<pair<int,int> > gStackSortScratch;
 static bool gStackDangerScratchBusy=false, gStackDefenderScratchBusy=false, gStackSortScratchBusy=false;
+static vector<const CvUnit*> gStackSoloScratch;
+static bool gStackSoloScratchBusy=false;
 struct StackForecastQuery
 {
  StackForecastKey* scratch;
@@ -8266,6 +8276,12 @@ static bool StackPreviewInputsSupported(const vector<CvUnit*>& units)
  if (!gDLL->HasGameCoreLock() || MOD_EVENTS_CAN_MOVE_INTO || MOD_EVENTS_AIRLIFT ||
   MOD_EVENTS_SEALIFT || MOD_EVENTS_UNIT_RANGEATTACK || MOD_EVENTS_CITY_BOMBARD || MOD_EVENTS_REBASE || MOD_EVENTS_UNIT_ACTIONS)
   return false;
+ // AIR actors only differ through the legacy CanLoadAt Lua query (carrier
+ // rebasing). Excluding them disabled every cache for the whole search, which
+ // made late-game searches with bombers about ten times slower. Set the XML
+ // row to 0 when a mod registers a CanLoadAt listener with side effects.
+ if (CvStacking::GetInt("AITacticalCacheAirActors",1))
+  return true;
  for (size_t i=0;i<units.size();++i)
   if (units[i] && units[i]->getDomainType()==DOMAIN_AIR) return false;
  return true;
@@ -8301,9 +8317,10 @@ struct StackForecastScope
   gStackDangerEvictions = gStackDefenderEvictions = 0;
   gStackPeakEntries = gStackPeakKeyBytes = gStackPeakEstimatedBytes = 0;
   gStackKeyPayloadBytes = 0;
-  gStackEntryLimit = (size_t)gTactPosStorage.getSizeLimit();
-  // Memoization shares the existing search budget: at most one entry per
-  // position, with an ID/damage pair per movable-unit slot as payload budget.
+  // Dense searches evict far more forecasts than they keep at one entry per
+  // position; the XML row sets the entry count (about 172 bytes each).
+  gStackEntryLimit = (size_t)max(gTactPosStorage.getSizeLimit(), CvStacking::GetInt("AITacticalForecastEntries", 24000));
+  // An ID/damage pair per movable-unit slot as payload budget.
   gStackKeyPayloadLimit = gStackEntryLimit * TACTSIM_MAX_UNITS * 2 * sizeof(int);
   gUseIndexed=false;
   try { if(gStackForecastsActive){gIndexed.Init(gStackEntryLimit);gUseIndexed=true;} }
@@ -9502,8 +9519,9 @@ static void GetVirtualFriendlyStack(const CvTacticalPosition& position, const Cv
  const CvTacticalPlot* tactical = position.getTactPlot(plot->GetPlotIndex());
  if (tactical)
  {
-  candidates = tactical->getFixedFriendlyUnits();
-  const vector<STacticalUnit>& units = tactical->getUnitsAtPlot();
+  const CvTacticalPlot::FixedUnitList& fixedUnits = tactical->getFixedFriendlyUnits();
+  candidates.assign(fixedUnits.begin(), fixedUnits.end());
+  const CvTacticalPlot::UnitList& units = tactical->getUnitsAtPlot();
   for (size_t i = 0; i < units.size(); ++i)
   {
    const CvUnit* unit = GET_PLAYER(position.getPlayer()).getUnit(units[i].iUnitID);
@@ -9681,10 +9699,10 @@ static size_t CountVirtualFriendlyStack(const CvTacticalPosition& position, cons
  const CvTacticalPlot* tactical = position.getTactPlot(plot->GetPlotIndex());
  if (tactical)
  {
-  const vector<const CvUnit*>& fixed = tactical->getFixedFriendlyUnits();
+  const CvTacticalPlot::FixedUnitList& fixed = tactical->getFixedFriendlyUnits();
   count = fixed.size();
   arrivingPresent = arriving && std::find(fixed.begin(), fixed.end(), arriving) != fixed.end();
-  const vector<STacticalUnit>& units = tactical->getUnitsAtPlot();
+  const CvTacticalPlot::UnitList& units = tactical->getUnitsAtPlot();
   for (size_t i = 0; i < units.size(); ++i)
   {
    const CvUnit* unit = GET_PLAYER(position.getPlayer()).getUnit(units[i].iUnitID);
@@ -9957,8 +9975,17 @@ static int ScoreStackPositionMembers(const CvUnit* unit, const CvPlot* plot, con
  int score = 0;
  if (vulnerable)
  {
-  vector<const CvUnit*> solo(1, vulnerable);
-  int alone = GetCachedStackDanger(vulnerable, plot, solo, damage, position.GetUnitDamageDealt());
+  // Scored for every destination: the owning search thread reuses one buffer,
+  // while nested or foreign queries build their own.
+  vector<const CvUnit*> soloLocal;
+  const bool borrowed = IsStackForecastOwner() && !gStackSoloScratchBusy;
+  vector<const CvUnit*>& solo = borrowed ? gStackSoloScratch : soloLocal;
+  solo.assign(1, vulnerable);
+  int alone;
+  {
+   struct BusyGuard { bool active; BusyGuard(bool b):active(b){if(active)gStackSoloScratchBusy=true;} ~BusyGuard(){if(active)gStackSoloScratchBusy=false;} } busy(borrowed);
+   alone = GetCachedStackDanger(vulnerable, plot, solo, damage, position.GetUnitDamageDealt());
+  }
   int protectedDamage = GetCachedStackDanger(vulnerable, plot, candidates, damage, position.GetUnitDamageDealt());
   // INT_MAX means city capture; do not let sentinel arithmetic overflow.
   alone = min(alone, vulnerable->GetMaxHitPoints());
@@ -10590,8 +10617,8 @@ static int HealUnitsInPlot(SUnitIDValueContainer& unitHealing, int& iDamageDelta
 	if (!tactPlot)
 		return 0;
 
-	const vector<STacticalUnit>& units = tactPlot->getUnitsAtPlot();
-	for (vector<STacticalUnit>::const_iterator it = units.begin(); it != units.end(); ++it)
+	const CvTacticalPlot::UnitList& units = tactPlot->getUnitsAtPlot();
+	for (CvTacticalPlot::UnitList::const_iterator it = units.begin(); it != units.end(); ++it)
 	{
 		CvUnit* pUnit = GET_PLAYER(assumedPosition.getPlayer()).getUnit(it->iUnitID);
 		if (!pUnit)
@@ -11840,7 +11867,7 @@ void CvTacticalPlot::friendlyUnitMovingIn(CvTacticalPosition& currentPosition, c
 
 void CvTacticalPlot::friendlyUnitMovingOut(CvTacticalPosition& currentPosition, const STacticalAssignment& assignment)
 {
-	for (vector<STacticalUnit>::iterator it = vUnitsHere.begin(); it != vUnitsHere.end(); it++)
+	for (UnitList::iterator it = vUnitsHere.begin(); it != vUnitsHere.end(); it++)
 	{
 		if (assignment.iUnitID == it->iUnitID)
 		{
@@ -12688,7 +12715,7 @@ int CvTacticalPosition::countBlockingUnitsAtPlot(int iPlotIndex, eUnitMovementSt
   return 0;
  int count = 0;
  const bool stackCombat = CvStacking::IsEnabled() && (isCombatUnit(moveType) || isEmbarkedUnit(moveType));
- const vector<STacticalUnit>& units = plot->getUnitsAtPlot();
+ const CvTacticalPlot::UnitList& units = plot->getUnitsAtPlot();
  for (size_t i = 0; i < units.size(); ++i)
  {
   const CvUnit* other = GET_PLAYER(ePlayer).getUnit(units[i].iUnitID);
@@ -12710,7 +12737,7 @@ int CvTacticalPosition::getFirstBlockingUnitIDAtPlot(int iPlotIndex, eUnitMoveme
 	if (!tactPlot)
 		return result;
 
-	const vector<STacticalUnit>& units = tactPlot->getUnitsAtPlot();
+	const CvTacticalPlot::UnitList& units = tactPlot->getUnitsAtPlot();
 	const CvPlayer& kPlayer = GET_PLAYER(ePlayer);
 
 	for (size_t i = 0; i < units.size(); i++)
@@ -13484,7 +13511,7 @@ pair<int,int> CvTacticalPosition::doVisibilityUpdate(const STacticalAssignment& 
 						const CvTacticalPlot* neighborPlot = getTactPlot(pNeighbor->GetPlotIndex());
 						if (neighborPlot)
 						{
-							const vector<STacticalUnit>& units = neighborPlot->getUnitsAtPlot();
+							const CvTacticalPlot::UnitList& units = neighborPlot->getUnitsAtPlot();
 							for (size_t j = 0; j < units.size(); j++)
 								ASSERT(!isCombatUnit(units[j].eMoveType));
 						}
@@ -13499,6 +13526,15 @@ pair<int,int> CvTacticalPosition::doVisibilityUpdate(const STacticalAssignment& 
 		refreshVolatilePlotProperties();
 
 	return make_pair( (int)gNewlyVisiblePlots.size(), nNewEnemies);
+}
+
+bool CvTacticalPosition::HasKilledEnemyUnit(const CvTacticalPlot& plot) const
+{
+	const vector<const CvUnit*>& enemies = plot.getEnemyUnits();
+	for (size_t j = 0; j < enemies.size(); ++j)
+		if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
+			return true;
+	return false;
 }
 
 CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const STacticalAssignment& newAssignment)
@@ -13625,14 +13661,18 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
   vector<CvTacticalPlot>& plots = tactPlots.write();
   for (size_t i = 0; i < plots.size(); ++i)
   {
-   vector<const CvUnit*> enemies = plots[i].getEnemyUnits();
    bool changed = false;
-   for (size_t j = 0; j < enemies.size(); ++j)
-    if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
-    {
-     changed |= plots[i].removeEnemyUnitIfPresent(enemies[j]->GetID());
-     ++nKilledEnemies;
-    }
+   // Copy the list (removal rewrites it) only for plots where a unit died.
+   if (HasKilledEnemyUnit(plots[i]))
+   {
+    const vector<const CvUnit*> enemies = plots[i].getEnemyUnits();
+    for (size_t j = 0; j < enemies.size(); ++j)
+     if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
+     {
+      changed |= plots[i].removeEnemyUnitIfPresent(enemies[j]->GetID());
+      ++nKilledEnemies;
+     }
+   }
    if ((changed || (captureCity && plots[i].getPlotIndex() == newAssignment.iToPlotIndex)) && !plots[i].isEnemy())
    {
     const int index = plots[i].getPlotIndex();
@@ -13694,11 +13734,14 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
   vector<CvTacticalPlot>& plots = tactPlots.write();
   for (size_t i = 0; i < plots.size(); ++i)
   {
-   vector<const CvUnit*> enemies = plots[i].getEnemyUnits();
    bool changed = false;
-   for (size_t j = 0; j < enemies.size(); ++j)
-    if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
-    { changed |= plots[i].removeEnemyUnitIfPresent(enemies[j]->GetID()); ++nKilledEnemies; }
+   if (HasKilledEnemyUnit(plots[i]))
+   {
+    const vector<const CvUnit*> enemies = plots[i].getEnemyUnits();
+    for (size_t j = 0; j < enemies.size(); ++j)
+     if (GetUnitDamage(enemies[j]->GetID()) >= enemies[j]->GetCurrHitPoints())
+     { changed |= plots[i].removeEnemyUnitIfPresent(enemies[j]->GetID()); ++nKilledEnemies; }
+   }
    if (changed && !plots[i].isEnemy())
    {
     const int index = plots[i].getPlotIndex();
@@ -13738,13 +13781,13 @@ CvTacticalPosition::AddAssignmentResult CvTacticalPosition::addAssignment(const 
 	{
 		//when in doubt, increasing our visibility is good
 		//but only for our first line units ... need to be careful with the others
-		STacticalAssignment modifiedAssignment = newAssignment;
+		//(the same clamped arithmetic as AddScore(0, visibility, 0) on a copy, without
+		//copying the assignment's damage containers)
+		int iBonusScore = newAssignment.GetBonusScore();
 		if (newAssignment.iRemainingMoves > 0)
-		{
-			modifiedAssignment.AddScore(0, visibilityResult.first, 0);
-		}
+			iBonusScore = STacticalAssignment::ClampShort(iBonusScore + visibilityResult.first);
 
-		UpdateScore(modifiedAssignment);
+		UpdateScore(newAssignment.iUnitID, newAssignment.GetPlotScore(), newAssignment.GetOldPlotScore(), newAssignment.GetDamageDelta(), iBonusScore);
 
 	}
 
@@ -14406,10 +14449,10 @@ int CvSupportPosition::GetUnitDanger(const SUnitStats& unit, const CvPlot* pPlot
 
 	if (pTactPlot && pTactPlot->isCombatEndTurn())
 	{
-		const vector<STacticalUnit>& unitsAtPlot = pTactPlot->getUnitsAtPlot();
+		const CvTacticalPlot::UnitList& unitsAtPlot = pTactPlot->getUnitsAtPlot();
 		if (!unitsAtPlot.empty())
 		{
-			for (vector<STacticalUnit>::const_iterator it = unitsAtPlot.begin(); it != unitsAtPlot.end(); ++it)
+			for (CvTacticalPlot::UnitList::const_iterator it = unitsAtPlot.begin(); it != unitsAtPlot.end(); ++it)
 			{
 				int iCoveringUnitId = it->iUnitID;
 
@@ -15609,6 +15652,8 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	completedPositions.clear();
 	size_t iUsedPositions = 0;
 	DWORD yieldMs=0;unsigned int yieldCount=0;
+	//each UI yield also discards the search caches, see AITacticalYieldPositions
+	const size_t iYieldPositions = (size_t)max(1, CvStacking::GetInt("AITacticalYieldPositions", 500));
 
 	//don't need to call make_heap for a single element
 	openPositionsHeap.push_back(initialPosition);
@@ -15644,9 +15689,9 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		//here the magic happens!
 		current->makeNextAssignments(iMaxBranchesNow, iMaxChoicesPerUnitNow, gTactPosStorage, openPositionsHeap, completedPositions, heapSort, ourUnits);
 
-		int iOldPauseCount = iUsedPositions / 500;
+		int iOldPauseCount = iUsedPositions / iYieldPositions;
 		iUsedPositions += current->getChildren().size();
-		int iNewPauseCount = iUsedPositions / 500;
+		int iNewPauseCount = iUsedPositions / iYieldPositions;
 
 		//at some point we have seen enough good positions to pick one
 		if (completedPositions.size() > (size_t)iMaxCompletedPositions)
@@ -16165,6 +16210,7 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 	static vector<CvSupportPosition*> openPositionsHeap;
 	static vector<CvSupportPosition*> completedPositions;
 	size_t iUsedPositions = 0;
+	const size_t iYieldPositions = (size_t)max(1, CvStacking::GetInt("AITacticalYieldPositions", 500));
 
 	int iMaxBranches = range(GC.getGame().getHandicapInfo().getTacticalSimMaxBranches(), 2, 9); //cannot do more, else our ID scheme doesn't work
 	int iMaxChoicesPerUnit = range(GC.getGame().getHandicapInfo().getTacticalSimMaxChoicesPerUnit(), 2, 9);
@@ -16267,9 +16313,9 @@ bool TacticalAIHelpers::AddSupportMoves(CvTacticalPosition& positionAfterCombatM
 		//here the magic happens!
 		current->makeNextAssignments(iMaxBranchesNow, iMaxChoicesPerUnitNow, gSupportPosStorage, openPositionsHeap, completedPositions, heapSort, nextAttackPosition);
 
-		int iOldPauseCount = iUsedPositions / 500;
+		int iOldPauseCount = iUsedPositions / iYieldPositions;
 		iUsedPositions += current->getChildren().size();
-		int iNewPauseCount = iUsedPositions / 500;
+		int iNewPauseCount = iUsedPositions / iYieldPositions;
 
 		//at some point we have seen enough good positions to pick one
 		if (completedPositions.size() > (size_t)iMaxCompletedPositions)

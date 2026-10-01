@@ -5,6 +5,17 @@
   <Stacking_Settings>
     <!-- Exact combat-strength reuse during each tactical search; 0 disables. -->
     <Row Name="AITacticalStrengthCacheEntries" Value="16384"/>
+    <!-- Keep tactical caches when aircraft take part in a search; 0 restores
+         the cache-free search for mods with CanLoadAt listeners. -->
+    <Row Name="AITacticalCacheAirActors" Value="1"/>
+    <!-- Exact danger/defender forecast entries per tactical search (~172 bytes
+         each); values below the 6000-position search budget use that budget. -->
+    <Row Name="AITacticalForecastEntries" Value="24000"/>
+    <!-- Tactical-search positions between UI yields (500 without this row). Each
+         yield releases the game lock and discards the search caches; larger
+         values search faster but let the interface update less often during AI
+         turns (2000: about every 0.5 s in dense late-game searches). -->
+    <Row Name="AITacticalYieldPositions" Value="2000"/>
     <!-- Assault roles, gathering and bounded planning. -->
     <Row Name="AIAssaultBaseUnits" Value="6"/>
     <Row Name="AIAssaultUnitsPerCapacity" Value="2"/>

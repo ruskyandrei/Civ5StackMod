@@ -352,7 +352,7 @@ public:
 	std::set<int> GetAccomplishmentsWithBonuses() const;
 	void AddToAccomplishmentsWithBonuses(AccomplishmentTypes eAccomplishment);
 
-	std::set<int> GetPlotList() const;
+	const std::set<int>& GetPlotList() const;
 	void AddToPlotList(CvPlot* pPlot);
 	void RemoveFromPlotList(CvPlot* pPlot);
 

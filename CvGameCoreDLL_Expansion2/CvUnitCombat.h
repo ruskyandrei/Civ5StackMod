@@ -42,6 +42,11 @@ public:
 		const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
 		int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
 		const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison = NULL, int iGarrisonDamage = 0, int iExtraCityDamage = 0);
+	// Same result written into a caller-owned vector, so forecast loops reuse its capacity.
+	static void GetStackCollateralDamageInto(std::vector<std::pair<const CvUnit*, int> >& result,
+		const CvUnit* pAttacker, const CvPlot* pTargetPlot, const CvUnit* pPrimaryDefender,
+		int iPrimaryHitDamage, const std::vector<const CvUnit*>& candidates,
+		const SUnitIDValueContainer& extraDamage, const CvUnit* pGarrison = NULL, int iGarrisonDamage = 0, int iExtraCityDamage = 0);
 	// Preview is conditional on an air strike reaching its target (interception is
 	// probabilistic). Live successful interception aborts before collateral generation.
 	static void GetStackAttackPreview(const CvUnit* pAttacker, const CvPlot* pTargetPlot,

@@ -87,6 +87,11 @@ namespace CvStackingStrengthCache
 		CallbackCapabilityProvider capabilityProvider = NULL;
 		bool capabilitiesReady=false, capabilitiesSupported=false, validationSupported=false, capabilitiesBuilding=false;
 		unsigned int capabilities=0;
+		// The live lock/option check costs an engine call per lookup. The search
+		// releases the GameCore lock only at its yields, which bump the epoch, and
+		// the event options are fixed for a game, so one check per epoch suffices.
+		bool liveValidated=false;
+		LONG liveValidatedEpoch=0;
 		// Every loading/rebuild suspension is local to the invoking thread;
 		// atomic epoch invalidation also cancels an owning foreign computation.
 		static __declspec(thread) unsigned int previewSuspensionDepth=0;
@@ -106,6 +111,7 @@ namespace CvStackingStrengthCache
 		{
 			capabilitiesReady=false;
 			validationSupported=false;
+			liveValidated=false;
 			nodes.clear();
 			std::fill(buckets.begin(), buckets.end(), -1);
 			oldest = 0;
@@ -183,6 +189,8 @@ namespace CvStackingStrengthCache
 			++stats.invalidations;
 		}
 		if (!capabilityProvider) return false;
+		if (liveValidated && liveValidatedEpoch == generation && capabilitiesReady)
+			return capabilitiesSupported && capabilities==0;
 		unsigned int liveFlags=0;
 		if (!capabilityProvider(liveFlags,false))
 		{
@@ -213,6 +221,8 @@ namespace CvStackingStrengthCache
 			stats.capabilityFlags|=flags;
 			capabilities=flags;capabilitiesSupported=supported;capabilitiesReady=true;
 		}
+		liveValidated=true;
+		liveValidatedEpoch=generation;
 		return capabilitiesSupported && capabilities==0;
 	}
 

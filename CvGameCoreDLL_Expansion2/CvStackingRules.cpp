@@ -36,6 +36,9 @@ namespace
 		{"DisableCityRangedAttacks", 1, 0, 1},
 		{"AIEnabled", 1, 0, 1},
 		{"AITacticalStrengthCacheEntries", 16384, 0, 65536},
+		{"AITacticalCacheAirActors", 1, 0, 1},
+		{"AITacticalForecastEntries", 24000, 0, 131072},
+		{"AITacticalYieldPositions", 500, 100, 100000},
 		{"AIMilitaryAllocationEnabled", 1, 0, 1},
 		{"CityProtectionScalesWithHP", 1, 0, 1},
 		{"UIStackCombatPreviewGap", 8, 0, 100},
@@ -270,7 +273,8 @@ namespace
 		STACK_ROLE_FLANK,
 		STACK_ROLE_ANTI_CAVALRY,
 		STACK_ROLE_FLANK_TARGET,
-		STACK_ROLE_COLLATERAL_LIMIT
+		STACK_ROLE_COLLATERAL_LIMIT,
+		STACK_ROLE_COUNT
 	};
 	StackingRole ParseRole(const char* name)
 	{
@@ -299,7 +303,14 @@ namespace
 		std::map<int, int> buildings;
 		std::map<int, int> effectiveBuildingProtection;
 		std::map<int, int> targetDomains;
-		RulesCache() : loaded(false), enabled(false), hotReady(false)
+		// The role maps flattened per role (ID-indexed, -1 = no row), built with
+		// the hot settings. Role() uses the maps until they are complete.
+		bool rolesFlat;
+		std::vector<int> flatCombatRoles[STACK_ROLE_COUNT];
+		std::vector<int> flatClassRoles[STACK_ROLE_COUNT];
+		std::vector<int> flatUnitRoles[STACK_ROLE_COUNT];
+		std::vector<std::pair<int, int> > flatPromotionRoles[STACK_ROLE_COUNT];
+		RulesCache() : loaded(false), enabled(false), hotReady(false), rolesFlat(false)
 		{
 			for (size_t i = 0; i < CvStacking::HOT_SETTING_COUNT; ++i)
 			{ hotValues[i] = 0; hotPresent[i] = false; }
@@ -310,8 +321,46 @@ namespace
 		static RulesCache cache;
 		return cache;
 	}
+	bool FlattenRoles(const RoleMap& values, std::vector<int>* flat)
+	{
+		for (RoleMap::const_iterator it = values.begin(); it != values.end(); ++it)
+		{
+			const int id = it->first.first;
+			const int role = it->first.second;
+			// Clamped values are 0..32, so -1 cannot be a configured value.
+			if (id < 0 || role < 0 || role >= STACK_ROLE_COUNT || it->second < 0)
+				return false;
+			if ((size_t)id >= flat[role].size())
+				flat[role].resize(id + 1, -1);
+			flat[role][id] = it->second;
+		}
+		return true;
+	}
+	void FlattenAllRoles(RulesCache& cache)
+	{
+		cache.rolesFlat = false;
+		for (int role = 0; role < STACK_ROLE_COUNT; ++role)
+		{
+			cache.flatCombatRoles[role].clear();
+			cache.flatClassRoles[role].clear();
+			cache.flatUnitRoles[role].clear();
+			cache.flatPromotionRoles[role].clear();
+		}
+		if (!FlattenRoles(cache.combatRoles, cache.flatCombatRoles) || !FlattenRoles(cache.classRoles, cache.flatClassRoles) ||
+			!FlattenRoles(cache.unitRoles, cache.flatUnitRoles))
+			return;
+		// Map order: ascending promotion ID within each role.
+		for (RoleMap::const_iterator it = cache.promotionRoles.begin(); it != cache.promotionRoles.end(); ++it)
+		{
+			if (it->first.second < 0 || it->first.second >= STACK_ROLE_COUNT)
+				return;
+			cache.flatPromotionRoles[it->first.second].push_back(std::make_pair(it->first.first, it->second));
+		}
+		cache.rolesFlat = true;
+	}
 	void FinalizeHotSettings(RulesCache& cache)
 	{
+		FlattenAllRoles(cache);
 		for (size_t i = 0; i < CvStacking::HOT_SETTING_COUNT; ++i)
 		{
 			SettingMap::const_iterator found = cache.settings.find(HOT_SETTING_NAMES[i]);
@@ -320,6 +369,15 @@ namespace
 		}
 		// Reentrant loader queries keep the original string lookup until here.
 		cache.hotReady = cache.loaded;
+		CvStacking::HotState& hot = CvStacking::g_kHotState;
+		hot.bReady = false;
+		hot.bEnabled = cache.enabled;
+		for (size_t i = 0; i < CvStacking::HOT_SETTING_COUNT; ++i)
+		{
+			hot.abPresent[i] = cache.hotPresent[i];
+			hot.aiValues[i] = cache.hotValues[i];
+		}
+		hot.bReady = cache.hotReady;
 	}
 	int Clamp(int value, int minimum, int maximum)
 	{
@@ -470,6 +528,11 @@ namespace
 		result = found->second;
 		return true;
 	}
+	void FlatLookup(const std::vector<int>& values, int id, int& result)
+	{
+		if (id >= 0 && (size_t)id < values.size() && values[id] != -1)
+			result = values[id];
+	}
 	int Role(const CvUnit* unit, StackingRole role)
 	{
 		if (!unit)
@@ -477,6 +540,18 @@ namespace
 		EnsureCache();
 		RulesCache& cache = Cache();
 		int value = 0;
+		if (cache.rolesFlat && role >= 0 && role < STACK_ROLE_COUNT)
+		{
+			// Same precedence as below: combat, class, best promotion, then unit.
+			FlatLookup(cache.flatCombatRoles[role], unit->getUnitCombatType(), value);
+			FlatLookup(cache.flatClassRoles[role], unit->getUnitClassType(), value);
+			const std::vector<std::pair<int, int> >& promotions = cache.flatPromotionRoles[role];
+			for (size_t i = 0; i < promotions.size(); ++i)
+				if (unit->isHasPromotion((PromotionTypes)promotions[i].first))
+					value = std::max(value, promotions[i].second);
+			FlatLookup(cache.flatUnitRoles[role], unit->getUnitType(), value);
+			return value;
+		}
 		Lookup(cache.combatRoles, unit->getUnitCombatType(), role, value);
 		Lookup(cache.classRoles, unit->getUnitClassType(), role, value);
 		for (RoleMap::const_iterator it = cache.promotionRoles.begin(); it != cache.promotionRoles.end(); ++it)
@@ -491,8 +566,10 @@ namespace
 
 namespace CvStacking
 {
+	HotState g_kHotState; // zero-initialized: not ready
 	void ResetCache()
 	{
+		g_kHotState.bReady = false;
 		CvStackingDiagnostics::Reset();
 		CvStackingAI::Reset();
 		Cache() = RulesCache();
@@ -506,7 +583,7 @@ namespace CvStacking
 		SettingMap::const_iterator it = settings.find(name);
 		return it == settings.end() ? fallback : it->second;
 	}
-	int GetIntByKey(HotSettingKey key, int fallback)
+	int GetIntByKeyUncached(HotSettingKey key, int fallback)
 	{
 		if (key < 0 || key >= HOT_SETTING_COUNT)
 			return GetInt(NULL, fallback);
@@ -515,7 +592,7 @@ namespace CvStacking
 			return GetInt(HOT_SETTING_NAMES[key], fallback);
 		return cache.hotPresent[key] ? cache.hotValues[key] : fallback;
 	}
-	bool IsEnabled()
+	bool IsEnabledUncached()
 	{
 		EnsureCache();
 		return Cache().enabled;
