@@ -9393,6 +9393,40 @@ static inline void ObserveDestinationDangerKey(const CvUnit* unit,const CvPlot* 
 {if(gDestinationKernelFrame)gDestinationKernelFrame->AddDanger(unit,plot,candidates,friendly,key,cacheable);}
 // END DESTINATION_KERNEL_SHADOW_DIAGNOSTIC_ONLY
 
+static __declspec(noinline) int ResolveStackDangerForecastMiss(const CvUnit* unit,const CvPlot* plot,
+ const vector<const CvUnit*>& candidates,const SUnitIDValueContainer& friendlyDamage,
+ const SUnitIDValueContainer& enemyDamage,const StackForecastKey& key,bool cacheable,
+ unsigned long revision,long scene,StackDangerOutcomeBatch* outcome)
+{
+ PacketProbeCall packetProbeCall(unit,plot,candidates,friendlyDamage,enemyDamage,key,cacheable); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+ int result = 0;
+ const bool tryPacket = cacheable && (!outcome || !outcome->ready);
+ StackDangerPacketQuery packetQuery(tryPacket);
+ CvStackingDiagnostics::PlanSampleScope leafSample(CvStackingDiagnostics::PLAN_DANGER_LEAF); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+ const bool packetResolved = tryPacket && ResolveStackDangerPacket(packetQuery,unit,plot,candidates,friendlyDamage,enemyDamage,key,revision,scene,outcome,result);
+ if (!packetResolved)
+ {
+ if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
+  result = (packetProbeCall.MarkRaw(), GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage)); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+ }
+ leafSample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
+ packetProbeCall.Finish(); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+ if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
+ {
+  if (packetResolved)
+  {
+   if (packetQuery.scalarValid && ValidateStackDangerPacket(packetQuery,unit,plot,revision,scene))
+   {
+    if (packetQuery.storePacket) StoreStackDangerPacketForecast(packetQuery.buffer.key,packetQuery.buffer.value);
+    // Only this queried even key is admitted, last under tiny shared budgets.
+    if (ValidateStackDangerPacket(packetQuery,unit,plot,revision,scene)) StoreStackDangerForecast(key,result);
+   }
+  }
+  else StoreStackDangerForecast(key,result);
+ }
+ return result;
+}
+
 static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const vector<const CvUnit*>& candidates,
  const SUnitIDValueContainer& friendlyDamage, const SUnitIDValueContainer& enemyDamage, StackDangerOutcomeBatch* outcome = NULL)
 {
@@ -9425,33 +9459,7 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
  keySample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (cacheable)
   ++gStackDangerMisses;
- PacketProbeCall packetProbeCall(unit,plot,candidates,friendlyDamage,enemyDamage,key,cacheable); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
- int result = 0;
- const bool tryPacket = cacheable && (!outcome || !outcome->ready);
- StackDangerPacketQuery packetQuery(tryPacket);
- CvStackingDiagnostics::PlanSampleScope leafSample(CvStackingDiagnostics::PLAN_DANGER_LEAF); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
- const bool packetResolved = tryPacket && ResolveStackDangerPacket(packetQuery,unit,plot,candidates,friendlyDamage,enemyDamage,key,revision,scene,outcome,result);
- if (!packetResolved)
- {
- if (!outcome || !outcome->TryGet(unit, plot, candidates, friendlyDamage, enemyDamage, result))
-  result = (packetProbeCall.MarkRaw(), GET_PLAYER(unit->getOwner()).GetDangerPlots()->GetStackDanger(*plot, unit, candidates, friendlyDamage, enemyDamage)); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
- }
- leafSample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
- packetProbeCall.Finish(); // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
- if (cacheable && StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene)
- {
-  if (packetResolved)
-  {
-   if (packetQuery.scalarValid && ValidateStackDangerPacket(packetQuery,unit,plot,revision,scene))
-   {
-    if (packetQuery.storePacket) StoreStackDangerPacketForecast(packetQuery.buffer.key,packetQuery.buffer.value);
-    // Only this queried even key is admitted, last under tiny shared budgets.
-    if (ValidateStackDangerPacket(packetQuery,unit,plot,revision,scene)) StoreStackDangerForecast(key,result);
-   }
-  }
-  else StoreStackDangerForecast(key,result);
- }
- return result;
+ return ResolveStackDangerForecastMiss(unit,plot,candidates,friendlyDamage,enemyDamage,key,cacheable,revision,scene,outcome);
 }
 
 static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvPlot* from, const CvPlot* target,
