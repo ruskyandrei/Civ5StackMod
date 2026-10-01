@@ -17,6 +17,7 @@
 #include "CvGameCoreDLLPCH.h"
 #include "CvGameCoreUtils.h"
 #include "CvAStar.h"
+#include "CvStackingDiagnostics.h" // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 #include "ICvDLLUserInterface.h"
 #include "CvMinorCivAI.h"
 #include "CvDiplomacyAI.h"
@@ -361,6 +362,7 @@ bool CvAStar::FindPathWithCurrentConfiguration(int iXstart, int iYstart, int iXd
 
 	SanitizeFlags();
 	Reset();
+	CvStackingDiagnostics::PathProfileSession pathProfileSession(m_sData.ePlayer,m_sData.iUnitID,m_sData.ePath,m_iCurrentGenerationID,m_sData.iFlags,iXstart,iYstart,iXdest,iYdest,false); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 
 	if(!isValid(iXstart, iYstart))
 		return false;
@@ -824,6 +826,7 @@ bool CvAStar::VerifyPath(const SPath& path)
 	}
 
 	m_sData = path.sConfig;
+	CvStackingDiagnostics::PathProfileSession pathProfileSession(m_sData.ePlayer,m_sData.iUnitID,m_sData.ePath,m_iCurrentGenerationID,m_sData.iFlags,path.vPlots.front().x,path.vPlots.front().y,path.vPlots.back().x,path.vPlots.back().y,true); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 	if (udInitializeFunc)
 		udInitializeFunc(m_sData,this);
 
@@ -928,7 +931,11 @@ void UpdateNodeCacheData(CvAStarNode* node, const CvUnit* pUnit, const CvAStar* 
 
 	CvPathNodeCacheData& kToNodeCacheData = node->m_kCostCacheData;
 	if (kToNodeCacheData.iGenerationID==finder->GetCurrentGenerationID())
+	{
+		CvStackingDiagnostics::CountPathNodeCache(true); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 		return;
+	}
+	CvStackingDiagnostics::CountPathNodeCache(false); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 
 	const CvPlot* pPlot = GC.getMap().plotUnchecked(node->m_iX, node->m_iY);
 	TeamTypes eUnitTeam = pUnit->getTeam();
@@ -1290,7 +1297,9 @@ int PathEndTurnCost(CvPlot* pToPlot, const CvPathNodeCacheData& kToNodeCacheData
 
 		//calculcate danger. this is expensive but the last result is cached for each plot
 		//note: it includes an overkill factor because usually not all enemy units will attack this one unit
+		CvStackingDiagnostics::PathProfileScope dangerProfile(CvStackingDiagnostics::PATH_RAW_DANGER,pUnit,pToPlot); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 		int iPlotDanger = pUnit->GetDanger(pToPlot);
+		dangerProfile.Finish(); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 
 		//we should give more weight to the first end-turn plot, the danger values for future stops are less concrete
 		int iFutureFactor = std::max(1,4-iTurnsInFuture);
@@ -1523,6 +1532,7 @@ int PathCost(const CvAStarNode* parent, const CvAStarNode* node, const SPathFind
 //simplified check for plots which are know to be free of enemy units
 bool canEnterTerritoryAndTerrain(const CvUnit* pUnit, const CvPlot* pPlot, int iMoveFlags)
 {
+	CvStackingDiagnostics::PathProfileScope terrainProfile(CvStackingDiagnostics::PATH_CLEAR_TERRAIN); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 	bool bCanEnterTerritory = (iMoveFlags & CvUnit::MOVEFLAG_IGNORE_RIGHT_OF_PASSAGE) || pUnit->canEnterTerritory(pPlot->getTeam(), (iMoveFlags & CvUnit::MOVEFLAG_DESTINATION) != 0);
 	if (!bCanEnterTerritory)
 		return false;

@@ -47,7 +47,7 @@ def analyze(records, turn, maximum_gaps=24):
     selected = [p for p in phases if p["sourceTurn"] == turn]
     if complete:
         window = (start, end)
-        window_convention = "first native event excluding TURN_PHASE/TURN_UPDATE_GAP from T to T+1; includes adjacent-turn preparation bounds"
+        window_convention = "first native event excluding TURN_PHASE/TURN_UPDATE_GAP/PLAN_PACKET_PROBE/PATH_SAMPLE from T to T+1; includes adjacent-turn preparation bounds"
     else:
         window = (start, max((p["interval"][1] for p in selected), default=start))
         window_convention = "partial observed phase extent only; not a complete native turn"

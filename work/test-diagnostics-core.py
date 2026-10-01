@@ -1,8 +1,9 @@
-"""VC9 actual diagnostics policy/IO test; engine getters stubbed, CRT files under work only."""
+"""VC9 actual diagnostics policy/IO; independent PATH-only probes tested separately."""
 from pathlib import Path
 import hashlib,json,os,subprocess,sys
+from path_profile_fixture import strip as strip_path_diagnostics
 root=Path(__file__).resolve().parents[1];out=root/'work/diagnostics-core-regression';out.mkdir(exist_ok=True);logs=out/'logs';logs.mkdir(exist_ok=True)
-src=(root/'CvGameCoreDLL_Expansion2/CvStackingDiagnostics.cpp').read_text(encoding='utf-8-sig');actual=src[src.index('namespace\n'):src.index('    void OnPlayerTurn(')]+'}\n'
+src=(root/'CvGameCoreDLL_Expansion2/CvStackingDiagnostics.cpp').read_text(encoding='utf-8-sig');actual=strip_path_diagnostics(src[src.index('namespace\n'):src.index('    void OnPlayerTurn(')])+'}\n'
 actual=actual[:-2]+src[src.index('    void AfterPlayerUnitAI('):src.index('    void CombatScope::AddUnit(')]+'}\n'
 head=r"""
 #include <cstdio>
@@ -46,7 +47,7 @@ static int testFlush(FILE*p){return flushFailure?EOF:fflush(p);}
 #define _wfsopen testOpen
 #define fprintf testPrint
 """
-diagnostics_header=(root/'CvGameCoreDLL_Expansion2/CvStackingDiagnostics.h').read_text(encoding='utf-8-sig')
+diagnostics_header=strip_path_diagnostics((root/'CvGameCoreDLL_Expansion2/CvStackingDiagnostics.h').read_text(encoding='utf-8-sig'))
 phase_declaration=diagnostics_header[diagnostics_header.index('    class TurnPhaseScope'):diagnostics_header.index('    class CombatScope')]
 head+='\nnamespace CvStackingDiagnostics {\n'+phase_declaration+'}\n'
 tail=r"""

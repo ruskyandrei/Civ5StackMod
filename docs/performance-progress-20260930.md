@@ -701,3 +701,24 @@ The exact game/service closed normally at05:11:34 UTC. Evidence:
 normal-exit proof. Best controlled pair is now35.750s/72.750s, still above
 the30s goal. Next work-only candidates reduce packet seeding where a local
 batch already provides reuse, and add opt-in raw path-danger measurements.
+
+## DLL81 local-batch admission result
+
+`3297d2b3c` completed OFF251→255 with all699 actions and nonempty censuses
+matching80. Interior252 took35.906s (PLAN10.799s),253 took72.094s (PLAN44.534s),
+versus35.750s/72.750s for80. The slower turn improves0.656s in this pair while
+the faster turn regresses0.156s; neither establishes a general compute win.
+
+Turn253 scalar misses fall1,260,589→1,250,832 and evictions795,579→766,095.
+Local-batch reuses increase28,187→46,564, while packet hits decrease197,339→
+176,378. The same6000-entry pool peaks at623,960bytes. Summed search time
+falls253ms, with244ms less yield time inside it; most of this particular search
+timer difference is therefore waiting rather than demonstrated saved compute.
+The intended pressure reduction is modestly visible.
+
+Build66.343s, DLL39958D4B783B9BF127308DB8D5457277FF9A0B601A20A7ECE9E149111D274E21,
+under `work/msvc-output/Release/20261001-061940`. Exact game/service closure was
+05:28:32 UTC. Evidence: `perf-d81-local-batch-off-251-255/comparison-d80.json`,
+phase reports, `cache-comparison-d80.json` and normal-exit proof. Target below30s
+remains unmet. The next diagnostic-only candidate measures raw path danger
+and clear-terrain checks under the existing opt-in tactical sampler.

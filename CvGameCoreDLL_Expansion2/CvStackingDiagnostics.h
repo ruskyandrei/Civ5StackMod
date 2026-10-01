@@ -4,6 +4,8 @@
 #include "CvEnums.h"
 class CvPlayer;
 class CvCombatInfo;
+class CvUnit;
+class CvPlot;
 namespace CvStackingDiagnostics
 {
     // Diagnostic state is session-local, never serialized or used by gameplay.
@@ -83,6 +85,39 @@ namespace CvStackingDiagnostics
         const void* threadState;
     };
     // END PLAN_SAMPLE_DIAGNOSTIC_ONLY
+    // BEGIN PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
+    enum PathProfilePart { PATH_RAW_DANGER, PATH_CLEAR_TERRAIN, PATH_PROFILE_PARTS };
+    class PathProfileSession
+    {
+    public:
+        PathProfileSession(PlayerTypes player,int unit,int pathType,int generation,int flags,int startX,int startY,int goalX,int goalY,bool verify);
+        ~PathProfileSession();
+    private:
+        PathProfileSession(const PathProfileSession&);
+        PathProfileSession& operator=(const PathProfileSession&);
+        bool outer;
+        unsigned long serial;
+        const void* threadState;
+    };
+    class PathProfileScope
+    {
+    public:
+        PathProfileScope(PathProfilePart part,const CvUnit* unit=NULL,const CvPlot* plot=NULL);
+        ~PathProfileScope() { Finish(); }
+        void Finish() { if(sampled) FinishSampled(); }
+    private:
+        PathProfileScope(const PathProfileScope&);
+        PathProfileScope& operator=(const PathProfileScope&);
+        void FinishSampled();
+        bool sampled;
+        PathProfilePart part;
+        unsigned long serial;
+        long epoch;
+        unsigned __int64 started;
+        const void* threadState;
+    };
+    void CountPathNodeCache(bool hit);
+    // END PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
     // The last contiguous entry interval is a TURN_PHASE. Earlier busy polls
     // are aggregate counters only, never extra phase rows or a spanning timer.
     class UnitAIEntryScope

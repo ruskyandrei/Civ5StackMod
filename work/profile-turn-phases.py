@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 
 MOD = 1 << 32
-TIMING_CATEGORIES = ("TURN_PHASE", "TURN_UPDATE_GAP", "PLAN_PACKET_PROBE")
+TIMING_CATEGORIES = ("TURN_PHASE", "TURN_UPDATE_GAP", "PLAN_PACKET_PROBE", "PATH_SAMPLE")
 HALF = MOD // 2
 SESSION = re.compile(r"^STACKDIAG\|SESSION\|(.+)$")
 RECORD = re.compile(r"^STACKDIAG\|(\d+)\|turn=(-?\d+)\|player=(-?\d+)\|([^|]+)\|(.*)$")
@@ -334,7 +334,7 @@ def analyze(records, turn, player_filter=None, quality=None):
             next_first_category=next_legacy["category"] if next_legacy else None,
             first_origin=first_legacy.get("origin") if first_legacy else None,
             next_first_origin=next_legacy.get("origin") if next_legacy else None,
-            convention="first native record excluding TURN_PHASE/TURN_UPDATE_GAP/PLAN_PACKET_PROBE of selected turn to following turn; legacy-comparable event window, not an engine CPU timer"),
+            convention="first native record excluding TURN_PHASE/TURN_UPDATE_GAP/PLAN_PACKET_PROBE/PATH_SAMPLE of selected turn to following turn; legacy-comparable event window, not an engine CPU timer"),
         native_all_event_window=dict(start_tick=any_begin, next_turn_first_tick=any_next, duration_ms=any_duration,
             convention="all native rows, matching existing profile-campaign-log; new timing/probe rows can move these anchors"),
         all_event_coverage=dict(phase_union_ms=length(any_phases), estimated_PLAN_union_ms=length(any_plans),

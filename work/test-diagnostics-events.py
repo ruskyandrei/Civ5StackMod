@@ -1,9 +1,10 @@
-"""Actual complete diagnostic module under deterministic game services; real VC9 file I/O."""
+"""Actual diagnostics with independent PATH probes excluded; real VC9 file I/O."""
 from pathlib import Path
 import os,re,subprocess,sys,json,hashlib
+from path_profile_fixture import strip as strip_path_diagnostics
 root=Path(__file__).resolve().parents[1];core=root/'CvGameCoreDLL_Expansion2';out=root/'work/diagnostics-events-regression';out.mkdir(exist_ok=True);(out/'logs').mkdir(exist_ok=True)
-source=(core/'CvStackingDiagnostics.cpp').read_text(encoding='utf-8-sig');actual=source[source.index('namespace\n'):]
-header=(core/'CvStackingDiagnostics.h').read_text(encoding='utf-8-sig');header=re.sub(r'^#.*\n','',header,flags=re.M)
+source=(core/'CvStackingDiagnostics.cpp').read_text(encoding='utf-8-sig');actual=strip_path_diagnostics(source[source.index('namespace\n'):])
+header=strip_path_diagnostics((core/'CvStackingDiagnostics.h').read_text(encoding='utf-8-sig'));header=re.sub(r'^#.*\n','',header,flags=re.M)
 head=r'''
 #define NOMINMAX
 #include <windows.h>
@@ -113,4 +114,4 @@ vc=root/'work/toolchain/sdk/admin/vc9/Program Files/Microsoft Visual Studio 9.0'
 for k in ('CL','_CL_','LINK'):env.pop(k,None)
 exe=out/'diagnostic-events-source-test.exe';compiled=subprocess.run([str(vc/'Vc7/bin/cl.exe'),'/nologo','/EHsc','/MT','/O2',str(cpp),'/Fo'+str(out/'events.obj'),'/Fe'+str(exe)],cwd=out,env=env,capture_output=True,text=True,timeout=60);(out/'compile.log').write_text(compiled.stdout+compiled.stderr)
 if compiled.returncode:print(compiled.stdout+compiled.stderr);sys.exit(compiled.returncode)
-result=subprocess.run([str(exe)],cwd=out,capture_output=True,text=True,timeout=30);print(result.stdout+result.stderr,end='');(out/'result.json').write_text(json.dumps({'returncode':result.returncode,'output':result.stdout+result.stderr,'source_sha256':hashlib.sha256((core/'CvStackingDiagnostics.cpp').read_bytes()).hexdigest(),'scope':'Entire actual diagnostic module, deterministic game services, real VC9 CRT file IO; no game performance or live combat/UI validation.'},indent=2));sys.exit(result.returncode)
+result=subprocess.run([str(exe)],cwd=out,capture_output=True,text=True,timeout=30);print(result.stdout+result.stderr,end='');(out/'result.json').write_text(json.dumps({'returncode':result.returncode,'output':result.stdout+result.stderr,'source_sha256':hashlib.sha256((core/'CvStackingDiagnostics.cpp').read_bytes()).hexdigest(),'scope':'Actual diagnostic module excluding independent PATH-only probes covered by test-path-query-profile; deterministic game services, real VC9 CRT file IO; no game performance or live combat/UI validation.'},indent=2));sys.exit(result.returncode)

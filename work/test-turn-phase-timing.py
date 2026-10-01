@@ -10,6 +10,7 @@ import json
 import os
 import subprocess
 import sys
+from path_profile_fixture import strip as strip_path_diagnostics
 
 root = Path(__file__).resolve().parents[1]
 out = root / "work/turn-phase-timing-regression"
@@ -47,8 +48,8 @@ for name, signature, added in (
         actual_body = actual_body.replace("\tif(gDLL)\n\t{\n\t\tgDLL->GetGameCoreLock();\n\t}",
                                           "\tif(gDLL)\n\t\tgDLL->GetGameCoreLock();")
     assert actual_body == body(baseline), (name, "original callback/control-flow changed")
-actual = source[source.index("namespace\n"):source.index("    void OnPlayerTurn(")] + "}\n"
-header = (core / "CvStackingDiagnostics.h").read_text(encoding="utf-8-sig")
+actual = strip_path_diagnostics(source[source.index("namespace\n"):source.index("    void OnPlayerTurn(")]) + "}\n"
+header = strip_path_diagnostics((core / "CvStackingDiagnostics.h").read_text(encoding="utf-8-sig"))
 declaration = header[header.index("    class TurnPhaseScope"):header.index("    class CombatScope")]
 fixture = ast.parse((root / "work/test-diagnostics-core.py").read_text(encoding="utf-8-sig"))
 head = next(ast.literal_eval(n.value) for n in fixture.body if isinstance(n, ast.Assign)
