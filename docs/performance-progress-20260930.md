@@ -1051,3 +1051,31 @@ Evidence: `work/test-runs/perf-d96-packet-miss-outline-off-251-255`, native
 normal-exit proof. Assembly: `work/packet-miss-outline-native96-proof`.
 Next is the independently reviewed exact resident-key shortcut, with final
 warm-source-invalidation coverage being completed before build.
+
+## DLL97 resident-key shortcut: correct replay, first-pair regression
+
+Commit `fbde19541` adopts the source-bound resident certificate shortcut;
+64,347 oracle checks pass. Full production-source binding emits the identical
+compiled fixture. Original projection and packet-miss body remain unchanged.
+Build104.828s under `work/msvc-output/Release/20261001-123811`;
+DLL `F9D319CB7C2E1DAF3F8C732E870762F080DC62BB3326F726F0E66D2082A3AAB5`,
+PDB `2656FEC7C62DF485B2AF1959C89CE4BE690F4C8970C485DC2B8BFFD045A1B429`.
+Deployment2368 files verified; graphics and saves unchanged.
+
+All699 ordered semantic records, both censuses and34 legacy cache fields in
+455 searches match96. All physical estimates differ by exactly24,016 bytes;
+parent/certificate allocations are excluded. Native caller locals92 bytes,
+miss helper2,212 bytes, GS/EH retained. T25232.469s/PLAN9.504 and
+T25359.156s/PLAN34.595 regress against96's31.266/8.802 and57.359/32.827.
+This first pair is not a statistical conclusion, but cannot be called a win.
+
+T253 has7,224,875 resident hits (34.22% of danger hits),8,665,323 captures,
+9,526,513 rejects. Prep reuse attempts82.53%; these are counts, not time saved.
+Rejects also occur in zero-eviction searches, so they cannot all be labelled
+stale handles. Normal closure11:48:47UTC: game35644/service10888 gone, session
+absent, guards completion-disarmed. Evidence is
+`work/test-runs/perf-d97-resident-key-off-251-255`, native
+`Stacking-20261001T114600-315-p35644-r1`, semantic/counter/phase reports and
+`resident-counters252-253.json`. Best complete dense turn remains96's57.359s;
+the <30s objective is unmet. Next: independent overhead review and a separate
+bounded EIP diagnostic, not mixed into the clean timing comparison.

@@ -40,6 +40,19 @@ outlined miss helper are byte-identical. Stock CRT allocation is callback-free
 in this contract; arbitrary allocator callbacks reclaiming the whole owner scope
 are excluded. Normal bad_alloc and engine invalidation remain supported.
 
-Native behavior, path exercise, frame size and turn-time gains remain to measure.
+The first native replay preserves all699 ordered semantic records, both nonempty
+world censuses and all34 legacy non-timing cache fields across455 searches.
+The physical forecast estimate increases by24,016 bytes per row; it excludes
+parent/certificate metadata. Native caller locals grow from64 to92 bytes,
+with the2,212-byte miss helper and GS/EH retained.
+
+This version does not demonstrate a speedup: T252 takes32.469s (PLAN9.504s)
+and T25359.156s (PLAN34.595s), versus DLL96's31.266/57.359s
+(PLAN8.802/32.827s). One pair is noisy, but this regression warrants revision.
+T253 records7,224,875 resident hits (34.22% of danger hits),8,665,323 captures
+and9,526,513 rejects. Captures are events, not unique certificates; rejection
+reasons are not recorded. The counters do not establish seconds saved.
+Evidence is `work/test-runs/perf-d97-resident-key-off-251-255`.
+
 Reproduction sources, detailed proof and independent review are saved under
 `work/resident-key-elision*` and `work/resident-scalar-handles-stage.py`.
