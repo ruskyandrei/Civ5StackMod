@@ -88,3 +88,25 @@ Meaningful success measures: shorter declaration-to-first-effective-attack delay
 - `CvDiplomacyAI.cpp`: voluntary readiness gate27651.
 
 Line numbers refer to the reviewed local code and may move. Function names and the campaign/source IDs are the durable references. Summary diagnostics are intermittent; a missing forecast is not proof a unit was idle, and phase0/2 does not prove it never fought field units.
+
+## Implementation status — 1 October 2026, DLL102
+
+The first-wave/count distinction, own-army core admission, voluntary opening
+feasibility, bounded affordable role-production exception, queue/staff lifecycle
+invalidation, verified reinforcement route progress, actual combat contribution,
+ready-siege net-progress timeout and shared legal-information healing forecast
+are implemented. New numerical controls are XML-configurable. Directed tests,
+native build/deployment and two saved251→255 replays pass. Dense253 takes59.641s
+and59.375s versus57.517s accepted control, within the10% ceiling. See
+[implementation and acceptance](ai-followup-20261001.md) for source IDs,
+configuration qualifications and test coverage.
+
+The short replay adds real city attacks at Hippo Regius, The Hague and Cumae;
+it retains the control's Utrecht capture. It does not establish more durable
+conquests. Remaining evaluation: fresh voluntary-war and operation-core scenarios,
+24-turn abandonment and reinforcement-arrival behavior, early fortified-city
+balance, supply/economy stability and10/20-turn conquest retention across multiple
+campaigns. Rome's observed fleet was on naval-superiority missions, with no city
+assault in the retained evidence; deciding when such a fleet should become a
+city-attack force remains a separate strategic follow-up. Do not retune city
+strength/healing or enlarge tactical search limits from these four turns alone.

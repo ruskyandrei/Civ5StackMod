@@ -25,7 +25,7 @@ Behavior acceptance uses directed source fixtures and native saved scenarios,
 then longer campaigns measuring actual attacks and10/20-turn conquest retention.
 One replay does not establish conquest rates or general late-game performance.
 
-## Work packages — implemented, native acceptance pending
+## Work packages — implemented and deployed
 
 1. **First wave and core admission.** Separate desired army/reserve size from
    essential roles and sustainable combat power. Evaluate coherent subsets of
@@ -91,7 +91,7 @@ Retargeting and cancellation invalidate the previous objective's cached staffing
 as well as the new objective. Native births/losses, army membership changes,
 city creation/acquisition/removal, production queue changes and completed economy
 orders invalidate the relevant budget/staff caches. No new path queries or larger
-tactical search limits are introduced. Candidate native acceptance remains pending.
+tactical search limits are introduced. Native acceptance results follow below.
 
 ## New XML settings
 
@@ -123,3 +123,65 @@ distribute the full soft supply cap; the old basic-army constant weights that
 distribution rather than imposing a six-unit army ceiling. The implementation
 therefore repairs bounded role production within affordable headroom and first
 wave admission, rather than blindly increasing total military recommendations.
+
+## Native acceptance — DLL102
+
+Implemented in commits `b27db7970` and `19fa6e5ad`. Installed build:
+`Release-5.4.6-102-g19fa6e5ad Clean`, DLL SHA256
+`5CC28920C2625C3685F9E2484DE4D3C62E476201591794F4DB718F7E7FDC22E4`.
+Release compilation and all2,368 deployment-file checks passed. Deployment
+preserved saves and graphics settings, with the previous installation archived
+at `work/backups/deployment-replaced-20261001-150650-2d5fcdbb`.
+
+| Dense turn253 | Seconds | Difference from accepted control |
+| --- | ---: | ---: |
+| DLL96 control | 57.517 | — |
+| DLL102 first run | 59.641 | +3.69% |
+| DLL102 repeat | 59.375 | +3.23% |
+| Acceptance ceiling | 63.2687 | +10% |
+
+The archived legacy event boundary actually measures57.515s for the control;
+the accepted57.517s and strict ceiling are retained explicitly, with the2ms
+discrepancy reported by the gate. Both candidate runs used the same immutable
+human251 save and five mods, stopped255, closed normally, stopped their Lua
+services, removed session files and disarmed both guards. No guard trigger or
+crash occurred. The repeat's retained semantic records and before/after censuses
+match the first run exactly. Dense PLAN work:34.949s/136calls first,
+34.786s/136calls repeat, versus32.994s/143calls control. Timing includes game
+behavior changes, rather than isolating pure overhead from the new predicates.
+
+All archived map/speed, quick-combat/movement, view, Summary/sampling and existing
+raw XML controls match. The baseline did not archive engine INI logging/threading
+controls, so strict engine-configuration equality is unknown; it is not inferred
+from the unchanged intended setup. Results qualify this saved test under its
+recorded controls, rather than guaranteeing all future late-game turn times.
+
+Native mechanism evidence: the Mongols launched a10-unit naval wave at Hippo
+Regius despite a22-unit desired target, reducing cityHP598→407 with six hits;
+Arabia used a6-unit wave at The Hague, reducing494→343 with three hits. Cumae
+also received nine hits/224damage. Those city attacks were absent in the control.
+Utrecht's turn253 capture and17-hit sequence remain unchanged. All13 new combat
+contribution rows match nearby native combat summaries. Support-production logs
+contain10 queued/4 completed observations versus4/1 in the control; these are
+retained observations, not unique-unit counts. Rejections remain bounded by
+domain quotas. No truncated diagnostics or concrete gameplay defect was found
+in this short window.
+
+Native operation-core and voluntary-declaration gates were not exercised by
+this replay; their directed source fixtures pass. Rome's fleet had movement,
+but no city-assault objective in the retained evidence, so this test does not
+prove a general naval target-selection fix. A fresh long campaign should measure
+first effective attack, net siege progress, economy stability, reinforcement
+contribution and10/20-turn conquest retention. More captures or faster durable
+conquests have not yet been demonstrated; no city balance changes are justified
+by these four turns alone.
+
+Reproducible offline gate: `work/check-ai-followup-performance.py` (eight boundary
+self-checks). Derived evidence is in the two `perf-ai-followup102*` run folders,
+with `ai-followup102-performance-gate.json`,
+`ai-followup102-repeat-performance-gate.json` and
+`ai-followup102-repeat-comparison.json` under `work/test-runs`. Integration
+fixtures use `--source-dir work/ai-followup-composed`; source adoption validation
+uses `work/adopt-ai-followup.py --verify-applied`. To reconstruct that directory,
+run the four component staging scripts, then `compose-ai-followup.py` (expected
+explicit merge conflicts) followed by `finish-ai-followup-composition.py`.
