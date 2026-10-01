@@ -414,3 +414,32 @@ engine threading/configuration/logging equality. Next quiet off/on replay pair
 uses the same candidate DLL/config/save and251→255 so252 and253 are both interior
 observer turns. Required goal remains verified<30s per standard late-game turn,
 then an attempt at<20s; neither is proven by the current results.
+
+## DLL60 native control and rejected DLL61 cache experiment
+
+The quiet Standard-map replay pair completed251→255 with the same manual
+source, original dedicated-thread configuration and full logging. Sampling
+off/on retained identical699 planning/combat/capture records and all world
+censuses. Interior turn252 took39.031/39.099s and253 took84.422/84.782s;
+PLAN totals were13.275/13.316s and56.073/56.252s. Both games quit normally.
+These are one paired observation, not a statistical overhead bound.
+
+DLL61 (`edafcd48d`) extended the exact defender memo into field-danger
+previews. Its1,149,421 regression checks passed and its native replay preserved
+all699 ordered records and nonempty before/after censuses. Nevertheless it
+regressed turn252 to39.454s and253 to92.984s (PLAN13.843/64.374s).
+For253, danger misses increased1,155,413→1,417,639 and danger evictions
+461,651→896,745. Defender reuse saved existing strength lookups but added
+1,848,516 defender misses and1,395,679 defender evictions in the same bounded
+forecast pool. Increased cache pressure and preparation outweighed reuse.
+
+The entire trial was reverted in490ee12c4, without rewriting history or changing
+search/storage limits. It remains reproducible from its commit and
+`work/test-runs/perf-d61-defender-off-251-255`, including the exact comparison,
+guard logs, normal-exit proof and `defender-trial-counters.json`. The installed
+DLL61 is inactive while the next separately measured build is prepared.
+
+The next candidates remove zero-AoE ledger scans and per-branch plot-score tree
+allocations. Both must preserve scores, candidate ordering and full search
+budgets; numerical and native behavior comparisons remain required. Goal
+<30s after250 remains unmet, and no broad late-game timing claim is warranted.

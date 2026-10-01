@@ -1223,9 +1223,13 @@ int CvDangerPlotContents::GetStackDanger(const CvUnit* pUnit, const vector<const
    damage.ChangeValue(defender->GetID(), StackExpectedStrikeDamage(hit, strikeChance));
   for (size_t i = 0; i < collateral.size(); ++i)
    damage.ChangeValue(collateral[i].first->GetID(), StackExpectedStrikeDamage(collateral[i].second, strikeChance));
-  for (size_t i = 0; i < candidates.size(); ++i)
-   if (candidates[i]->GetCurrHitPoints() > damage.GetValue(candidates[i]->GetID()))
-    damage.ChangeValue(candidates[i]->GetID(), max(0, attacker->getAoEDamageOnMove()));
+  const int aoeDamage = max(0, attacker->getAoEDamageOnMove());
+  // Missing and explicitly stored zero wounds have identical GetValue results.
+  // Avoid a survivor scan and zero-ledger insertions for ordinary attackers.
+  if (aoeDamage > 0)
+   for (size_t i = 0; i < candidates.size(); ++i)
+    if (candidates[i]->GetCurrHitPoints() > damage.GetValue(candidates[i]->GetID()))
+     damage.ChangeValue(candidates[i]->GetID(), aoeDamage);
  }
  // City fire uses the identical selector as live city combat and UI.
  if (!city)
@@ -1284,9 +1288,12 @@ void CvDangerPlotContents::GetStackDangerOutcome(PlayerTypes defendingOwner, Tea
    damage.ChangeValue(defender->GetID(), StackExpectedStrikeDamage(hit, strikeChance));
   for (size_t i = 0; i < collateral.size(); ++i)
    damage.ChangeValue(collateral[i].first->GetID(), StackExpectedStrikeDamage(collateral[i].second, strikeChance));
-  for (size_t i = 0; i < candidates.size(); ++i)
-   if (candidates[i]->GetCurrHitPoints() > damage.GetValue(candidates[i]->GetID()))
-    damage.ChangeValue(candidates[i]->GetID(), max(0, attacker->getAoEDamageOnMove()));
+  const int aoeDamage = max(0, attacker->getAoEDamageOnMove());
+  // Keep positive AoE in its original post-strike order, including duplicates.
+  if (aoeDamage > 0)
+   for (size_t i = 0; i < candidates.size(); ++i)
+    if (candidates[i]->GetCurrHitPoints() > damage.GetValue(candidates[i]->GetID()))
+     damage.ChangeValue(candidates[i]->GetID(), aoeDamage);
  }
  // City fire uses the identical selector as live city combat and UI.
  if (!city)
