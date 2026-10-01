@@ -808,3 +808,39 @@ The <30s target remains unmet. The next investigation prioritizes larger exact
 state/evaluation and storage redesigns, with shadow numerical/assignment
 oracles, fallback for unknown dependencies and substantial native benefit as
 an integration requirement. No actor/search/cache limits are reduced.
+
+## DLL87 cold checked-failure formatting
+
+DLL87 (`2bdba7c05`) passed192,028 production-bound actual-source checks across
+four assertion configurations with /GS retained. Seven fixture getter/map
+bodies lose successful formatting-related cookie/EH frames; cold helpers and
+formatters retain protection. Original checks and numeric bodies remain.
+Failure stack location and plain-string argument temporary lifetimes have the
+documented differences in `cold-checked-failure-formatting.md`.
+
+The OFF251→255 replay matched all699 ordered PLAN/combat/capture records and
+both nonempty world censuses against86. Interior252 took32.313s (PLAN9.665s),
+253 took63.484s (PLAN39.010s), versus37.093s/74.297s (11.450s/46.698s). This
+first pair improves wall time4.780s/10.813s, about13–15%; it is not a confidence
+interval or a broad late-game guarantee. The <30s goal remains unmet. Roughly
+24.5s still lies outside estimated PLAN on253, so the larger redesign remains
+necessary. Gameplay/search/XML/configuration limits were unchanged.
+All455 corresponding recorded six-pair cache hit/miss and callback-proof
+counter rows also match; this does not cover every unrecorded cache operation.
+
+Build88.937s under `work/msvc-output/Release/20261001-085618`;
+DLL26535C3B9C4A36EAAF611035AAD57CC791BF224C12D0CB70B2AEC1D7E97BACCF,
+PDBE7E5193E9BE4A63E67A0F17A38555B6F233347E12FF083C88603AD58AE4A0086.
+Deployment backup `deployment-replaced-20261001-085918-b8332d31`. The outer
+PowerShell command stalled draining launcher output before any mod/replay
+dispatch; its exact wrapper alone was stopped after identity verification.
+The existing game/service/guards remained intact, with no reconnect or retry.
+The same service then restored the five benchmark mods and ran the replay.
+No timing interval includes the launcher stall. Exact normal game/service
+closure was08:09:01UTC, with no forced game termination.
+
+Evidence: `work/test-runs/perf-d87-cold-format-off-251-255`, native
+`Stacking-20261001T080600-728-p39624-r1`, `comparison-d86.json`, phase reports,
+`wrapper-interruption.json` and `normal-exit.json`. Next are work-only exact
+indexed-store and bounded incremental-kernel shadow prototypes; see
+`performance-redesign-plan.md` for contracts and adoption thresholds.

@@ -31,8 +31,8 @@
 #include <sstream>
 #include <cmath>
 #include <deque>
-#include <new> // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
-#include <cstring> // PLAN_PACKET_PROBE_DIAGNOSTIC_ONLY
+#include <new>
+#include <cstring>
 #include "LintFree.h"
 
 //for easier debugging
@@ -7822,16 +7822,174 @@ static bool IsStackForecastOwner()
 {
  return (DWORD)gStackForecastOwnerThread == GetCurrentThreadId();
 }
+// Bounded owned forecast storage. Input key and result semantics remain unchanged.
+// No slot/payload reference is permitted to escape a small table operation.
+class IndexedStore
+{
+public:
+ enum { INLINE_WORDS=32, DANGER=0, DEFENDER=1 };
+ struct Pending
+ {
+  size_t keyWords,members;
+  int scalar;
+  const CvUnit* defender;
+  int* heap;
+  int words[INLINE_WORDS];
+  Pending():keyWords(0),members(0),scalar(0),defender(NULL),heap(NULL){}
+  ~Pending(){delete[] heap;}
+  const int* Data()const{return heap?heap:words;}
+  size_t Words()const{return keyWords+2*members;}
+  void Assign(const StackForecastKey& key,const StackDangerForecastValue* value,const CvUnit* unit)
+  {
+   keyWords=key.state.size();members=value?value->memberScores.size():0;
+   scalar=value?value->scalar:0;defender=unit;
+   if(members>(static_cast<size_t>(-1)-keyWords)/2)throw std::bad_alloc();
+   const size_t count=Words();
+   if(count>static_cast<size_t>(-1)/sizeof(int))throw std::bad_alloc();
+   if(count>INLINE_WORDS)heap=new int[count];
+   int* out=heap?heap:words;
+   if(keyWords)std::memcpy(out,&key.state[0],keyWords*sizeof(int));
+   for(size_t i=0;i<members;++i){out[keyWords+2*i]=value->memberScores[i].first;out[keyWords+2*i+1]=value->memberScores[i].second;}
+  }
+ private:Pending(const Pending&);Pending&operator=(const Pending&);
+ };
+ struct Slot
+ {
+  size_t hash,keyWords,members;
+  int hashPrev,hashNext,queueNext;
+  int scalar;
+  const CvUnit* defender;
+  int* heap;
+  unsigned char kind,used;
+  int words[INLINE_WORDS];
+  Slot():hash(0),keyWords(0),members(0),hashPrev(-1),hashNext(-1),queueNext(-1),scalar(0),defender(NULL),heap(NULL),kind(0),used(0){}
+  ~Slot(){delete[] heap;}
+  const int* Data()const{return heap?heap:words;}
+  size_t PayloadBytes()const{return (keyWords+2*members)*sizeof(int);}
+ };
+ IndexedStore():slots(NULL),buckets(NULL),slotCapacity(0),bucketCount(0),firstFree(-1),nextUnused(0),overflowBytes(0)
+ {for(int i=0;i<2;++i){heads[i]=tails[i]=-1;counts[i]=queued[i]=0;}}
+ ~IndexedStore(){Release();}
+ void Init(size_t limit)
+ {
+  Release();if(!limit)return;
+  if(limit>=static_cast<size_t>(INT_MAX)||limit>=static_cast<size_t>(-1)/sizeof(Slot)-1)throw std::bad_alloc();
+  const size_t needed=limit+1; // One uncharged packet node may precede FIFO eviction.
+  if(needed>static_cast<size_t>(-1)/2)throw std::bad_alloc();
+  size_t bucketsNeeded=1;
+  while(bucketsNeeded<needed*2){if(bucketsNeeded>static_cast<size_t>(-1)/2)throw std::bad_alloc();bucketsNeeded*=2;}
+  try{slots=new Slot[needed];buckets=new int[bucketsNeeded];}
+  catch(...){delete[] slots;slots=NULL;delete[] buckets;buckets=NULL;throw;}
+  slotCapacity=needed;bucketCount=bucketsNeeded;
+  for(size_t i=0;i<bucketCount;++i)buckets[i]=-1;
+  firstFree=-1;nextUnused=0;
+ }
+ void Clear()
+ {
+  for(size_t i=0;i<nextUnused;++i)
+  {
+   Slot& s=slots[i];delete[] s.heap;s.heap=NULL;s.used=0;s.keyWords=s.members=0;
+   s.hashPrev=s.queueNext=s.hashNext=-1;
+  }
+  for(size_t i=0;i<bucketCount;++i)buckets[i]=-1;
+  for(int i=0;i<2;++i){heads[i]=tails[i]=-1;counts[i]=queued[i]=0;}
+  firstFree=-1;nextUnused=0;overflowBytes=0;
+ }
+ void Release()
+ {
+  delete[] slots;delete[] buckets;slots=NULL;buckets=NULL;slotCapacity=bucketCount=nextUnused=overflowBytes=0;firstFree=-1;
+  for(int i=0;i<2;++i){heads[i]=tails[i]=-1;counts[i]=queued[i]=0;}
+ }
+ size_t Count(int kind)const{return counts[kind];}
+ size_t Total()const{return counts[0]+counts[1];}
+ size_t ReservedBytes()const{return slotCapacity*sizeof(Slot)+bucketCount*sizeof(int)+overflowBytes;}
+ size_t Capacity()const{return slotCapacity;}
+ size_t Buckets()const{return bucketCount;}
+ size_t OverflowBytes()const{return overflowBytes;}
+ int Find(const StackForecastKey& key,int kind)const
+ {
+  if(!bucketCount)return -1;
+  const size_t hash=StackForecastKeyHash()(key);
+  for(int i=buckets[hash&(bucketCount-1)];i!=-1;i=slots[i].hashNext)
+  {
+   const Slot& s=slots[i];
+   if(s.used&&s.kind==kind&&s.hash==hash&&s.keyWords==key.state.size()&&
+    (!s.keyWords||!std::memcmp(s.Data(),&key.state[0],s.keyWords*sizeof(int))))return i;
+  }
+  return -1;
+ }
+ // Stable handle. The caller copies scalar/pointer/member data before Context.
+ const Slot& At(int handle)const{return slots[handle];}
+ int Insert(const StackForecastKey& key,Pending& pending,int kind,bool& inserted)
+ {
+  int duplicate=Find(key,kind);if(duplicate!=-1){inserted=false;return duplicate;}
+  int handle;
+  if(firstFree!=-1){handle=firstFree;firstFree=slots[handle].hashNext;}
+  else{if(nextUnused>=slotCapacity)throw std::bad_alloc();handle=static_cast<int>(nextUnused++);}
+  Slot& s=slots[handle];
+  s.hash=StackForecastKeyHash()(key);s.keyWords=pending.keyWords;s.members=pending.members;
+  s.scalar=pending.scalar;s.defender=pending.defender;s.kind=static_cast<unsigned char>(kind);s.used=1;
+  s.heap=pending.heap;pending.heap=NULL;
+  if(!s.heap&&pending.Words())std::memcpy(s.words,pending.words,pending.Words()*sizeof(int));
+  if(s.heap)overflowBytes+=s.PayloadBytes();
+  size_t bucket=s.hash&(bucketCount-1);s.hashPrev=-1;s.hashNext=buckets[bucket];s.queueNext=-1;
+  if(s.hashNext!=-1)slots[s.hashNext].hashPrev=handle;
+  buckets[bucket]=handle;++counts[kind];inserted=true;return handle;
+ }
+ void Erase(int handle)
+ {
+  Slot& s=slots[handle];const size_t bucket=s.hash&(bucketCount-1);
+  if(s.hashPrev!=-1)slots[s.hashPrev].hashNext=s.hashNext;else buckets[bucket]=s.hashNext;
+  if(s.hashNext!=-1)slots[s.hashNext].hashPrev=s.hashPrev;
+  if(s.heap)overflowBytes-=s.PayloadBytes();
+  delete[] s.heap;s.heap=NULL;--counts[s.kind];s.used=0;s.keyWords=s.members=0;
+  s.hashPrev=s.queueNext=-1;s.hashNext=firstFree;firstFree=handle;
+ }
+ void Push(int handle)
+ {
+  Slot& s=slots[handle];int kind=s.kind;
+  if(tails[kind]!=-1)slots[tails[kind]].queueNext=handle;else heads[kind]=handle;
+  tails[kind]=handle;
+ }
+ int Head(int kind)const{return heads[kind];}
+ size_t QueueCount(int kind)const
+ {
+  size_t count=0;for(int i=heads[kind];i!=-1;i=slots[i].queueNext){if(i<0||static_cast<size_t>(i)>=slotCapacity||++count>slotCapacity)return static_cast<size_t>(-1);}return count;
+ }
+ // O(1) FIFO count is separate from total entries, including pending packet.
+ size_t FIFOCount(int kind)const{return queued[kind];}
+ void QueuePush(int handle){Push(handle);++queued[slots[handle].kind];}
+ void QueuePop(int kind)
+ {
+  int handle=heads[kind];heads[kind]=slots[handle].queueNext;if(heads[kind]==-1)tails[kind]=-1;
+  slots[handle].queueNext=-1;--queued[kind];
+ }
+ int NextQueued(int handle)const{return slots[handle].queueNext;}
+ void ResetQueued(){queued[0]=queued[1]=0;}
+ bool Invariant(size_t logicalBytes,size_t limit,size_t payloadLimit)const
+ {
+  size_t bytes=0,total=0,heapBytes=0,freeCount=0;
+  for(size_t i=0;i<slotCapacity;++i)if(slots[i].used){bytes+=slots[i].PayloadBytes();if(slots[i].heap)heapBytes+=slots[i].PayloadBytes();++total;}
+  for(int i=firstFree;i!=-1;i=slots[i].hashNext){if(i<0||static_cast<size_t>(i)>=slotCapacity||slots[i].used||++freeCount>slotCapacity)return false;}
+  return bytes==logicalBytes&&total==Total()&&total<=limit&&bytes<=payloadLimit&&heapBytes==overflowBytes&&nextUnused<=slotCapacity&&total+freeCount==nextUnused&&
+   QueueCount(0)==queued[0]&&QueueCount(1)==queued[1]&&queued[0]==counts[0]&&queued[1]==counts[1];
+ }
+private:
+ Slot* slots;int* buckets;size_t slotCapacity,bucketCount;int firstFree;size_t nextUnused;
+ int heads[2],tails[2];size_t counts[2],queued[2],overflowBytes;
+ IndexedStore(const IndexedStore&);IndexedStore&operator=(const IndexedStore&);
+};
+
+static IndexedStore gIndexed;
+static bool gUseIndexed=false;
 static void ClearStackForecastEntries()
 {
- // Only the owning search thread calls this. Foreign callbacks change the
- // atomic scene epoch; they never touch these containers or borrowed buffers.
- gStackDangerOrder.clear(); gStackDefenderOrder.clear();
- gStackDangerForecasts.clear(); gStackDefenderForecasts.clear();
- gStackThreatFlags.clear();
- gStackKeyPayloadBytes = 0;
- ++gStackForecastRevision;
+ gIndexed.Clear();gIndexed.ResetQueued();gStackDangerOrder.clear();gStackDefenderOrder.clear();
+ gStackDangerForecasts.clear();gStackDefenderForecasts.clear();gStackThreatFlags.clear();gStackKeyPayloadBytes=0;++gStackForecastRevision;
 }
+
+
+
 static void InvalidateStackForecastScene()
 {
  if (!IsStackForecastOwner())
@@ -8143,6 +8301,21 @@ struct StackForecastScope
   // Memoization shares the existing search budget: at most one entry per
   // position, with an ID/damage pair per movable-unit slot as payload budget.
   gStackKeyPayloadLimit = gStackEntryLimit * TACTSIM_MAX_UNITS * 2 * sizeof(int);
+  gUseIndexed=false;
+  try { if(gStackForecastsActive){gIndexed.Init(gStackEntryLimit);gUseIndexed=true;} }
+  catch (const std::bad_alloc&)
+  {
+   // Pick the original representation before any query or admission.
+   // Partial arrays are already rolled back by Init; no in-search fallback.
+   gIndexed.Release();gUseIndexed=false;
+  }
+  catch (...)
+  {
+   // Constructor failure will not invoke this object's destructor.
+   gIndexed.Release();gStackKeyPayloadBytes=0;gStackEntryLimit=gStackKeyPayloadLimit=0;
+   gStackForecastDepth=0;gStackForecastsActive=false;owned=false;
+   InterlockedExchange(&gStackForecastOwnerThread,0);throw;
+  }
  }
  ~StackForecastScope()
  {
@@ -8154,6 +8327,7 @@ struct StackForecastScope
   if (gStackForecastDepth == 0)
   {
    // clear() can retain buckets. Release them as well in the 32-bit game.
+   gIndexed.Release();gUseIndexed=false;
    std::deque<const StackForecastKey*>().swap(gStackDangerOrder);
    std::deque<const StackForecastKey*>().swap(gStackDefenderOrder);
    StackDangerForecasts().swap(gStackDangerForecasts);
@@ -8177,13 +8351,13 @@ private:
 
 // Retained capacities, including packet outputs, share the original payload
 // ceiling. Scalar value vectors are empty and retain no output allocation.
-static size_t StackDangerForecastPayloadBytes(const StackDangerForecasts::value_type& entry)
+static size_t LegacyStackDangerForecastPayloadBytes(const StackDangerForecasts::value_type& entry)
 {
  return entry.first.state.capacity() * sizeof(int)
   + entry.second.memberScores.capacity() * sizeof(pair<int,int>);
 }
 
-static bool EvictOldestStackForecast()
+static bool LegacyEvictOldestStackForecast()
 {
  // Refresh the larger pool first. This preserves the small, high-reuse
  // selector pool without letting either table permanently starve the other.
@@ -8192,7 +8366,7 @@ static bool EvictOldestStackForecast()
   StackDangerForecasts::iterator victim = gStackDangerForecasts.find(*gStackDangerOrder.front());
   if (victim == gStackDangerForecasts.end())
    return false;
-  const size_t payload = StackDangerForecastPayloadBytes(*victim);
+  const size_t payload = LegacyStackDangerForecastPayloadBytes(*victim);
   if (payload > gStackKeyPayloadBytes)
    return false;
   gStackDangerOrder.pop_front();
@@ -8218,7 +8392,7 @@ static bool EvictOldestStackForecast()
  return false;
 }
 
-static bool CanStoreStackForecast(const StackForecastKey& key)
+static bool LegacyCanStoreStackForecast(const StackForecastKey& key)
 {
  if (!StackForecastContext())
   return false;
@@ -8232,7 +8406,7 @@ static bool CanStoreStackForecast(const StackForecastKey& key)
  while (gStackDangerForecasts.size() + gStackDefenderForecasts.size() >= gStackEntryLimit ||
   payload > gStackKeyPayloadLimit - gStackKeyPayloadBytes)
  {
-  if (!EvictOldestStackForecast())
+  if (!LegacyEvictOldestStackForecast())
   {
    ++gStackInsertBypasses;
    return false;
@@ -8241,7 +8415,7 @@ static bool CanStoreStackForecast(const StackForecastKey& key)
  return true;
 }
 
-static size_t EstimatedStackForecastBytes()
+static size_t LegacyEstimatedStackForecastBytes()
 {
  const size_t entries = gStackDangerForecasts.size() + gStackDefenderForecasts.size();
  // Key payload is measured; allocator/node/bucket overhead is an estimate.
@@ -8252,26 +8426,26 @@ static size_t EstimatedStackForecastBytes()
   + sizeof(gStackThreatFlags) + gStackThreatFlags.size() * (sizeof(StackThreatFlags::value_type) + 4 * sizeof(void*));
 }
 
-static void UpdateStackForecastPeaks()
+static void LegacyUpdateStackForecastPeaks()
 {
  gStackPeakEntries = max(gStackPeakEntries, gStackDangerForecasts.size() + gStackDefenderForecasts.size());
  gStackPeakKeyBytes = max(gStackPeakKeyBytes, gStackKeyPayloadBytes);
- gStackPeakEstimatedBytes = max(gStackPeakEstimatedBytes, EstimatedStackForecastBytes());
+ gStackPeakEstimatedBytes = max(gStackPeakEstimatedBytes, LegacyEstimatedStackForecastBytes());
 }
 
-static void StoreStackDangerForecast(const StackForecastKey& key, int result)
+static void LegacyStoreStackDangerForecast(const StackForecastKey& key, int result)
 {
- if (!CanStoreStackForecast(key))
+ if (!LegacyCanStoreStackForecast(key))
   return;
  pair<StackDangerForecasts::iterator, bool> stored = gStackDangerForecasts.insert(make_pair(key, StackDangerForecastValue(result)));
  if (stored.second)
  {
-  const size_t payload = StackDangerForecastPayloadBytes(*stored.first);
+  const size_t payload = LegacyStackDangerForecastPayloadBytes(*stored.first);
   if (payload <= gStackKeyPayloadLimit - gStackKeyPayloadBytes)
   {
    gStackKeyPayloadBytes += payload;
    gStackDangerOrder.push_back(&stored.first->first);
-   UpdateStackForecastPeaks();
+   LegacyUpdateStackForecastPeaks();
   }
   else
   {
@@ -8284,7 +8458,7 @@ static void StoreStackDangerForecast(const StackForecastKey& key, int result)
 // Insert one temporary uncharged node to measure its ACTUAL copied vector
 // capacities before evicting useful entries. No node reference escapes this
 // helper; retained entries still use the original shared FIFO/entry ceiling.
-static void StoreStackDangerPacketForecast(const StackForecastKey& key, const StackDangerForecastValue& value)
+static void LegacyStoreStackDangerPacketForecast(const StackForecastKey& key, const StackDangerForecastValue& value)
 {
  if (!StackForecastContext())
   return;
@@ -8341,13 +8515,13 @@ static void StoreStackDangerPacketForecast(const StackForecastKey& key, const St
   ++gStackInsertBypasses;
   return;
  }
- const size_t payload = StackDangerForecastPayloadBytes(*stored.first);
+ const size_t payload = LegacyStackDangerForecastPayloadBytes(*stored.first);
  // The pending node is already included in size(), but is not in either
  // FIFO yet. Use > for entries; eviction still chooses the larger FIFO.
  while (gStackDangerForecasts.size() + gStackDefenderForecasts.size() > gStackEntryLimit ||
   payload > gStackKeyPayloadLimit - gStackKeyPayloadBytes)
  {
-  if (!EvictOldestStackForecast())
+  if (!LegacyEvictOldestStackForecast())
   {
    gStackDangerForecasts.erase(stored.first);
    ++gStackInsertBypasses;
@@ -8367,12 +8541,12 @@ static void StoreStackDangerPacketForecast(const StackForecastKey& key, const St
   throw;
  }
  gStackKeyPayloadBytes += payload;
- UpdateStackForecastPeaks();
+ LegacyUpdateStackForecastPeaks();
 }
 
-static void StoreStackDefenderForecast(const StackForecastKey& key, const CvUnit* result)
+static void LegacyStoreStackDefenderForecast(const StackForecastKey& key, const CvUnit* result)
 {
- if (!CanStoreStackForecast(key))
+ if (!LegacyCanStoreStackForecast(key))
   return;
  pair<StackDefenderForecasts::iterator, bool> stored = gStackDefenderForecasts.insert(make_pair(key, result));
  if (stored.second)
@@ -8382,7 +8556,7 @@ static void StoreStackDefenderForecast(const StackForecastKey& key, const CvUnit
   {
    gStackKeyPayloadBytes += payload;
    gStackDefenderOrder.push_back(&stored.first->first);
-   UpdateStackForecastPeaks();
+   LegacyUpdateStackForecastPeaks();
   }
   else
   {
@@ -8390,6 +8564,141 @@ static void StoreStackDefenderForecast(const StackForecastKey& key, const CvUnit
    ++gStackInsertBypasses;
   }
  }
+}
+
+
+// Admission/control flow preserves the original storage helpers. Only the
+// representation, owned-copy construction and key/queue lookup are replaced.
+static bool EvictOldestStackForecast()
+{
+ if(!gUseIndexed)return LegacyEvictOldestStackForecast();
+ if(gIndexed.FIFOCount(IndexedStore::DANGER)&&gIndexed.FIFOCount(IndexedStore::DANGER)>=gIndexed.FIFOCount(IndexedStore::DEFENDER))
+ {
+  int victim=gIndexed.Head(IndexedStore::DANGER);const size_t payload=gIndexed.At(victim).PayloadBytes();
+  if(payload>gStackKeyPayloadBytes)return false;
+  gIndexed.QueuePop(IndexedStore::DANGER);gStackKeyPayloadBytes-=payload;gIndexed.Erase(victim);++gStackDangerEvictions;return true;
+ }
+ if(gIndexed.FIFOCount(IndexedStore::DEFENDER))
+ {
+  int victim=gIndexed.Head(IndexedStore::DEFENDER);const size_t payload=gIndexed.At(victim).PayloadBytes();
+  if(payload>gStackKeyPayloadBytes)return false;
+  gIndexed.QueuePop(IndexedStore::DEFENDER);gStackKeyPayloadBytes-=payload;gIndexed.Erase(victim);++gStackDefenderEvictions;return true;
+ }
+ return false;
+}
+static bool CanStoreStackForecast(const StackForecastKey& key)
+{
+ if(!gUseIndexed)return LegacyCanStoreStackForecast(key);
+ if(!StackForecastContext())return false;
+ const size_t payload=key.state.capacity()*sizeof(int);
+ if(gStackEntryLimit==0||payload>gStackKeyPayloadLimit){++gStackInsertBypasses;return false;}
+ while(gIndexed.Total()>=gStackEntryLimit||payload>gStackKeyPayloadLimit-gStackKeyPayloadBytes)
+  if(!EvictOldestStackForecast()){++gStackInsertBypasses;return false;}
+ return true;
+}
+static size_t EstimatedStackForecastBytes()
+{
+ if(!gUseIndexed)return LegacyEstimatedStackForecastBytes();
+ // The original empty fallback containers remain available throughout search.
+ // This is requested-payload/container estimation, excluding heap bookkeeping.
+ return gIndexed.ReservedBytes()+sizeof(gIndexed)+sizeof(gStackDangerForecasts)+sizeof(gStackDefenderForecasts)
+  +(gStackDangerForecasts.bucket_count()+gStackDefenderForecasts.bucket_count()+2)*sizeof(void*)
+  +sizeof(StackDangerForecasts::value_type)+sizeof(StackDefenderForecasts::value_type)+4*sizeof(void*)
+  +sizeof(gStackDangerOrder)+sizeof(gStackDefenderOrder)+sizeof(gStackThreatFlags)
+  +gStackThreatFlags.size()*(sizeof(StackThreatFlags::value_type)+4*sizeof(void*));
+}
+static void UpdateStackForecastPeaks()
+{
+ if(!gUseIndexed){LegacyUpdateStackForecastPeaks();return;}
+ gStackPeakEntries=max(gStackPeakEntries,gIndexed.Total());
+ gStackPeakKeyBytes=max(gStackPeakKeyBytes,gStackKeyPayloadBytes);
+ gStackPeakEstimatedBytes=max(gStackPeakEstimatedBytes,EstimatedStackForecastBytes());
+}
+static void StoreStackDangerForecast(const StackForecastKey& key,int result)
+{
+ if(!gUseIndexed){LegacyStoreStackDangerForecast(key,result);return;}
+ if(!CanStoreStackForecast(key))return;
+ IndexedStore::Pending pending;StackDangerForecastValue value(result);pending.Assign(key,&value,NULL);
+ bool inserted=false;int handle=gIndexed.Insert(key,pending,IndexedStore::DANGER,inserted);
+ if(inserted)
+ {
+  const size_t payload=gIndexed.At(handle).PayloadBytes();
+  if(payload<=gStackKeyPayloadLimit-gStackKeyPayloadBytes)
+  {gStackKeyPayloadBytes+=payload;gIndexed.QueuePush(handle);UpdateStackForecastPeaks();}
+  else{gIndexed.Erase(handle);++gStackInsertBypasses;}
+ }
+}
+static void StoreStackDangerPacketForecast(const StackForecastKey& key,const StackDangerForecastValue& value)
+{
+ if(!gUseIndexed){LegacyStoreStackDangerPacketForecast(key,value);return;}
+ if(!StackForecastContext())return;
+ if(key.state.size()%2==0||value.memberScores.size()<2||gStackEntryLimit==0){++gStackInsertBypasses;return;}
+ if(gIndexed.Find(key,IndexedStore::DANGER)!=-1)return;
+ const unsigned long revision=gStackForecastRevision;const long scene=gStackForecastSceneEpoch;
+ IndexedStore::Pending pending;pending.Assign(key,&value,NULL);
+ if(pending.keyWords>gStackKeyPayloadLimit/sizeof(int)){++gStackInsertBypasses;return;}
+ const size_t copiedKeyBytes=pending.keyWords*sizeof(int);
+ if(pending.members>(gStackKeyPayloadLimit-copiedKeyBytes)/sizeof(pair<int,int>)){++gStackInsertBypasses;return;}
+ if(!StackForecastContext()||revision!=gStackForecastRevision||scene!=gStackForecastSceneEpoch){++gStackInsertBypasses;return;}
+ bool inserted=false;int handle=gIndexed.Insert(key,pending,IndexedStore::DANGER,inserted);
+ if(!inserted)return;
+ if(!gStackForecastsActive||gStackForecastDepth!=1||revision!=gStackForecastRevision||scene!=gStackForecastSceneEpoch||scene!=CvStackingStrengthCache::SceneEpoch())
+ {gIndexed.Erase(handle);++gStackInsertBypasses;return;}
+ const IndexedStore::Slot& stored=gIndexed.At(handle);
+ if(stored.keyWords>gStackKeyPayloadLimit/sizeof(int)){gIndexed.Erase(handle);++gStackInsertBypasses;return;}
+ const size_t keyBytes=stored.keyWords*sizeof(int);
+ if(stored.members>(gStackKeyPayloadLimit-keyBytes)/sizeof(pair<int,int>)){gIndexed.Erase(handle);++gStackInsertBypasses;return;}
+ const size_t payload=stored.PayloadBytes();
+ while(gIndexed.Total()>gStackEntryLimit||payload>gStackKeyPayloadLimit-gStackKeyPayloadBytes)
+  if(!EvictOldestStackForecast()){gIndexed.Erase(handle);++gStackInsertBypasses;return;}
+ try{gIndexed.QueuePush(handle);}
+ catch(...){gIndexed.Erase(handle);throw;}
+ gStackKeyPayloadBytes+=payload;UpdateStackForecastPeaks();
+}
+static void StoreStackDefenderForecast(const StackForecastKey& key,const CvUnit* result)
+{
+ if(!gUseIndexed){LegacyStoreStackDefenderForecast(key,result);return;}
+ if(!CanStoreStackForecast(key))return;
+ IndexedStore::Pending pending;pending.Assign(key,NULL,result);
+ bool inserted=false;int handle=gIndexed.Insert(key,pending,IndexedStore::DEFENDER,inserted);
+ if(inserted)
+ {
+  const size_t payload=gIndexed.At(handle).PayloadBytes();
+  if(payload<=gStackKeyPayloadLimit-gStackKeyPayloadBytes)
+  {gStackKeyPayloadBytes+=payload;gIndexed.QueuePush(handle);UpdateStackForecastPeaks();}
+  else{gIndexed.Erase(handle);++gStackInsertBypasses;}
+ }
+}
+
+// Backend queries copy results before any caller validation can clear storage.
+static size_t StackDangerForecastSize(){return gUseIndexed?gIndexed.Count(IndexedStore::DANGER):gStackDangerForecasts.size();}
+static size_t StackDefenderForecastSize(){return gUseIndexed?gIndexed.Count(IndexedStore::DEFENDER):gStackDefenderForecasts.size();}
+static bool FindStackDangerForecastScalar(const StackForecastKey& key,int& result)
+{
+ if(gUseIndexed){int handle=gIndexed.Find(key,IndexedStore::DANGER);if(handle==-1)return false;result=gIndexed.At(handle).scalar;return true;}
+ StackDangerForecasts::const_iterator hit=gStackDangerForecasts.find(key);
+ if(hit==gStackDangerForecasts.end())return false;result=hit->second.scalar;return true;
+}
+static bool FindStackDangerForecastMember(const StackForecastKey& key,const CvUnit* unit,int& result)
+{
+ if(gUseIndexed)
+ {
+  int handle=gIndexed.Find(key,IndexedStore::DANGER);if(handle==-1)return false;
+  const IndexedStore::Slot& slot=gIndexed.At(handle);
+  for(size_t i=0;i<slot.members;++i)if(slot.Data()[slot.keyWords+2*i]==unit->GetID())
+  {result=slot.Data()[slot.keyWords+2*i+1];return true;}
+  return false;
+ }
+ StackDangerForecasts::const_iterator hit=gStackDangerForecasts.find(key);
+ if(hit!=gStackDangerForecasts.end())for(size_t i=0;i<hit->second.memberScores.size();++i)
+  if(hit->second.memberScores[i].first==unit->GetID()){result=hit->second.memberScores[i].second;return true;}
+ return false;
+}
+static bool FindStackDefenderForecast(const StackForecastKey& key,const CvUnit*& result)
+{
+ if(gUseIndexed){int handle=gIndexed.Find(key,IndexedStore::DEFENDER);if(handle==-1)return false;result=gIndexed.At(handle).defender;return true;}
+ StackDefenderForecasts::const_iterator hit=gStackDefenderForecasts.find(key);
+ if(hit==gStackDefenderForecasts.end())return false;result=hit->second;return true;
 }
 
 static void AppendStackCandidates(StackForecastKey& key, const vector<const CvUnit*>& candidates, const SUnitIDValueContainer& damage, bool canonicalOrder = true)
@@ -8642,15 +8951,13 @@ static bool ResolveStackDangerPacket(StackDangerPacketQuery& query,const CvUnit*
  if(!PrepareStackDangerPacket(query,unit,plot,roster,friendly,enemy,legacy))return false;
  if(!ValidateStackDangerPacket(query,unit,plot,revision,scene))return false;
  StackDangerPacketBuffer& b=query.buffer;
- StackDangerForecasts::const_iterator hit=gStackDangerForecasts.find(b.key);
- if(hit!=gStackDangerForecasts.end())
-  for(size_t i=0;i<hit->second.memberScores.size();++i)if(hit->second.memberScores[i].first==unit->GetID())
-  {
-   // Copy before a validating context call, which may clear the owning table.
-   const int cachedResult=hit->second.memberScores[i].second;
-   if(!ValidateStackDangerPacket(query,unit,plot,revision,scene))return false;
-   result=cachedResult;query.scalarValid=true;++gStackPacketHits;return true;
-  }
+ int cachedResult=0;
+ if(FindStackDangerForecastMember(b.key,unit,cachedResult))
+ {
+  // The backend copied the integer before validation may clear storage.
+  if(!ValidateStackDangerPacket(query,unit,plot,revision,scene))return false;
+  result=cachedResult;query.scalarValid=true;++gStackPacketHits;return true;
+ }
  CvDangerPlots* map=GET_PLAYER(unit->getOwner()).GetDangerPlots();
  SUnitIDValueContainer localFinal;const SUnitIDValueContainer* finalDamage=NULL;bool cityCanFall=false,computed=false;
  if(outcome)
@@ -8892,11 +9199,11 @@ static int GetCachedStackDanger(const CvUnit* unit, const CvPlot* plot, const ve
   AppendStackCandidates(key, candidates, friendlyDamage, !plot->isCity() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0);
   AppendStackDamageProjected(key, enemyDamage, unit, plot);
   cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
-  StackDangerForecasts::const_iterator cached = cacheable ? gStackDangerForecasts.find(key) : gStackDangerForecasts.end();
-  if (cacheable && cached != gStackDangerForecasts.end())
+  int cachedResult=0;
+  if (cacheable && FindStackDangerForecastScalar(key,cachedResult))
   {
    ++gStackDangerHits;
-   return cached->second.scalar;
+   return cachedResult;
   }
  }
  keySample.Finish(); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
@@ -8948,11 +9255,11 @@ static const CvUnit* SelectCachedStackDefender(const CvUnit* attacker, const CvP
   key.state.push_back(attackerDamage);
   AppendStackCandidates(key, candidates, damage, CvStacking::IsEnabled() && CvStacking::GetIntByKey(CvStacking::HOT_DefenderSelectionEnabled, 1) != 0);
   cacheable = StackForecastContext() && gStackForecastRevision == revision && gStackForecastSceneEpoch == scene;
-  StackDefenderForecasts::const_iterator cached = cacheable ? gStackDefenderForecasts.find(key) : gStackDefenderForecasts.end();
-  if (cacheable && cached != gStackDefenderForecasts.end())
+  const CvUnit* cachedResult=NULL;
+  if (cacheable && FindStackDefenderForecast(key,cachedResult))
   {
    ++gStackDefenderHits;
-   return cached->second;
+   return cachedResult;
   }
  }
  if (cacheable)
@@ -15023,12 +15330,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 
 		if (CvStacking::IsEnabled() && StackForecastContext())
 			GET_PLAYER(ePlayer).GetTacticalAI()->LogTacticalMessage(CvString::format("stack forecast cache: danger %lu hit/%lu miss (%u entries), defender %lu hit/%lu miss (%u entries); peak %u/%u entries, key bytes %u/%u, estimated bytes %u, insertion bypasses %lu, nested bypasses %lu; retained %u entries/%u key bytes, evictions %lu danger/%lu defender",
-				gStackDangerHits, gStackDangerMisses, (unsigned int)gStackDangerForecasts.size(),
-				gStackDefenderHits, gStackDefenderMisses, (unsigned int)gStackDefenderForecasts.size(),
+				gStackDangerHits, gStackDangerMisses, (unsigned int)StackDangerForecastSize(),
+				gStackDefenderHits, gStackDefenderMisses, (unsigned int)StackDefenderForecastSize(),
 				(unsigned int)gStackPeakEntries, (unsigned int)gStackEntryLimit,
 				(unsigned int)gStackPeakKeyBytes, (unsigned int)gStackKeyPayloadLimit, (unsigned int)gStackPeakEstimatedBytes,
 				gStackInsertBypasses, gStackNestedBypasses,
-				(unsigned int)(gStackDangerForecasts.size() + gStackDefenderForecasts.size()), (unsigned int)gStackKeyPayloadBytes,
+				(unsigned int)(StackDangerForecastSize() + StackDefenderForecastSize()), (unsigned int)gStackKeyPayloadBytes,
 				gStackDangerEvictions, gStackDefenderEvictions));
 
 		//debug dump
@@ -15064,16 +15371,16 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 	if(perfInterval && GC.getGame().getGameTurn()%perfInterval==0)
 	{
 		const CvStackingStrengthCache::Stats strength = CvStackingStrengthCache::GetStats();
-		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu callbackProofScans=%lu callbackProofFlags=%lu callbackValidationBypasses=%lu callbackSuspensions=%lu; phase tick timing is coarse, search includes yields and shares the PLAN timer",
+		CvStackingDiagnostics::Record(1,ePlayer,"PLAN_PERF","target=%d:%d setupMs=%lu searchMs=%lu finalizeMs=%lu yieldMs=%lu yields=%u dangerHits=%lu dangerMisses=%lu defenderHits=%lu defenderMisses=%lu entries=%u payloadBytes=%u dangerEvictions=%lu defenderEvictions=%lu meleeStrengthHits=%lu meleeStrengthMisses=%lu rangedStrengthHits=%lu rangedStrengthMisses=%lu attackStrengthHits=%lu attackStrengthMisses=%lu defenseStrengthHits=%lu defenseStrengthMisses=%lu strengthEntries=%u strengthPeakEntries=%u strengthLimit=%u strengthEvictions=%lu strengthInvalidations=%lu outcomeBuilds=%lu outcomeReuses=%lu outcomeBypasses=%lu outcomeRetainedBytes=%u outcomePeakRetainedBytes=%u packetHits=%lu packetBuilds=%lu packetBypasses=%lu callbackProofScans=%lu callbackProofFlags=%lu callbackValidationBypasses=%lu callbackSuspensions=%lu forecastBackend=%s forecastEstimatedBytes=%u; phase tick timing is coarse, search includes yields and shares the PLAN timer",
 			pTarget->getX(),pTarget->getY(),searchBegin-planningBegin,searchEnd-searchBegin,GetTickCount()-searchEnd,yieldMs,yieldCount,
 			gStackDangerHits,gStackDangerMisses,gStackDefenderHits,gStackDefenderMisses,
-			(unsigned int)(gStackDangerForecasts.size()+gStackDefenderForecasts.size()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
+			(unsigned int)(StackDangerForecastSize()+StackDefenderForecastSize()),(unsigned int)gStackKeyPayloadBytes,gStackDangerEvictions,gStackDefenderEvictions,
 			strength.meleeHits,strength.meleeMisses,strength.rangedHits,strength.rangedMisses,
 			strength.attackHits,strength.attackMisses,strength.defenseHits,strength.defenseMisses,
 			strength.entries,strength.peakEntries,strength.limit,strength.evictions,strength.invalidations,
 			gStackOutcomeBuilds,gStackOutcomeReuses,gStackOutcomeBypasses,(unsigned int)gStackOutcomeCurrentBytes,(unsigned int)gStackOutcomePeakBytes,
 			gStackPacketHits,gStackPacketBuilds,gStackPacketBypasses,
-			strength.capabilityScans,strength.capabilityFlags,strength.capabilityValidationBypasses,strength.capabilitySuspensions);
+			strength.capabilityScans,strength.capabilityFlags,strength.capabilityValidationBypasses,strength.capabilitySuspensions,gUseIndexed?"indexed":"legacy",(unsigned int)EstimatedStackForecastBytes());
 	}
 	CvStackingDiagnostics::Record(1, ePlayer, "PLAN", "target=%d:%d aggression=%d input=%u kept=%d states=%d completed=%u assignments=%u milliseconds=%d",
 		pTarget->getX(), pTarget->getY(), (int)eAggLvl, (unsigned int)vUnits.size(), iKeptUnits, iUsedPositions,

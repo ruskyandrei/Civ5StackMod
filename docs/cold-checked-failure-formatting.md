@@ -36,5 +36,10 @@ candidate files; application verifies every input before writing and preserves
 BOM/newlines. Run the fixture with `--production` after application. Its engine
 substitutes and failure-only lifetime limits are explicit.
 
-The matched native replay result will be recorded in
-`performance-progress-20260930.md`. Until that completes, benefit is unmeasured.
+The first matched profiler-off replay preserved all699 retained ordered events
+and both world censuses. Interior turns252/253 took32.313s/63.484s versus
+37.093s/74.297s for DLL86, about13–15% less wall time. The same complete planning
+work now takes9.665s/39.010s versus11.450s/46.698s. This single replay pair
+supports a useful improvement in this campaign, not a general speed guarantee
+or achievement of the below30s objective. Full evidence and limits are recorded
+in `performance-progress-20260930.md`.
