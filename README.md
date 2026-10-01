@@ -1,18 +1,83 @@
 # Civ5StackMod
 
-An experimental unit-stacking and AI development fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V. The current base is **VP 5.4.6**, and development is on `b-stack-prototype`. Upstream history, credits and licensing are preserved.
+A fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V that replaces one-unit-per-tile with **limited unit stacking**, and teaches the AI to fight with stacks. The current base is **VP 5.4.6** plus later upstream changes; development is on `master`. Upstream history, credits and licensing are preserved.
 
-## Stacking prototype
+## Summary
 
-The prototype adds XML-configurable stack capacity and technology progression, best-defender selection, cavalry flanking and anti-cavalry protection, limited collateral damage, city fortification protection, stack-aware AI, a stack roster, group movement and optional native diagnostics. A first military-allocation pass also addresses garrison retention, rear reserves, recruitment and assembly; further offensive coordination remains planned. Long-campaign stability and broad AI quality are still being tested.
+- Several combat units can share a tile: two at the start, more with military technologies.
+- A stack is not a single super-unit. The defender is chosen per attack, cavalry can reach the weak units behind the front line, and siege damages the whole stack. Large stacks are strong against melee and vulnerable to artillery.
+- Cities no longer shoot. They are defended by the ranged units stacked inside them, and fortifications shield those units from siege.
+- The AI builds, moves and attacks with stacks: it garrisons cities by role, gathers assault waves with real siege, bombards before storming, reinforces its best objectives and tries to retake lost cities.
+- Everything is configurable in XML without rebuilding the DLL; see the [list of all XML options](docs/stacking-xml-options.md).
+- AI turn times are similar to plain VP: in one 250-turn autoplay benchmark the mod took 6.1 s per turn against 6.5 s for VP.
 
-This repository currently shares **development source, not a packaged stacking release**. DLLs and other binaries inherited from upstream are not newly built stacking downloads. The tested installation uses VP with EUI and the standard civilization limit. The build/deployment scripts document the original development PC and contain machine-specific paths; review and configure them before use on another PC.
+This is an early pre-release. Multiplayer, the 43-civ variant and the no-EUI variant are untested.
 
-Start with the [playing guide](docs/stacking-playing.md), [XML configuration reference](docs/stacking-configuration.md), [native build/deployment guide](work/BUILD-LOCAL.md), and [test coverage and remaining limitations](work/REQUIREMENTS-AUDIT-20260927.md). The [stacking TODO](docs/stacking-todo.md) and [military AI plan](docs/military-ai-plan.md) distinguish implemented work from proposed changes. [Military allocation validation](work/MILITARY-AI-IMPLEMENTATION.md) records the later build checkpoint; the [Turn 245 crash investigation](work/CRASH-245-20260927.md) preserves the earlier repairs and bounded replay evidence.
+## Install
 
-See [repository maintenance](docs/repository-workflow.md) for saving changes and merging future VP releases. Reviewed development scripts, fixtures and notes are tracked under `work`; local compiler downloads, build outputs, backups, saves and raw test evidence are excluded. Report stacking-specific issues in [this fork](https://github.com/ruskyandrei/Civ5StackMod/issues), with the build version and reproduction details.
+Download the package from the [Releases page](https://github.com/ruskyandrei/Civ5StackMod/releases), extract it and run `Install.cmd`. It is a complete modified copy of Vox Populi (EUI version) and replaces a normal VP installation; existing files are moved to a backup folder. Requires Civilization V with both expansions on Windows. Start a new game with (1) Community Patch, (2) Vox Populi, (3a) VP - EUI Compatibility Files and (4a) Squads for VP enabled.
 
-The following sections describe the upstream project. Their release links lead to ordinary VP, not this stacking prototype.
+## How it works
+
+### Stack capacity
+
+Combat units share a tile up to their owner's capacity, counted separately for land and sea. Civilians, support units and aircraft keep their VP rules.
+
+| Unlock | Capacity |
+|---|---:|
+| Start | 2 |
+| Iron Working | 3 |
+| Gunpowder | 4 |
+| Military Science | 5 |
+| Robotics | 6 |
+
+### Combat
+
+| Mechanic | Rule |
+|---|---|
+| Defender selection | For each attack, the stack member with the best expected outcome defends. A wounded melee unit yields to a healthier one. |
+| Flanking | Mounted and armored melee units bypass the defender and hit archers and siege in the stack, unless an anti-cavalry unit (spear, pike, tercio, rifle, or Formation and Anti-Tank promotions) intercepts. |
+| Collateral damage | Siege units, ranged ships firing at land, and bombers also hit other units in the stack: 20% of the primary hit, on 2 to 5 extra units depending on the weapon. Collateral cannot take a unit below 50% health. |
+| Siege against units | Siege keeps a 33% attack penalty against land units, so it softens stacks rather than destroying them. |
+
+### Cities
+
+- Cities have no ranged attack of their own; the ranged units inside provide the defensive fire.
+- Walls, Castle, Arsenal, Military Base and Bomb Shelter reduce collateral damage to units in the city (10% to 30% each, up to 90% combined). The protection shrinks as the city loses health.
+- A finished unit with no free stacking space waits in the production queue, with a notification, until a slot opens.
+
+### Interface
+
+- A stack roster lists the units on a tile with health, movement and role.
+- **Move Stack** sends a whole stack to a destination and reports which units move and which stay.
+- Map flags collapse into a count badge on crowded tiles, and the combat preview shows the chosen defender and collateral victims.
+
+## High-level changes to the AI
+
+| Area | Change |
+|---|---|
+| Tactical combat | Simulates stack defenders, flanking and collateral when choosing moves; keeps protector and ranged pairs together and spreads out under artillery threat. |
+| City defence | Assigns a garrison plus ranged defenders by role, sized to the visible threat; releases surplus units from safe rear cities. |
+| War opening | Declares a city-attack war only once the army is staged near the target. |
+| Assaults | Gathers a coherent wave with the required siege, stages it out of danger, bombards while gathering and reserves a unit for the capture. |
+| Objectives | Sends reinforcements and production to its two most promising city objectives per domain, and keeps a recently lost city as a recapture target. |
+| Idle fire | Ranged and siege units that would otherwise stand idle fire at a target in range at the end of the turn. |
+| Performance | Caches exact combat-strength and danger forecasts inside each tactical search, with bounded per-turn path budgets. |
+| Fixes | Corrects several VP tactical-AI and crash bugs found along the way, including a city-capture crash. |
+
+Optional native diagnostics log AI decisions, combat and timing; they are off by default.
+
+## Documentation
+
+- [Playing guide](docs/stacking-playing.md)
+- [All XML options](docs/stacking-xml-options.md) and the [detailed configuration reference](docs/stacking-configuration.md)
+- [Offensive AI design](docs/decisive-wars-implementation.md) and the [military AI plan](docs/military-ai-plan.md)
+- [Building and deploying](work/BUILD-LOCAL.md). The scripts contain paths from the development PC; adjust them before use elsewhere.
+- [Repository maintenance](docs/repository-workflow.md), including merging new VP releases
+
+Report stacking-specific issues in [this fork](https://github.com/ruskyandrei/Civ5StackMod/issues), with the release version and reproduction details.
+
+The following sections describe the upstream project. Their release links lead to ordinary VP, not this mod.
 
 ## What is Vox Populi
 
