@@ -235,6 +235,7 @@ namespace
 		{"AIStackPairRecruitBonus", 25, 0, 10000},
 		{"UIStackEnabled", 1, 0, 1},
 		{"UIStackMoveMinimumUnits", 2, 2, 10000},
+		{"UIStackMoveModifier", 0, 0, 2},
 		{"UIStackRosterWidth", 360, 1, 10000},
 		{"UIStackRosterRowHeight", 38, 1, 10000},
 		{"UIStackRosterMaximumHeight", 430, 1, 10000},

@@ -50,15 +50,17 @@ Select a stacked unit to open the roster. Each row shows health, movement and co
 To move a group:
 
 1. Select the unit that should receive priority if destination space is limited.
-2. Click **Move Stack** and hover over a destination.
-3. Read **N move; M stay** and the per-unit reasons.
-4. Right-click the destination to send eligible members. Left-click the map, press Escape or click Cancel to cancel.
+2. Click **Move Stack** and hover over a destination. Green tiles take every member that can still move this turn; yellow tiles only some. The hovered tile is drawn more strongly, in red if nobody can go there.
+3. Read **N arrive now; L later; M stay** and the per-unit reasons.
+4. Right-click the destination to send the stack. Left-click the map, press Escape or click Cancel to cancel.
 
 The order includes the owned units present when the button was clicked. Neighboring units and another player's units are not added. A later arrival is marked **Outside order**; begin a new order to include it. A member that leaves the source tile is not collected from its new location.
 
-Each member must be able to arrive this turn under its own normal movement rules. Exhausted units, blocked terrain or borders and unavailable stack slots can split the group. The panel warns when melee protection stays behind while ranged members move without another melee protector. This warning describes the group composition; it does not predict every possible enemy response.
+Members that can arrive this turn move there now. The others, including exhausted units, receive an ordinary multi-turn move order: they move as far as they can now and continue on later turns, and their slots at the destination are reserved like everyone else's. Blocked terrain or borders, enemies on the route and unavailable stack slots can still leave members behind. The panel warns when melee protection stays behind while ranged members move without another melee protector. This warning describes the group composition; it does not predict every possible enemy response.
 
-Aircraft keep their normal rebase commands. Cargo travels with an eligible carrier without receiving an independent movement order. Move Stack does not issue an attack or declare war. Revealed threats or changing occupancy can stop a unit en route; the result notification distinguishes arrivals, units that stayed and interrupted moves. Squad membership is preserved. Existing linked movement is released when these individual orders are issued.
+For a quicker order, hold **Alt** while a stacked unit is selected. The same reach colours and preview appear for the tile under the cursor, and Alt + right-click sends the stack exactly as Move Stack would. If no member can take the tile (an enemy or a full stack, for example), the click falls through to the normal right-click order for the selected unit, so attacks still work. The order covers the owned units on the tile at the moment of the click. The native path line still shows the selected unit's own route. `UIStackMoveModifier` changes the key to Shift or Ctrl; either then replaces that key's normal right-click behaviour (Shift queues waypoints, Ctrl moves and alerts) for stacked units.
+
+Aircraft keep their normal rebase commands. Cargo travels with an eligible carrier without receiving an independent movement order. Move Stack does not issue an attack or declare war. Revealed threats or changing occupancy can stop a unit en route; the result notification distinguishes arrivals, units that stayed, units still on the way to a later-turn destination, and interrupted moves. Squad membership is preserved. Existing linked movement is released when these individual orders are issued.
 
 ## Diagnostics
 

@@ -10,6 +10,8 @@ local function setting(name, default)
     return settings[name] or default
 end
 local active, snapshot, source, selectedID, preview, hoverPlot, pending, inspectPlot
+-- quick: the modifier key is held, so hover previews and right-click orders cover the whole stack.
+local quick, reach = false, nil
 local collapsed, inCityScreen = false, false
 local rosterDismissed = false
 local dismissedOwner, dismissedUnitID
@@ -19,6 +21,10 @@ local width = math.max(260, setting("UIStackRosterWidth", 360))
 local rowHeight = math.max(32, setting("UIStackRosterRowHeight", 38))
 local maxHeight = math.max(rowHeight, setting("UIStackRosterMaximumHeight", 430))
 local moveMinimum = math.max(2, setting("UIStackMoveMinimumUnits", 2))
+local modifierKey = setting("UIStackMoveModifier", 0)
+local modifierName = ({ [1] = "Shift", [2] = "Ctrl" })[modifierKey] or "Alt"
+local reachColors = { all = Vector4(0.2, 0.9, 0.4, 0.45), some = Vector4(1, 0.8, 0.15, 0.45) }
+local destinationColors = { all = Vector4(0.2, 0.9, 0.5, 1), some = Vector4(1, 0.8, 0.15, 1), none = Vector4(1, 0.25, 0.2, 1) }
 local refreshNeeded = true
 local status = ""
 local combatPreviewVisible, combatPreviewTop = false, 0
@@ -29,11 +35,26 @@ local reasons = {
     NoMoves = "No movement left", AlreadyHere = "Already at destination",
     Enemy = "Enemy blocks route; use an explicit attack order", TerrainOrBorders = "Terrain or borders prevent entry",
     NoPath = "No legal path", LaterTurn = "Cannot arrive this turn", Capacity = "Destination stack is full",
+    Queued = "Arrives in a later turn",
     ForeignStack = "Another player occupies the combat stack"
 }
 local function player() return Players[Game.GetActivePlayer()] end
 local function leader()
     return selectedID and player():GetUnitByID(selectedID)
+end
+local function modifierHeld()
+    if modifierKey == 1 then return UIManager:GetShift() end
+    if modifierKey == 2 then return UIManager:GetControl() end
+    return UIManager:GetAlt()
+end
+local function reasonText(member)
+    if member.CarriedBy then return "Travels with transport" end
+    local text = reasons[member.Reason] or member.Reason
+    local turns = tonumber(member.Turns) or -1
+    if (member.Reason == "Queued" or member.Reason == "LaterTurn") and turns > 0 then
+        text = text .. string.format(" (%d turn%s)", turns, turns == 1 and "" or "s")
+    end
+    return text
 end
 local function isVisible(unit, plot)
     return unit:GetOwner() == Game.GetActivePlayer() or
@@ -66,9 +87,21 @@ local function setMode(value)
     end
     refreshNeeded = true
 end
+local function clearHighlights()
+    Events.ClearHexHighlights()
+end
 local function stopMode()
     setMode(false)
-    snapshot, source, preview, hoverPlot = nil, nil, nil, nil
+    snapshot, source, preview, hoverPlot, reach = nil, nil, nil, nil, nil
+end
+local function stopQuick()
+    if not quick then return end
+    quick = false
+    LuaEvents.StackQuickModeChanged(false)
+    snapshot, source, preview, hoverPlot, reach = nil, nil, nil, nil, nil
+    clearHighlights()
+    if not pending then status = "" end
+    refreshNeeded = true
 end
 local function roleText(unit)
     local parts = {}
@@ -139,29 +172,40 @@ end
 local function setPreview(nextPreview)
     preview = nextPreview
     local moving, staying, byID = movementCounts(preview, false)
-    local details, uncertain = {}, false
+    local details, uncertain, queued = {}, false, 0
     for _, member in ipairs(preview.Members) do
         local unit = player():GetUnitByID(member.UnitID)
-        local reason = member.CarriedBy and "Travels with transport; no independent move order" or (reasons[member.Reason] or member.Reason)
+        local reason = member.CarriedBy and "Travels with transport; no independent move order" or reasonText(member)
         if member.Uncertain then reason = reason .. "; fog may interrupt movement"; uncertain = true end
+        if member.CanMove and member.Reason == "Queued" then queued = queued + 1 end
         details[#details + 1] = (unit and unit:GetName() or "Unit") .. ": " .. reason
     end
     local outside = 0
     for id in pairs(rowByID) do if not byID[id] then outside = outside + 1 end end
-    status = string.format("%d move; %d stay", moving, staying)
+    if queued > 0 then
+        status = string.format("%d arrive now; %d later; %d stay", moving - queued, queued, staying)
+    else
+        status = string.format("%d move; %d stay", moving, staying)
+    end
     if outside > 0 then status = status .. " (" .. outside .. " outside order)" end
     if preview.ProtectorStays then status = status .. " [COLOR_WARNING_TEXT]Protector stays![ENDCOLOR]" end
     if uncertain then status = status .. " (fog may stop units)" end
-    status = status .. "[NEWLINE]Right-click destination; left-click or Esc cancels."
+    if quick then
+        status = status .. "[NEWLINE]" .. modifierName .. "+right-click moves the stack."
+    else
+        status = status .. "[NEWLINE]Right-click destination; left-click or Esc cancels."
+    end
     Controls.StackSummary:SetToolTipString(table.concat(details, "[NEWLINE]"))
     for id, instance in pairs(rowByID) do
         local member = byID[id]
         if member then
             local unit = player():GetUnitByID(id)
             local base = unit and roleText(unit) or ""
-            local reason = member.CarriedBy and "Travels with transport" or (reasons[member.Reason] or member.Reason)
-            instance.Detail:SetText(((member.CanMove or member.CarriedBy) and "[COLOR_POSITIVE_TEXT]Move" or "[COLOR_WARNING_TEXT]Stay") ..
-                "[ENDCOLOR] - " .. reason)
+            local reason = reasonText(member)
+            local verdict = "[COLOR_WARNING_TEXT]Stay"
+            if member.CanMove and member.Reason == "Queued" then verdict = "[COLOR_YELLOW]Later"
+            elseif member.CanMove or member.CarriedBy then verdict = "[COLOR_POSITIVE_TEXT]Move" end
+            instance.Detail:SetText(verdict .. "[ENDCOLOR] - " .. reason)
             instance.Row:SetToolTipString(base .. "[NEWLINE]" .. reason ..
                 (member.Uncertain and "[NEWLINE]Fog may interrupt this path." or ""))
         else
@@ -172,18 +216,75 @@ local function setPreview(nextPreview)
     Controls.StackSummary:SetText(status)
     layoutPanel()
 end
+local cannotMoveThisTurn = { NoMoves = true, Cargo = true, Aircraft = true, Busy = true, LeftSource = true, Unavailable = true }
+-- Green: every member that can still move this turn arrives. Yellow: only some do,
+-- or (with the modifier) the rest are ordered to arrive in later turns. Red: none move.
+local function destinationColor(plan)
+    local now, eligible = 0, 0
+    for _, member in ipairs(plan.Members) do
+        if member.CanMove and member.Reason ~= "Queued" then now = now + 1 end
+        if not cannotMoveThisTurn[member.Reason] then eligible = eligible + 1 end
+    end
+    if reach then eligible = reach.Eligible end
+    if now > 0 and now >= eligible then return destinationColors.all end
+    if plan.Moving > 0 then return destinationColors.some end
+    return destinationColors.none
+end
+local function drawHighlights(destination, color)
+    clearHighlights()
+    if reach then
+        for _, plot in ipairs(reach.Plots) do
+            Events.SerialEventHexHighlight(ToHexFromGrid(Vector2(plot.X, plot.Y)), true,
+                plot.Arriving >= reach.Eligible and reachColors.all or reachColors.some)
+        end
+    end
+    if destination then
+        Events.SerialEventHexHighlight(ToHexFromGrid(Vector2(destination:GetX(), destination:GetY())), true, color)
+    end
+end
 local function updateHover()
-    if not active then return end
+    if not active and not quick then return end
     local unit = leader()
-    if not unit or not source then stopMode(); return end
+    if not unit or not source then
+        if active then stopMode() else stopQuick() end
+        return
+    end
     local x, y = UI.GetMouseOverHex()
     local plot = Map.GetPlot(x, y) or hoverPlot
     if not plot then return end
     hoverPlot = plot
-    setPreview(unit:GetStackMovePreview(plot, source, snapshot))
-    Events.ClearHexHighlights()
-    Events.SerialEventHexHighlight(ToHexFromGrid(Vector2(plot:GetX(), plot:GetY())), true,
-        preview.Moving > 0 and Vector4(0.2, 0.9, 0.5, 1) or Vector4(1, 0.25, 0.2, 1))
+    -- Both order paths queue members that cannot arrive this turn.
+    setPreview(unit:GetStackMovePreview(plot, source, snapshot, true))
+    drawHighlights(plot, destinationColor(preview))
+end
+local function takeSnapshot(unit)
+    source, selectedID = unit:GetPlot(), unit:GetID()
+    snapshot = {}
+    for _, member in ipairs(members(source, true)) do snapshot[#snapshot + 1] = member:GetID() end
+end
+-- One reach search per member, refreshed with the roster rather than on every hover.
+local function computeReach()
+    local unit = leader()
+    reach = unit and unit.GetStackMoveReach and unit:GetStackMoveReach(source, snapshot) or nil
+end
+local function quickLeader()
+    if active or inCityScreen or setting("UIStackEnabled", 1) == 0 or not modifierHeld() then return nil end
+    local mode = UI.GetInterfaceMode()
+    if mode ~= InterfaceModeTypes.INTERFACEMODE_SELECTION and mode ~= InterfaceModeTypes.INTERFACEMODE_MOVE_TO then return nil end
+    local unit = UI.GetHeadSelectedUnit()
+    if not unit or unit:GetOwner() ~= Game.GetActivePlayer() or not unit.GetStackMoveReach or not player():IsTurnActive() then
+        return nil
+    end
+    if #members(unit:GetPlot(), true) < moveMinimum then return nil end
+    return unit
+end
+local function startQuick(unit)
+    takeSnapshot(unit)
+    computeReach()
+    quick = true
+    LuaEvents.StackQuickModeChanged(true)
+    refreshNeeded = true
+    updateHover()
 end
 local function buildRows()
     local screenWidth = UIManager:GetScreenSizeVal()
@@ -221,7 +322,7 @@ local function buildRows()
     Controls.StackTitle:SetText((collapsed and "[ICON_PLUS] " or "[ICON_MINUS] ") .. "Stack: " .. #list .. " units")
     Controls.StackMove:SetHide(#own < moveMinimum or plot ~= selected:GetPlot())
     Controls.StackMove:SetDisabled(not player():IsTurnActive())
-    Controls.StackMove:SetToolTipString("Move members of this tile that can arrive this turn. Each keeps its own movement allowance. Selected unit gets destination capacity first. Units that cannot move stay behind. Linked movement is released; Squad memberships are preserved.")
+    Controls.StackMove:SetToolTipString("Move the members of this tile to a destination. Green tiles take every member that can still move this turn; yellow tiles only some. Members that cannot arrive this turn, including exhausted ones, continue in later turns. Each keeps its own movement allowance. Selected unit gets destination capacity first. Linked movement is released; Squad memberships are preserved.[NEWLINE][NEWLINE]Shortcut: hold " .. modifierName .. " and right-click a tile.")
     for _, instance in ipairs(rowInstances) do instance.Row:ChangeParent(Controls.StackScrap) end
     rowByID = {}
     for i, unit in ipairs(list) do
@@ -367,10 +468,10 @@ local function beginMove()
     if active then stopMode(); status = ""; return end
     local unit = UI.GetHeadSelectedUnit()
     if not unit or unit:GetOwner() ~= Game.GetActivePlayer() then return end
-    source, selectedID = unit:GetPlot(), unit:GetID()
-    snapshot = {}
-    for _, member in ipairs(members(source, true)) do snapshot[#snapshot + 1] = member:GetID() end
+    stopQuick()
+    takeSnapshot(unit)
     if #snapshot < moveMinimum then return end
+    computeReach()
     rosterDismissed = false
     status = "Choose destination. Right-click to move; left-click or Esc cancels."
     pending = nil
@@ -379,20 +480,42 @@ local function beginMove()
 end
 Controls.StackMove:RegisterCallback(Mouse.eLClick, beginMove)
 Controls.StackToggle:RegisterCallback(Mouse.eLClick, function() collapsed = not collapsed; refreshNeeded = true end)
+-- Shared by the Move Stack button and the modifier shortcut.
+local function orderStack(unit, plot)
+    local result = unit:DoStackMove(plot, source, snapshot, true)
+    local moving, staying = movementCounts(result, true)
+    local queued = 0
+    for _, member in ipairs(result.Members) do
+        if member.Sent and member.Reason == "Queued" then queued = queued + 1 end
+    end
+    pending = { members = result.Members, x = plot:GetX(), y = plot:GetY(), elapsed = 0 }
+    if queued > 0 then
+        status = string.format("Ordered %d to move (%d over later turns); %d stay.", moving, queued, staying)
+    else
+        status = string.format("Ordered %d to move; %d stay.", moving, staying)
+    end
+end
 LuaEvents.StackMoveInput.Add(function(uiMsg, wParam)
     if not active then return end
     if uiMsg == MouseEvents.RButtonUp then
         local unit = leader()
-        if unit and hoverPlot then
-            local result = unit:DoStackMove(hoverPlot, source, snapshot)
-            local moving, staying = movementCounts(result, true)
-            pending = { members = result.Members, x = hoverPlot:GetX(), y = hoverPlot:GetY(), elapsed = 0 }
-            status = string.format("Ordered %d to move; %d stay.", moving, staying)
-        end
+        if unit and hoverPlot then orderStack(unit, hoverPlot) end
         stopMode()
     elseif uiMsg == MouseEvents.LButtonUp or (uiMsg == KeyEvents.KeyDown and wParam == Keys.VK_ESCAPE) then
         stopMode(); status = ""
     end
+end)
+-- WorldView asks before its own right-click handling; leaving order.handled unset keeps the
+-- native single-unit order (attacks included).
+LuaEvents.StackQuickMoveInput.Add(function(x, y, order)
+    if not quick or active or not modifierHeld() then return end
+    local unit, plot = leader(), Map.GetPlot(x, y)
+    if not unit or not plot or not source or plot == source then return end
+    if unit:GetStackMovePreview(plot, source, snapshot, true).Moving == 0 then return end
+    orderStack(unit, plot)
+    order.handled = true
+    -- The poll restarts the overlay from the new tile while the key stays held.
+    stopQuick()
 end)
 -- Only WorldView forwards map clicks; button/row clicks do not reach this bridge.
 -- Treat invisible units like an empty tile so dismissal reveals no hidden occupants.
@@ -447,7 +570,7 @@ Events.SerialEventUnitInfoDirty.Add(function() refreshNeeded = true end)
 Events.UnitVisibilityChanged.Add(function() refreshNeeded = true end)
 Events.UnitStateChangeDetected.Add(function() refreshNeeded = true end)
 Events.HexFOWStateChanged.Add(function() refreshNeeded = true end)
-Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); refreshNeeded = true end)
+Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); stopQuick(); refreshNeeded = true end)
 Events.SerialEventExitCityScreen.Add(function() inCityScreen = false; updateDiagnosticsAccess(); refreshNeeded = true end)
 Events.UnitSelectionChanged.Add(function(ownerID, unitID, x, y, z, isSelected)
     if isSelected and (not rosterDismissed or ownerID ~= dismissedOwner or unitID ~= dismissedUnitID) then
@@ -463,8 +586,8 @@ Events.InterfaceModeChanged.Add(function(oldMode, newMode)
     if active and newMode ~= InterfaceModeTypes.INTERFACEMODE_SELECTION then stopMode(); status = "" end
 end)
 Events.UnitMoveQueueChanged.Add(function() refreshNeeded = true end)
-Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); rosterDismissed = false; pending = nil; status = ""; refreshNeeded = true end)
-Events.ActivePlayerTurnEnd.Add(function() stopMode(); pending = nil; status = "" end)
+Events.GameplaySetActivePlayer.Add(function() closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); stopQuick(); rosterDismissed = false; pending = nil; status = ""; refreshNeeded = true end)
+Events.ActivePlayerTurnEnd.Add(function() stopMode(); stopQuick(); pending = nil; status = "" end)
 ContextPtr:SetUpdate(function(delta)
     -- Mode can change during autoplay without a selection/turn event. Poll only
     -- these cheap mode flags; native diagnostic sampling remains in the DLL.
@@ -473,21 +596,41 @@ ContextPtr:SetUpdate(function(delta)
     if sx ~= lastScreenX or sy ~= lastScreenY then
         lastScreenX, lastScreenY, refreshNeeded = sx, sy, true
     end
-    if refreshNeeded then refreshNeeded = false; buildRows() end
+    -- Only polled while the key is held; otherwise this is one modifier check per frame.
+    local quickUnit = quickLeader()
+    if quick and (not quickUnit or quickUnit:GetID() ~= selectedID) then stopQuick() end
+    if quickUnit and not quick then startQuick(quickUnit) end
+    if refreshNeeded then
+        refreshNeeded = false
+        if quick then
+            local unit = leader()
+            if unit then takeSnapshot(unit); computeReach() end
+        elseif active then computeReach() end
+        buildRows()
+        -- Also when the roster itself is hidden or dismissed.
+        if quick then updateHover() end
+    end
     if pending then
         pending.elapsed = pending.elapsed + delta
         if pending.elapsed >= setting("UIStackResultDelayMilliseconds", 250) / 1000 then
-            local busy, arrived, stopped, stayed = false, 0, 0, 0
+            local busy, arrived, stopped, stayed, onTheWay = false, 0, 0, 0, 0
+            local byID = {}
+            for _, member in ipairs(pending.members) do byID[member.UnitID] = member end
             for _, member in ipairs(pending.members) do
                 local unit = player():GetUnitByID(member.UnitID)
+                local carrier = member.CarriedBy and byID[member.CarriedBy]
+                -- Later-turn orders keep their mission after this turn's steps end.
+                local later = member.Reason == "Queued" or (carrier and carrier.Reason == "Queued")
                 if member.Sent or member.CarriedBy then
-                    if unit and (unit:IsBusy() or unit:GetActivityType() == ActivityTypes.ACTIVITY_MISSION) then busy = true end
+                    if unit and (unit:IsBusy() or (not later and unit:GetActivityType() == ActivityTypes.ACTIVITY_MISSION)) then busy = true end
                     if unit and unit:GetX() == pending.x and unit:GetY() == pending.y then arrived = arrived + 1
+                    elseif later then onTheWay = onTheWay + 1
                     else stopped = stopped + 1 end
                 else stayed = stayed + 1 end
             end
             if not busy then
                 status = string.format("%d arrived; %d stayed", arrived, stayed)
+                if onTheWay > 0 then status = status .. string.format("; %d on the way", onTheWay) end
                 if stopped > 0 then status = status .. string.format("; %d stopped en route.", stopped) end
                 Events.GameplayAlertMessage("Stack move: " .. status)
                 pending = nil
@@ -500,4 +643,5 @@ print("Stack roster and tile-local movement UI loaded")
 
 ContextPtr:SetShutdown(function()
     if active then LuaEvents.StackMoveModeChanged(false) end
+    if quick then LuaEvents.StackQuickModeChanged(false) end
 end)

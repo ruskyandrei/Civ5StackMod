@@ -197,6 +197,7 @@ protected:
 	static int lGetStackAttackPreview(lua_State* L);
 	static int lGetStackMovePreview(lua_State* L);
 	static int lDoStackMove(lua_State* L);
+	static int lGetStackMoveReach(lua_State* L);
 	static int lCanLinkUnits(lua_State* L);
 	static int lLinkUnits(lua_State* L);
 	static int lUnlinkUnits(lua_State* L);

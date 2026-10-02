@@ -31,7 +31,7 @@ Mouse={eLClick=1}
 MouseEvents={LButtonUp=1,RButtonUp=2,LButtonDown=3,RButtonDown=4}
 KeyEvents={KeyDown=10}
 Keys={VK_ESCAPE=27}
-InterfaceModeTypes={INTERFACEMODE_SELECTION=0}
+InterfaceModeTypes={INTERFACEMODE_SELECTION=0,INTERFACEMODE_MOVE_TO=5}
 Game={GetActivePlayer=function() return 0 end, GetActiveTeam=function() return 0 end}
 sourcePlot={units={}}
 function sourcePlot:GetNumUnits() return #self.units end
@@ -68,27 +68,43 @@ for i=1,10 do
     function u:GetActivityType() return 0 end
     function u:GetX() return self.x end
     function u:GetY() return self.y end
-    function u:GetStackMovePreview(dst,src,ids)
+    function u:GetStackMovePreview(dst,src,ids,queueLater)
         assert(src==sourcePlot)
         assert(#ids==10,"must snapshot all and only tile members")
-        local p={Moving=7,Staying=3,ProtectorStays=true,Members={}}
-        for _,id in ipairs(ids) do p.Members[#p.Members+1]={UnitID=id,CanMove=id<=7,Reason=id<=7 and "Ready" or "NoMoves",Sent=false,Uncertain=id==7} end
-        return p
-    end
-    function u:DoStackMove(dst,src,ids)
-        local p=self:GetStackMovePreview(dst,src,ids)
-        for _,m in ipairs(p.Members) do
-            m.Sent=m.CanMove
-            if m.Sent then sourcePlot.units[m.UnitID].x=2 end
+        local p={Moving=queueLater and 10 or 7,Staying=queueLater and 0 or 3,ProtectorStays=not queueLater,Members={}}
+        for _,id in ipairs(ids) do
+            local m={UnitID=id,CanMove=id<=7,Reason=id<=7 and "Ready" or "NoMoves",Sent=false,Uncertain=id==7,Turns=id<=7 and 0 or -1}
+            if queueLater and id>7 then m.CanMove=true;m.Reason="Queued";m.Turns=id-7 end
+            p.Members[#p.Members+1]=m
         end
         return p
+    end
+    function u:DoStackMove(dst,src,ids,queueLater)
+        lastQueueLater=queueLater
+        local p=self:GetStackMovePreview(dst,src,ids,queueLater)
+        for _,m in ipairs(p.Members) do
+            m.Sent=m.CanMove
+            if m.Sent and m.Reason=="Ready" then sourcePlot.units[m.UnitID].x=2 end
+        end
+        return p
+    end
+    function u:GetStackMoveReach(src,ids)
+        assert(src==sourcePlot and #ids==10,"reach uses the same tile snapshot")
+        reachCalls=(reachCalls or 0)+1
+        return {Members=10,Eligible=7,Plots={{X=2,Y=1,Arriving=7},{X=3,Y=1,Arriving=4}}}
     end
     sourcePlot.units[i]=u
 end
 UI={GetHeadSelectedUnit=function() return sourcePlot.units[3] end,
     GetMouseOverHex=function() return 2,1 end, SetInterfaceMode=function() end,
     GetUnitPortraitIcon=function() return 0,"atlas" end, GetUnitFlagIcon=function() return 0,"flagAtlas" end}
-UIManager={GetScreenSizeVal=function() return 1920,1080 end}
+UI.GetInterfaceMode=function() return InterfaceModeTypes.INTERFACEMODE_SELECTION end
+altHeld,shiftHeld,ctrlHeld=false,false,false
+UIManager={GetScreenSizeVal=function() return 1920,1080 end,
+    GetAlt=function() return altHeld end, GetShift=function() return shiftHeld end, GetControl=function() return ctrlHeld end}
+highlights={}
+Events.ClearHexHighlights.Add(function() highlights={} end)
+Events.SerialEventHexHighlight.Add(function(hex,on,color) highlights[hex.x..","..hex.y]=color end)
 iconHookCount=0
 function IconHookup(index,size,atlas) assert(size==32 and atlas=="flagAtlas"); iconHookCount=iconHookCount+1 end
 function ToHexFromGrid(v) return v end
@@ -114,16 +130,21 @@ assert(created[1].Detail.values.SetText[1]:find("75/100 HP"),"health visible")
 assert(created[1].Detail.values.SetText[1]:find("1.5"),"moves use game denominator")
 assert(created[3].Name.values.SetText[1]:find("COLOR_YELLOW"),"selected member indicated")
 Controls.StackMove.callback()
-assert(Controls.StackSummary.values.SetText[1]:find("7 move; 3 stay"),"preview split summary")
-assert(Controls.StackSummary.values.SetText[1]:find("Protector stays"),"protection warning")
+assert(Controls.StackSummary.values.SetText[1]:find("7 arrive now; 3 later; 0 stay"),"button preview queues later arrivals")
 assert(Controls.StackSummary.values.SetText[1]:find("fog"),"uncertainty warning")
+assert(reachCalls==1,"reach computed once when targeting starts")
+assert(highlights["3,1"].x==1 and highlights["3,1"].w<1,"plot only some members reach is yellow")
+assert(highlights["2,1"].y==0.9 and highlights["2,1"].w==1,"destination every member with moves reaches is green")
+Events.SerialEventMouseOverHex();Events.SerialEventMouseOverHex()
+assert(reachCalls==1,"hovering reuses the reach")
 ContextPtr.update(0.1)
-assert(created[10].Detail.values.SetText[1]:find("No movement left"),"per-member reason")
+assert(created[10].Detail.values.SetText[1]:find("Later") and created[10].Detail.values.SetText[1]:find("3 turns"),"per-member reason")
 LuaEvents.StackMoveInput(MouseEvents.RButtonUp,0)
 ContextPtr.update(0.3)
 assert(Controls.StackSummary.values.SetText[1]~=nil)
 ContextPtr.update(0.1)
-assert(Controls.StackSummary.values.SetText[1]:find("7 arrived; 3 stayed"),"post-order split summary")
+assert(lastQueueLater==true,"button order queues later arrivals")
+assert(Controls.StackSummary.values.SetText[1]:find("7 arrived; 0 stayed; 3 on the way"),"post-order split summary")
 assert(iconHookCount==10,"unchanged icons are hooked only once per row")
 print("PASS: 10 rows, capacity, HP/moves, selected marker, preview reasons, protector/fog warnings, snapshot and result summary")
 """)
@@ -243,14 +264,14 @@ ContextPtr.update(0.1)
 local outside=created[11].Detail.values.SetText[1]:find("Outside order")~=nil
 print("UIREG|late arrival marked outside frozen order|"..tostring(outside))
 local oldPreview=sourcePlot.units[3].GetStackMovePreview
-sourcePlot.units[3].GetStackMovePreview=function(self,dst,src,ids)
- local p=oldPreview(self,dst,src,ids)
+sourcePlot.units[3].GetStackMovePreview=function(self,dst,src,ids,q)
+ local p=oldPreview(self,dst,src,ids,q)
  p.Moving=6;p.Staying=4;p.Members[7].CanMove=false;p.Members[7].Reason="NoMoves"
  return p
 end
 Events.SerialEventUnitInfoDirty()
 ContextPtr.update(0.1)
-local refreshed=Controls.StackSummary.values.SetText[1]:find("6 move; 4 stay")~=nil
+local refreshed=Controls.StackSummary.values.SetText[1]:find("6 arrive now; 3 later; 1 stay")~=nil
 print("UIREG|dirty state refreshes preview under stationary cursor|"..tostring(refreshed))
 assert(outside and refreshed,"stack targeting state refresh regressions")
 """)
@@ -313,9 +334,28 @@ assert(Controls.StackPanel.values.SetHide[1]==false,"cancel does not masquerade 
 Controls.StackMove.callback();ContextPtr.update(0.1)
 assert(bridgeInput(MouseEvents.RButtonUp,0,0)==true and movedCalls==1,"real stack-order bridge still executes once")
 ContextPtr.update(0.3);ContextPtr.update(0.1)
+nativeRight=0
+InterfaceModeMessageHandler[InterfaceModeTypes.INTERFACEMODE_SELECTION][MouseEvents.RButtonUp]=function() nativeRight=nativeRight+1;return true end
+UI.IsCameraMoving=function() return false end;Game.GetAllowRClickMovementWhileScrolling=function() return false end
+cleared=0;ClearAllHighlights=function() cleared=cleared+1 end
+indicatorUpdates=0;UpdatePathFromSelectedUnitToMouse=function() indicatorUpdates=indicatorUpdates+1;assert(rButtonDown==false) end
+for _,u in ipairs(sourcePlot.units) do u.x=1;u.y=1 end
+clickedPlot=emptyPlot;altHeld=true;ContextPtr.update(0.1)
+local before=movedCalls
+assert(bridgeInput(MouseEvents.RButtonUp,0,0)==true and nativeRight==0,"Alt+right-click is consumed by the stack order")
+assert(movedCalls==before+1 and lastQueueLater==true and cleared==1 and indicatorUpdates==1,"one queued stack order; path indicator hidden and highlights cleared")
+ContextPtr.update(0.1)
+local saved=sourcePlot.units[3].GetStackMovePreview
+sourcePlot.units[3].GetStackMovePreview=function(...) local p=saved(...);p.Moving=0;return p end
+assert(bridgeInput(MouseEvents.RButtonUp,0,0)==true and nativeRight==1 and movedCalls==before+1,"declined target keeps the native right-click")
+sourcePlot.units[3].GetStackMovePreview=saved
+altHeld=false;ContextPtr.update(0.1)
+assert(bridgeInput(MouseEvents.RButtonUp,0,0)==true and nativeRight==2 and movedCalls==before+1,"without the modifier right-click stays native")
+ContextPtr.update(0.3);ContextPtr.update(0.1)
+for _,u in ipairs(sourcePlot.units) do u.x=1;u.y=1 end
 sourcePlot.units[3].DoStackMove=nativeMove
 """)
-    print("PASS: real input bridge empty/fog/invisible/nonempty/other-mode dismissal, dirty persistence, reopen, row selection and stack cancel/execute:",relative)
+    print("PASS: real input bridge empty/fog/invisible/nonempty/other-mode dismissal, dirty persistence, reopen, row selection, stack cancel/execute and modifier right-click:",relative)
 
 # Exercise the actual bound-publishing function and full panel layout against scaled screen sizes.
 start=panel_lua.index("local function layoutPanel")
@@ -352,4 +392,62 @@ lua.execute(r"""
 TestPublish(false);verify(published[1]==false and published[2]==109 and published[3]==418,"measured bounds include combat banner overhang")
 TestPublish(true);verify(published[1],"hidden preview releases reserved space")
 print("PASS: preview measured bounds/layout: "..layoutChecks.." checks")
+""")
+
+
+# Modifier overlay: hover preview and right-click order for the whole stack, with later-turn queueing.
+lua.execute(r"""
+for _,u in ipairs(sourcePlot.units) do u.x=1;u.y=1;u.GetActivityType=function() return 0 end end
+UI.GetHeadSelectedUnit=function() return sourcePlot.units[3] end
+UI.GetInterfaceMode=function() return InterfaceModeTypes.INTERFACEMODE_SELECTION end
+Map.GetPlot=function() return destination end
+UI.GetMouseOverHex=function() return 2,1 end
+altHeld,shiftHeld=false,false
+ContextPtr.update(0.1)
+quickEvents={}
+LuaEvents.StackQuickModeChanged.Add(function(on) quickEvents[#quickEvents+1]=on end)
+ContextPtr.update(0.1)
+assert(#quickEvents==0,"no overlay without the modifier")
+shiftHeld=true;ContextPtr.update(0.1)
+assert(#quickEvents==0,"only the configured modifier (Alt by default) starts the overlay")
+shiftHeld=false;altHeld=true;ContextPtr.update(0.1)
+assert(quickEvents[1]==true,"holding Alt with a stacked unit selected starts the overlay")
+local text=Controls.StackSummary.values.SetText[1]
+assert(text:find("7 arrive now; 3 later; 0 stay"),text)
+assert(text:find("Alt%+right%-click"),"hint names the modifier")
+local later=created[10].Detail.values.SetText[1]
+assert(later:find("Later") and later:find("3 turns"),later)
+assert(highlights["3,1"].x==1,"partial reach is yellow")
+assert(highlights["2,1"].y==0.9 and highlights["2,1"].w==1,"destination every member with moves reaches is green")
+local order={}
+LuaEvents.StackQuickMoveInput(2,1,order)
+assert(order.handled and lastQueueLater==true,"right-click orders the whole stack, queueing later arrivals")
+assert(quickEvents[#quickEvents]==false,"the order clears the overlay")
+-- Later-turn members keep a mission activity; that must not hold back the result report.
+for i=8,10 do sourcePlot.units[i].GetActivityType=function() return ActivityTypes.ACTIVITY_MISSION end end
+altHeld=false;ContextPtr.update(0.1)
+assert(Controls.StackSummary.values.SetText[1]:find("Ordered 10 to move %(3 over later turns%); 0 stay"),Controls.StackSummary.values.SetText[1])
+ContextPtr.update(0.3);ContextPtr.update(0.1)
+assert(Controls.StackSummary.values.SetText[1]:find("7 arrived; 0 stayed; 3 on the way"),Controls.StackSummary.values.SetText[1])
+for _,u in ipairs(sourcePlot.units) do u.x=1;u.y=1;u.GetActivityType=function() return 0 end end
+altHeld=true;ContextPtr.update(0.1)
+assert(quickEvents[#quickEvents]==true,"overlay restarts while the key is held")
+altHeld=false;ContextPtr.update(0.1)
+assert(quickEvents[#quickEvents]==false,"releasing Alt ends the overlay")
+assert(next(highlights)==nil,"overlay highlights cleared")
+altHeld=true;ContextPtr.update(0.1)
+local saved=sourcePlot.units[3].GetStackMovePreview
+sourcePlot.units[3].GetStackMovePreview=function(...) local p=saved(...);p.Moving=0;return p end
+local declined={};LuaEvents.StackQuickMoveInput(2,1,declined)
+assert(not declined.handled,"a target no member can take falls through to the native order")
+sourcePlot.units[3].GetStackMovePreview=saved
+UI.GetInterfaceMode=function() return 99 end;ContextPtr.update(0.1)
+assert(quickEvents[#quickEvents]==false,"other map modes (attack, ranged) end the overlay")
+UI.GetInterfaceMode=function() return InterfaceModeTypes.INTERFACEMODE_SELECTION end;ContextPtr.update(0.1)
+Controls.StackMove.callback()
+assert(quickEvents[#quickEvents]==false,"Move Stack targeting replaces the overlay")
+ContextPtr.update(0.1)
+assert(quickEvents[#quickEvents]==false,"no overlay during Move Stack targeting")
+LuaEvents.StackMoveInput(KeyEvents.KeyDown,Keys.VK_ESCAPE);altHeld=false;ContextPtr.update(0.1)
+print("PASS: modifier overlay start/stop, queued preview rows, reach colours, queued order and on-the-way report")
 """)

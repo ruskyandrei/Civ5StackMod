@@ -192,6 +192,7 @@ These `Stacking_Settings` values control the optional stack roster and Move Stac
 |---|---:|---:|---|
 | UIStackEnabled | 1 | 0–1 | Enable the stack panel/compact flags. |
 | UIStackMoveMinimumUnits | 2 | 2–10000 | Owned members needed for Move Stack; Lua also enforces minimum 2. |
+| UIStackMoveModifier | 0 | 0–2 | Key held for the whole-stack hover preview and right-click order: 0 Alt, 1 Shift, 2 Ctrl. Shift and Ctrl replace those keys' normal right-click behaviour for stacked units. |
 | UIStackRosterWidth | 360 | 1–10000 | Width in UI coordinates; Lua enforces minimum 260. |
 | UIStackRosterRowHeight | 38 | 1–10000 | Requested minimum row height; initial Lua minimum 32, populated rows at least 40 for a 32px icon plus padding, and taller when measured text needs room. |
 | UIStackRosterMaximumHeight | 430 | 1–10000 | Scroll viewport cap; at least the initial row-height setting, and constrained by remaining screen height. Rows remain scrollable. |

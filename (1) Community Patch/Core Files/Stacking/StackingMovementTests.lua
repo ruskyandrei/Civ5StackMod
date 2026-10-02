@@ -78,16 +78,33 @@ local function backupPlot(s,p)
  s.plots[#s.plots+1]={id=p:GetPlotIndex(),plotType=p:GetPlotType(),terrain=p:GetTerrainType(),
   feature=p:GetFeatureType(),resource=p:GetResourceType(-1),resourceCount=p:GetNumResource(),owner=p:GetOwner(),route=p:GetRouteType()}
 end
-function M.Preview()
+function M.Preview(queueLater)
  local s=assert(M.state,"Call a setup function first")
  local leader=assert(Players[s.owner]:GetUnitByID(s.leader),"Leader no longer exists")
- local plan=leader:GetStackMovePreview(s.target,s.source,s.ids)
+ local plan=leader:GetStackMovePreview(s.target,s.source,s.ids,queueLater)
  s.preview=plan
- log("PREVIEW",s.kind,plan.Moving.." move; "..plan.Staying.." stay; protectorStays="..tostring(plan.ProtectorStays))
+ log("PREVIEW",s.kind,plan.Moving.." move; "..plan.Staying.." stay; protectorStays="..tostring(plan.ProtectorStays)..
+  " queueLater="..tostring(queueLater or false))
  for _,m in ipairs(plan.Members) do
-  log("MEMBER",m.UnitID,"reason="..m.Reason.." canMove="..tostring(m.CanMove).." uncertain="..tostring(m.Uncertain).." movesAtTarget="..m.MovesLeft)
+  log("MEMBER",m.UnitID,"reason="..m.Reason.." canMove="..tostring(m.CanMove).." uncertain="..tostring(m.Uncertain)..
+   " movesAtTarget="..m.MovesLeft.." turns="..tostring(m.Turns))
  end
  return plan,index(plan)
+end
+local function reachAt(reach,p)
+ for _,r in ipairs(reach.Plots) do if r.X==p:GetX() and r.Y==p:GetY() then return r.Arriving end end
+ return 0
+end
+-- A plot exactly `distance` steps from the source, avoiding cities and water.
+local function plotAt(s,distance)
+ for i=0,Map.GetNumPlots()-1 do
+  local p=Map.GetPlotByIndex(i)
+  if Map.PlotDistance(p:GetX(),p:GetY(),s.source:GetX(),s.source:GetY())==distance and
+     p:GetArea()==s.source:GetArea() and (p:GetOwner()==-1 or p:GetOwner()==s.owner) and
+     not p:IsWater() and not p:IsCity() and not p:IsImpassable(Players[s.owner]:GetTeam()) and p:GetNumUnits()==0 then
+   return p
+  end
+ end
 end
 function M.Ready()
  local s=setupPair("ready")
@@ -145,6 +162,48 @@ function M.FrozenIDs()
  worker:SetXY(s.adjacent[3]:GetX(),s.adjacent[3]:GetY())
  plan,rows=M.Preview()
  check("snapshot member leaving source stays",rows[s.worker].Reason,"LeftSource")
+ M.Summary();return s
+end
+function M.Reach()
+ local s,leader=setupPair("stack reach")
+ local reach=leader:GetStackMoveReach(s.source,s.ids)
+ log("REACH",s.kind,reach.Members.." members; "..reach.Eligible.." eligible; "..#reach.Plots.." plots")
+ check("reach counts snapshot members",reach.Members,3)
+ check("all members can move this turn",reach.Eligible,3)
+ check("adjacent target takes every member",reachAt(reach,s.target),3)
+ check("source tile is not a destination",reachAt(reach,s.source),0)
+ local plan=M.Preview()
+ check("reach agrees with preview at target",reachAt(reach,s.target),plan.Moving)
+ leader:SetMoves(0)
+ reach=leader:GetStackMoveReach(s.source,s.ids)
+ check("exhausted member leaves the eligible count",reach.Eligible,2)
+ check("remaining members still reach target",reachAt(reach,s.target),2)
+ M.Summary();return s
+end
+function M.Queued()
+ local s,leader=setupPair("queued exhausted member")
+ leader:SetMoves(0)
+ local plan,rows=M.Preview()
+ check("exhausted member stays without queueing",rows[s.leader].Reason,"NoMoves")
+ plan,rows=M.Preview(true)
+ check("exhausted member is queued",rows[s.leader].Reason,"Queued")
+ check("queued member is ordered",rows[s.leader].CanMove,true)
+ check("queued member arrives in a later turn",(rows[s.leader].Turns or 0)>=1,true)
+ check("member with moves arrives now",rows[s.archer].Reason,"Ready")
+ check("queueing moves the whole stack",plan.Moving,3)
+ check("no protector warning when the protector follows",plan.ProtectorStays,false)
+ M.Summary();return s
+end
+function M.Far(distance)
+ local s,leader=setupPair("distant target")
+ s.target=assert(plotAt(s,distance or 6),"No empty land plot at that distance")
+ local plan,rows=M.Preview()
+ check("distant target is a later turn",rows[s.leader].Reason,"LaterTurn")
+ check("later-turn estimate reported",(rows[s.leader].Turns or 0)>=1,true)
+ plan,rows=M.Preview(true)
+ check("distant warrior queued",rows[s.leader].Reason,"Queued")
+ check("distant archer queued",rows[s.archer].Reason,"Queued")
+ check("every member ordered",plan.Moving,3)
  M.Summary();return s
 end
 function M.ProbeTerrain()
@@ -290,8 +349,9 @@ function M.Cargo()
  log("NOTE","cargo","Execute should move cargo WITH carrier despite no passenger mission; report must not say passenger stayed")
  M.Summary();return s
 end
-function M.Execute()
+function M.Execute(queueLater)
  local s=assert(M.state,"Set up a scenario first")
+ s.queueLater=queueLater
  assert(Game.GetGameTurn()==s.turn,"Fixture changed turns; set it up again")
  assert(Players[s.owner]:IsTurnActive(),"Owner must be active")
  local leader=assert(Players[s.owner]:GetUnitByID(s.leader))
@@ -304,7 +364,7 @@ function M.Execute()
     transport=carrier and carrier:GetID() or -1}
   end
  end
- s.executed=leader:DoStackMove(s.target,s.source,s.ids)
+ s.executed=leader:DoStackMove(s.target,s.source,s.ids,queueLater)
  s.executedRows=index(s.executed)
  local sent=0
  for _,m in ipairs(s.executed.Members) do
@@ -320,7 +380,9 @@ function M.CheckExecuted()
  assert(s.executed,"Call Execute first")
  for _,m in ipairs(s.executed.Members) do
   local u=Players[s.owner]:GetUnitByID(m.UnitID)
-  if u and (u:IsBusy() or u:GetActivityType()==ActivityTypes.ACTIVITY_MISSION) then
+  -- Later-turn orders keep their mission; only wait for their current animation.
+  local queued=m.Reason=="Queued"
+  if u and (u:IsBusy() or (not queued and u:GetActivityType()==ActivityTypes.ACTIVITY_MISSION)) then
    log("WAIT",s.kind,"unit "..m.UnitID.." still executing; call again later");return false
   end
  end
@@ -330,7 +392,9 @@ function M.CheckExecuted()
   if u and before then
    local m=rec.owner==s.owner and s.executedRows[rec.id] or nil
    local carrierMove=before.transport>=0 and s.executedRows[before.transport]
-   if m and m.Sent then
+   if m and m.Sent and m.Reason=="Queued" then
+    check("queued member keeps its move order "..rec.id,u:GetActivityType()==ActivityTypes.ACTIVITY_MISSION or same(u,s.target),true)
+   elseif m and m.Sent then
     check("sent member arrives "..rec.id,same(u,s.target),true)
    elseif carrierMove and carrierMove.Sent then
     check("cargo follows native transport "..rec.id,same(u,s.target),true)
@@ -376,4 +440,4 @@ function M.Select()
  Events.SerialEventUnitFlagSelected(s.owner,s.leader)
  if UI and UI.LookAtSelectionPlot then UI.LookAtSelectionPlot() end
 end
-log("LOADED","commands","Ready/Full/Partial/Exhausted/FrozenIDs/BlockedTerrain/Enemy/NeutralBorder/ForeignStack/Air/Cargo/Visual; Execute then CheckExecuted; Cleanup")
+log("LOADED","commands","Ready/Full/Partial/Exhausted/FrozenIDs/BlockedTerrain/Enemy/NeutralBorder/ForeignStack/Air/Cargo/Reach/Queued/Far/Visual; Execute([queueLater]) then CheckExecuted; Cleanup")

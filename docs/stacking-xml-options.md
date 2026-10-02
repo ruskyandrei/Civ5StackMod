@@ -104,6 +104,7 @@ Four tables with a reference column, `Role` and `Value`:
 |---|---:|---|
 | `UIStackEnabled` | 1 | Stack roster panel and compact unit flags. |
 | `UIStackMoveMinimumUnits` | 2 | Own units on a tile needed for the Move Stack action. |
+| `UIStackMoveModifier` | 0 | Key held to preview and right-click-move the whole stack: 0 Alt, 1 Shift, 2 Ctrl. |
 | `UIStackFlagCollapseThreshold` | 3 | Units on a tile before their flags collapse into one. |
 | `UIStackRosterWidth` | 360 | Roster width. |
 | `UIStackRosterRowHeight` | 38 | Minimum roster row height. |

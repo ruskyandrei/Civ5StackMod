@@ -8,6 +8,7 @@ lua.execute(r'''
 checks=0;sets=0;level=0;refreshes=0;autoTurns=0;observer=false;activeOwner=0
 function expect(a,b,msg)checks=checks+1;assert(a==b,msg..': '..tostring(a)..' != '..tostring(b))end
 function include()end
+function Vector2(x,y)return{x=x,y=y}end function Vector4(x,y,z,w)return{x=x,y=y,z=z,w=w}end
 print=function()end
 function event()
  local h={};local e={handlers=h}

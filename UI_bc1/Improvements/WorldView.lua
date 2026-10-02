@@ -817,6 +817,7 @@ end
 -- Input handling
 ----------------------------------------------------------------
 local stackMoveMode = false
+local stackQuickMode = false
 local stackDiagnosticsHotkeyEnabled = true
 if GameInfo.Stacking_Settings then
     for row in GameInfo.Stacking_Settings() do
@@ -824,6 +825,7 @@ if GameInfo.Stacking_Settings then
     end
 end
 LuaEvents.StackMoveModeChanged.Add(function(active) stackMoveMode = active; rButtonDown = false end)
+LuaEvents.StackQuickModeChanged.Add(function(active) stackQuickMode = active end)
 function InputHandler( uiMsg, wParam, lParam )
     if stackDiagnosticsHotkeyEnabled and Game.GetStackingDiagnosticsLevel and
         uiMsg == KeyEvents.KeyDown and wParam == Keys.D and UIManager:GetControl() and UIManager:GetShift() and
@@ -838,6 +840,26 @@ function InputHandler( uiMsg, wParam, lParam )
             return true
         elseif uiMsg == MouseEvents.RButtonDown or uiMsg == MouseEvents.LButtonDown then
             return true
+        end
+    end
+    -- Modifier + right-click moves the selected unit's whole stack. StackPanel declines
+    -- targets the stack cannot take (attacks included), which keep the native order.
+    if stackQuickMode and uiMsg == MouseEvents.RButtonUp and not bEatNextUp and
+        not (UI.IsCameraMoving() and not Game.GetAllowRClickMovementWhileScrolling()) then
+        local interfaceMode = UI.GetInterfaceMode()
+        if interfaceMode == InterfaceModeTypes.INTERFACEMODE_SELECTION or interfaceMode == InterfaceModeTypes.INTERFACEMODE_MOVE_TO then
+            local x, y = UI.GetMouseOverHex()
+            local order = {}
+            LuaEvents.StackQuickMoveInput(x, y, order)
+            if order.handled then
+                rButtonDown = false
+                if interfaceMode ~= InterfaceModeTypes.INTERFACEMODE_SELECTION then
+                    UI.SetInterfaceMode(InterfaceModeTypes.INTERFACEMODE_SELECTION)
+                end
+                UpdatePathFromSelectedUnitToMouse()
+                ClearAllHighlights()
+                return true
+            end
         end
     end
     if uiMsg == MouseEvents.LButtonUp and UI.GetInterfaceMode() == InterfaceModeTypes.INTERFACEMODE_SELECTION then

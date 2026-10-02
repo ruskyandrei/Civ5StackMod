@@ -247,6 +247,8 @@
     <Row Name="AIStackPairRecruitBonus" Value="25" />
     <Row Name="UIStackEnabled" Value="1" />
     <Row Name="UIStackMoveMinimumUnits" Value="2" />
+    <!-- UI only: key held with right-click to move the selected unit's whole stack. 0 Alt, 1 Shift, 2 Ctrl. -->
+    <Row Name="UIStackMoveModifier" Value="0" />
     <Row Name="UIStackRosterWidth" Value="360" />
     <Row Name="UIStackRosterRowHeight" Value="38" />
     <Row Name="UIStackRosterMaximumHeight" Value="430" />

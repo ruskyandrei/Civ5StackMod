@@ -205,6 +205,7 @@ void CvLuaUnit::PushMethods(lua_State* L, int t)
 	Method(GetStackAttackPreview);
 	Method(GetStackMovePreview);
 	Method(DoStackMove);
+	Method(GetStackMoveReach);
 	Method(CanLinkUnits);
 	Method(LinkUnits);
 	Method(UnlinkUnits);
@@ -2665,15 +2666,15 @@ int CvLuaUnit::lGetStackAttackPreview(lua_State* L)
 
 namespace
 {
-    std::vector<int> ReadStackMemberIDs(lua_State* L, CvUnit* pUnit, CvPlot* pSource)
+    std::vector<int> ReadStackMemberIDs(lua_State* L, CvUnit* pUnit, CvPlot* pSource, int iArg = 4)
     {
         std::vector<int> ids;
-        if (lua_istable(L, 4))
+        if (lua_istable(L, iArg))
         {
-            const int count = (int)lua_objlen(L, 4);
+            const int count = (int)lua_objlen(L, iArg);
             for (int i = 1; i <= count; ++i)
             {
-                lua_rawgeti(L, 4, i);
+                lua_rawgeti(L, iArg, i);
                 if (lua_isnumber(L, -1)) ids.push_back(lua_tointeger(L, -1));
                 lua_pop(L, 1);
             }
@@ -2707,6 +2708,7 @@ namespace
             lua_pushboolean(L, member.sent); lua_setfield(L, -2, "Sent");
             lua_pushboolean(L, member.uncertain); lua_setfield(L, -2, "Uncertain");
             lua_pushinteger(L, member.movesLeft); lua_setfield(L, -2, "MovesLeft");
+            lua_pushinteger(L, member.turns); lua_setfield(L, -2, "Turns");
             lua_rawseti(L, -2, (int)i + 1);
         }
         lua_setfield(L, -2, "Members");
@@ -2719,7 +2721,8 @@ int CvLuaUnit::lGetStackMovePreview(lua_State* L)
     CvUnit* pUnit = GetInstance(L);
     CvPlot* pDestination = CvLuaPlot::GetInstance(L, 2);
     CvPlot* pSource = lua_isnoneornil(L, 3) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 3);
-    return PushStackMovePlan(L, CvStackMovement::Preview(pUnit, pSource, pDestination, ReadStackMemberIDs(L, pUnit, pSource)));
+    const bool bQueueLater = luaL_optbool(L, 5, false);
+    return PushStackMovePlan(L, CvStackMovement::Preview(pUnit, pSource, pDestination, ReadStackMemberIDs(L, pUnit, pSource), bQueueLater));
 }
 
 int CvLuaUnit::lDoStackMove(lua_State* L)
@@ -2727,7 +2730,31 @@ int CvLuaUnit::lDoStackMove(lua_State* L)
     CvUnit* pUnit = GetInstance(L);
     CvPlot* pDestination = CvLuaPlot::GetInstance(L, 2);
     CvPlot* pSource = lua_isnoneornil(L, 3) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 3);
-    return PushStackMovePlan(L, CvStackMovement::Execute(pUnit, pSource, pDestination, ReadStackMemberIDs(L, pUnit, pSource)));
+    const bool bQueueLater = luaL_optbool(L, 5, false);
+    return PushStackMovePlan(L, CvStackMovement::Execute(pUnit, pSource, pDestination, ReadStackMemberIDs(L, pUnit, pSource), bQueueLater));
+}
+
+// GetStackMoveReach(source, ids): plots members can enter this turn, as {Members, Eligible, Plots={{X, Y, Arriving}}}.
+int CvLuaUnit::lGetStackMoveReach(lua_State* L)
+{
+    CvUnit* pUnit = GetInstance(L);
+    CvPlot* pSource = lua_isnoneornil(L, 2) ? pUnit->plot() : CvLuaPlot::GetInstance(L, 2);
+    const CvStackMovement::Reach reach = CvStackMovement::GetReach(pUnit, pSource, ReadStackMemberIDs(L, pUnit, pSource, 3));
+    lua_newtable(L);
+    lua_pushinteger(L, reach.members); lua_setfield(L, -2, "Members");
+    lua_pushinteger(L, reach.eligible); lua_setfield(L, -2, "Eligible");
+    lua_newtable(L);
+    for (size_t i = 0; i < reach.plots.size(); ++i)
+    {
+        CvPlot* pPlot = GC.getMap().plotByIndexUnchecked(reach.plots[i].plotIndex);
+        lua_newtable(L);
+        lua_pushinteger(L, pPlot->getX()); lua_setfield(L, -2, "X");
+        lua_pushinteger(L, pPlot->getY()); lua_setfield(L, -2, "Y");
+        lua_pushinteger(L, reach.plots[i].arriving); lua_setfield(L, -2, "Arriving");
+        lua_rawseti(L, -2, (int)i + 1);
+    }
+    lua_setfield(L, -2, "Plots");
+    return 1;
 }
 
 //bool CanLinkUnits();
