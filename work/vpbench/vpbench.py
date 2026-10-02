@@ -1,6 +1,7 @@
 """Vanilla-VP autoplay benchmark: create a fresh T0 save, or autoplay a save to a target turn.
 
-  vpbench.py newgame --run NAME --dll-sha SHA --save-name "VPBench T000"
+  vpbench.py newgame --run NAME --dll-sha SHA --save-name "VPBench T000" [--handicap HANDICAP_WARLORD]
+                     [--target-turn 150 --final-save-name "..."]   (autoplay on in the same session)
   vpbench.py run     --run NAME --dll-sha SHA --save PATH --target-turn 250 --final-save-name "..."
 
 Each command launches its own game process (CPU temperature guard + tuner service),
@@ -40,8 +41,6 @@ PreGame.SetSlotStatus(0,SlotStatus.SS_TAKEN)
 for i=1,GameDefines.MAX_MAJOR_CIVS-1 do
  if i<world.DefaultPlayers then PreGame.SetSlotStatus(i,SlotStatus.SS_COMPUTER) else PreGame.SetSlotStatus(i,SlotStatus.SS_CLOSED) end
 end
-PreGame.SetCivilization(1,GameInfo.Civilizations.CIVILIZATION_ZULU.ID)
-PreGame.SetCivilization(2,GameInfo.Civilizations.CIVILIZATION_AZTEC.ID)
 local out={world=world.Type,players=world.DefaultPlayers,minors=PreGame.GetNumMinorCivs(),map=PreGame.GetMapScript(),speed=PreGame.GetGameSpeed(),slots={}}
 for i=0,world.DefaultPlayers do out.slots[#out.slots+1]={slot=i,status=PreGame.GetSlotStatus(i),civ=PreGame.GetCivilization(i)} end
 return out
@@ -74,6 +73,8 @@ for owner=0,63 do
   end
  end
 end
+local camp=GameInfoTypes.IMPROVEMENT_BARBARIAN_CAMP;out.barbCamps=0
+for i=0,Map.GetNumPlots()-1 do if Map.GetPlotByIndex(i):GetImprovementType()==camp then out.barbCamps=out.barbCamps+1 end end
 return out
 '''
 
@@ -98,7 +99,17 @@ class Bench:
 
     def call(self, context, lua, label, timeout=120, keep=True):
         started = time.monotonic()
-        result = tuner.call_service(SESSION, 'exec', dict(context=context, source=lua, timeout=timeout), timeout)
+        # The tuner runs one command at a time; a manual query from another shell
+        # must delay the benchmark, not abort it.
+        for attempt in range(20):
+            try:
+                result = tuner.call_service(SESSION, 'exec', dict(context=context, source=lua, timeout=timeout), timeout)
+            except Exception as error:
+                if 'Another command is running' not in str(error) or attempt == 19: raise
+                time.sleep(0.5); continue
+            if 'Another command is running' in str(result.get('error', '')) and attempt < 19:
+                time.sleep(0.5); continue
+            break
         if keep:
             self.seq += 1
             write(self.run / 'calls' / f'{self.seq:05d}-{label}.json', dict(utc=utc(), seconds=time.monotonic() - started, result=result))
@@ -183,9 +194,10 @@ class Bench:
 
 def newgame(args):
     b = Bench(args.run)
-    b.launch(args.dll_sha, 1800)
+    b.launch(args.dll_sha, args.maximum_seconds if args.target_turn > 0 else 1800)
     try:
-        setup = b.call('ModsSinglePlayer', NEWGAME, 'pregame-setup')
+        # The game difficulty is the human slot's handicap; AI slots keep the AI default.
+        setup = b.call('ModsSinglePlayer', NEWGAME.replace('HANDICAP_PRINCE', args.handicap), 'pregame-setup')
         write(b.run / 'pregame.json', setup)
         b.call('ModsSinglePlayer', START, 'start-game')
         b.log('start_requested')
@@ -193,12 +205,13 @@ def newgame(args):
         info = b.call('InGame', SETUP, 'setup-info')
         write(b.run / 'setup.json', info)
         assert info['turn'] == 0 and info['world'] == 'WORLDSIZE_STANDARD' and info['speed'] == 'GAMESPEED_STANDARD', info
-        civs = {p['civilization'] for p in info['players']}
-        assert {'CIVILIZATION_ZULU', 'CIVILIZATION_AZTEC'} <= civs, civs
         b.call('LoadScreen', CONTINUE, 'continue')
         time.sleep(5)
         path = b.save(args.save_name)
         b.log('saved', save=str(path), majors=[p['civilization'] for p in info['players'] if not p['minor']])
+        if args.target_turn > 0:
+            # Autoplay the new game in the same session instead of relaunching to load it.
+            return autoplay(b, args, path, info, loaded=False)
     finally:
         b.quit()
     return 0
@@ -207,15 +220,27 @@ def newgame(args):
 def run(args):
     b = Bench(args.run)
     save = Path(args.save).resolve(strict=True)
-    target = args.target_turn
     b.launch(args.dll_sha, args.maximum_seconds)
-    status = dict(state='failed')
     try:
         path = tuner.lua_string(str(save).replace('\\', '/'))
         b.call('ModsSinglePlayer', 'local path=' + path + ";assert(PreGame.GetFileHeader(path),'Unreadable save');Events.PlayerChoseToLoadGame(path);return 'requested'", 'request-load')
         b.wait_loaded()
         info = b.call('InGame', SETUP, 'setup-info')
         write(b.run / 'setup.json', info)
+        return autoplay(b, args, save, info, loaded=True)
+    except Exception as error:
+        write(b.run / 'status.json', dict(state='failed', error=str(error), utc=utc()))
+        b.log('failed', error=str(error))
+        return 1
+    finally:
+        b.quit()
+
+
+def autoplay(b, args, save, info, loaded):
+    """Autoplay the current game to args.target_turn. loaded: still on the load screen."""
+    target = args.target_turn
+    status = dict(state='failed')
+    try:
         # Stacking DLL only: -1 means the API is absent (vanilla). Benchmarks run with diagnostics off.
         assert info.get('diagnostics', -1) <= 0, 'Stacking diagnostics are enabled; set DiagnosticsLevel to 0'
         start_turn = info['turn']
@@ -225,7 +250,8 @@ def run(args):
         first = b.call('InGame', CHECKPOINT, 'checkpoint')
         (b.run / 'checkpoints').mkdir()
         write(b.run / 'checkpoints' / f'turn-{start_turn:04d}.json', dict(utc=utc(), data=first))
-        b.call('LoadScreen', CONTINUE, 'continue')
+        if loaded:
+            b.call('LoadScreen', CONTINUE, 'continue')
         started = time.monotonic(); started_utc = utc()
         b.log('autoplay_started', turn=start_turn, target=target)
         turn_seen = {start_turn: 0.0}
@@ -292,14 +318,16 @@ def run(args):
         write(b.run / 'status.json', status)
         b.log('failed', error=str(error))
         return 1
-    finally:
-        b.quit()
 
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     sub = p.add_subparsers(dest='command', required=True)
     n = sub.add_parser('newgame'); n.add_argument('--run', required=True); n.add_argument('--dll-sha', required=True); n.add_argument('--save-name', required=True)
+    n.add_argument('--handicap', default='HANDICAP_PRINCE')
+    n.add_argument('--target-turn', type=int, default=0, help='Autoplay the new game to this turn in the same session')
+    n.add_argument('--final-save-name', default='VPBench final')
+    n.add_argument('--poll-seconds', type=float, default=5); n.add_argument('--maximum-seconds', type=int, default=21600)
     r = sub.add_parser('run'); r.add_argument('--run', required=True); r.add_argument('--dll-sha', required=True); r.add_argument('--save', required=True)
     r.add_argument('--target-turn', type=int, default=250); r.add_argument('--final-save-name', required=True)
     r.add_argument('--poll-seconds', type=float, default=5); r.add_argument('--maximum-seconds', type=int, default=21600)
