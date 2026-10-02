@@ -12,6 +12,8 @@ end
 local active, snapshot, source, selectedID, preview, hoverPlot, pending, inspectPlot
 -- quick: the modifier key is held, so hover previews and right-click orders cover the whole stack.
 local quick, reach = false, nil
+-- Members that take move orders themselves; cargo rides its transport and aircraft rebase.
+local stackSize = 0
 local collapsed, inCityScreen = false, false
 local rosterDismissed = false
 local dismissedOwner, dismissedUnitID
@@ -24,7 +26,8 @@ local moveMinimum = math.max(2, setting("UIStackMoveMinimumUnits", 2))
 local modifierKey = setting("UIStackMoveModifier", 0)
 local modifierName = ({ [1] = "Shift", [2] = "Ctrl" })[modifierKey] or "Alt"
 local reachColors = { all = Vector4(0.2, 0.9, 0.4, 0.45), some = Vector4(1, 0.8, 0.15, 0.45) }
-local destinationColors = { all = Vector4(0.2, 0.9, 0.5, 1), some = Vector4(1, 0.8, 0.15, 1), none = Vector4(1, 0.25, 0.2, 1) }
+local destinationColors = { all = Vector4(0.2, 0.9, 0.5, 1), some = Vector4(1, 0.8, 0.15, 1),
+    later = Vector4(0.6, 0.6, 0.6, 1), none = Vector4(1, 0.25, 0.2, 1) }
 local refreshNeeded = true
 local status = ""
 local combatPreviewVisible, combatPreviewTop = false, 0
@@ -216,18 +219,16 @@ local function setPreview(nextPreview)
     Controls.StackSummary:SetText(status)
     layoutPanel()
 end
-local cannotMoveThisTurn = { NoMoves = true, Cargo = true, Aircraft = true, Busy = true, LeftSource = true, Unavailable = true }
--- Green: every member that can still move this turn arrives. Yellow: only some do,
--- or (with the modifier) the rest are ordered to arrive in later turns. Red: none move.
+-- Green: every member arrives this turn. Yellow: only some do. Gray: none arrive this
+-- turn but the stack may go there (later arrivals are queued). Red: no member may go there.
 local function destinationColor(plan)
-    local now, eligible = 0, 0
+    local now = 0
     for _, member in ipairs(plan.Members) do
         if member.CanMove and member.Reason ~= "Queued" then now = now + 1 end
-        if not cannotMoveThisTurn[member.Reason] then eligible = eligible + 1 end
     end
-    if reach then eligible = reach.Eligible end
-    if now > 0 and now >= eligible then return destinationColors.all end
-    if plan.Moving > 0 then return destinationColors.some end
+    if now > 0 and now >= stackSize then return destinationColors.all end
+    if now > 0 then return destinationColors.some end
+    if plan.Moving > 0 then return destinationColors.later end
     return destinationColors.none
 end
 local function drawHighlights(destination, color)
@@ -235,7 +236,7 @@ local function drawHighlights(destination, color)
     if reach then
         for _, plot in ipairs(reach.Plots) do
             Events.SerialEventHexHighlight(ToHexFromGrid(Vector2(plot.X, plot.Y)), true,
-                plot.Arriving >= reach.Eligible and reachColors.all or reachColors.some)
+                plot.Arriving >= stackSize and reachColors.all or reachColors.some)
         end
     end
     if destination then
@@ -266,6 +267,13 @@ end
 local function computeReach()
     local unit = leader()
     reach = unit and unit.GetStackMoveReach and unit:GetStackMoveReach(source, snapshot) or nil
+    stackSize = 0
+    for _, id in ipairs(snapshot or {}) do
+        local member = player():GetUnitByID(id)
+        if member and member:GetPlot() == source and not member:IsCargo() and member:GetDomainType() ~= DomainTypes.DOMAIN_AIR then
+            stackSize = stackSize + 1
+        end
+    end
 end
 local function quickLeader()
     if active or inCityScreen or setting("UIStackEnabled", 1) == 0 or not modifierHeld() then return nil end
@@ -322,7 +330,7 @@ local function buildRows()
     Controls.StackTitle:SetText((collapsed and "[ICON_PLUS] " or "[ICON_MINUS] ") .. "Stack: " .. #list .. " units")
     Controls.StackMove:SetHide(#own < moveMinimum or plot ~= selected:GetPlot())
     Controls.StackMove:SetDisabled(not player():IsTurnActive())
-    Controls.StackMove:SetToolTipString("Move the members of this tile to a destination. Green tiles take every member that can still move this turn; yellow tiles only some. Members that cannot arrive this turn, including exhausted ones, continue in later turns. Each keeps its own movement allowance. Selected unit gets destination capacity first. Linked movement is released; Squad memberships are preserved.[NEWLINE][NEWLINE]Shortcut: hold " .. modifierName .. " and right-click a tile.")
+    Controls.StackMove:SetToolTipString("Move the members of this tile to a destination. Green tiles take every member this turn; yellow tiles only some. Beyond them, the tile under the cursor is gray if the stack can get there in later turns and red if it cannot go there. Members that cannot arrive this turn, including exhausted ones, continue in later turns. Each keeps its own movement allowance. Selected unit gets destination capacity first. Linked movement is released; Squad memberships are preserved.[NEWLINE][NEWLINE]Shortcut: hold " .. modifierName .. " and right-click a tile.")
     for _, instance in ipairs(rowInstances) do instance.Row:ChangeParent(Controls.StackScrap) end
     rowByID = {}
     for i, unit in ipairs(list) do

@@ -49,7 +49,7 @@ Combat units share a tile up to their owner's capacity, counted separately for l
 ### Interface
 
 - A stack roster lists the units on a tile with health, movement and role.
-- **Move Stack** sends a whole stack to a destination; units that cannot arrive this turn keep going on later turns. While choosing, tiles every unit can reach this turn are green and tiles only some can reach are yellow.
+- **Move Stack** sends a whole stack to a destination; units that cannot arrive this turn keep going on later turns. While choosing, tiles every unit can reach this turn are green, tiles only some can reach are yellow, and the tile under the cursor turns gray when the stack can only get there in later turns or red when it cannot go there.
 - Holding **Alt** with a stacked unit selected shows the same preview under the cursor, and Alt + right-click gives the same order. The key is set by `UIStackMoveModifier`.
 - Map flags collapse into a count badge on crowded tiles, and the combat preview shows the chosen defender and collateral victims.
 

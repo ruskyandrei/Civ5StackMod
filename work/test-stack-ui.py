@@ -91,7 +91,7 @@ for i=1,10 do
     function u:GetStackMoveReach(src,ids)
         assert(src==sourcePlot and #ids==10,"reach uses the same tile snapshot")
         reachCalls=(reachCalls or 0)+1
-        return {Members=10,Eligible=7,Plots={{X=2,Y=1,Arriving=7},{X=3,Y=1,Arriving=4}}}
+        return {Members=10,Eligible=7,Plots={{X=2,Y=1,Arriving=10},{X=3,Y=1,Arriving=4},{X=4,Y=1,Arriving=7}}}
     end
     sourcePlot.units[i]=u
 end
@@ -134,7 +134,8 @@ assert(Controls.StackSummary.values.SetText[1]:find("7 arrive now; 3 later; 0 st
 assert(Controls.StackSummary.values.SetText[1]:find("fog"),"uncertainty warning")
 assert(reachCalls==1,"reach computed once when targeting starts")
 assert(highlights["3,1"].x==1 and highlights["3,1"].w<1,"plot only some members reach is yellow")
-assert(highlights["2,1"].y==0.9 and highlights["2,1"].w==1,"destination every member with moves reaches is green")
+assert(highlights["4,1"].x==1,"plot every member with moves reaches is still yellow while others are exhausted")
+assert(highlights["2,1"].x==1 and highlights["2,1"].w==1,"hovered tile is yellow while only some arrive this turn")
 Events.SerialEventMouseOverHex();Events.SerialEventMouseOverHex()
 assert(reachCalls==1,"hovering reuses the reach")
 ContextPtr.update(0.1)
@@ -418,7 +419,7 @@ assert(text:find("Alt%+right%-click"),"hint names the modifier")
 local later=created[10].Detail.values.SetText[1]
 assert(later:find("Later") and later:find("3 turns"),later)
 assert(highlights["3,1"].x==1,"partial reach is yellow")
-assert(highlights["2,1"].y==0.9 and highlights["2,1"].w==1,"destination every member with moves reaches is green")
+assert(highlights["2,1"].x==1 and highlights["2,1"].w==1,"hovered tile is yellow while only some arrive this turn")
 local order={}
 LuaEvents.StackQuickMoveInput(2,1,order)
 assert(order.handled and lastQueueLater==true,"right-click orders the whole stack, queueing later arrivals")
@@ -450,4 +451,26 @@ ContextPtr.update(0.1)
 assert(quickEvents[#quickEvents]==false,"no overlay during Move Stack targeting")
 LuaEvents.StackMoveInput(KeyEvents.KeyDown,Keys.VK_ESCAPE);altHeld=false;ContextPtr.update(0.1)
 print("PASS: modifier overlay start/stop, queued preview rows, reach colours, queued order and on-the-way report")
+""")
+
+
+# Hovered-tile colours: green all arrive now, yellow some, gray later only, red nobody.
+lua.execute(r"""
+altHeld=true;ContextPtr.update(0.1)
+local saved=sourcePlot.units[3].GetStackMovePreview
+local function hover(edit)
+    sourcePlot.units[3].GetStackMovePreview=function(...) local p=saved(...);edit(p);return p end
+    Events.SerialEventMouseOverHex()
+    return highlights["2,1"]
+end
+local c=hover(function(p) for _,m in ipairs(p.Members) do m.CanMove=true;m.Reason="Ready" end end)
+assert(c.y==0.9 and c.x<1,"every member arriving this turn is green")
+c=hover(function(p) for _,m in ipairs(p.Members) do m.CanMove=true;m.Reason="Queued" end end)
+assert(c.x==0.6 and c.y==0.6,"only later arrivals is gray")
+c=hover(function(p) p.Moving=0;for _,m in ipairs(p.Members) do m.CanMove=false;m.Reason="TerrainOrBorders" end end)
+assert(c.x==1 and c.y==0.25,"no member allowed is red")
+assert(highlights["2,1"]==c and highlights["3,1"].x==1,"area overlay kept under the cursor colour")
+sourcePlot.units[3].GetStackMovePreview=saved
+altHeld=false;ContextPtr.update(0.1)
+print("PASS: area green only where every member arrives; hovered tile green/yellow/gray/red")
 """)

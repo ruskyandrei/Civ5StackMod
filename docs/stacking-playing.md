@@ -50,7 +50,7 @@ Select a stacked unit to open the roster. Each row shows health, movement and co
 To move a group:
 
 1. Select the unit that should receive priority if destination space is limited.
-2. Click **Move Stack** and hover over a destination. Green tiles take every member that can still move this turn; yellow tiles only some. The hovered tile is drawn more strongly, in red if nobody can go there.
+2. Click **Move Stack** and hover over a destination. Green tiles take every member this turn; yellow tiles only some. The tile under the cursor is drawn more strongly: beyond the shaded area it is gray if the stack can get there in later turns and red if no member may go there (terrain, borders, enemies or a full stack).
 3. Read **N arrive now; L later; M stay** and the per-unit reasons.
 4. Right-click the destination to send the stack. Left-click the map, press Escape or click Cancel to cancel.
 
