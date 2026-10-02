@@ -32,7 +32,8 @@ Install (automatic)
    Then choose Single Player and set up a game as usual.
 
 The installer finds your user data folder and your Steam game folder. If it
-cannot, it tells you which option to pass, for example:
+cannot, it opens a dialog where you choose the folder. You can also pass the
+folder directly, for example:
   Install.cmd -GameDirectory "D:\Games\Sid Meier's Civilization V"
 "Install.cmd -DryRun" shows what would be done without changing anything.
 
