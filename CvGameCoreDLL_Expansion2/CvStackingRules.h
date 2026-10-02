@@ -30,6 +30,7 @@ namespace CvStacking
 		HOT_CityCapacityBonus,
 		HOT_MinorCapacityBonus,
 		HOT_BarbarianCapacityBonus,
+		HOT_BarbarianTechnologyCapacity,
 		HOT_CollateralPercent,
 		HOT_CollateralHPFloorPercent,
 		HOT_CollateralMinimumDamage,

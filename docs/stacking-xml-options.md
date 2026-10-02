@@ -42,6 +42,7 @@ researched technology bonuses.
 | `CityCapacityBonus` | 0 | Extra slots inside a city. |
 | `MinorCapacityBonus` | 0 | Extra slots for city-states. |
 | `BarbarianCapacityBonus` | 0 | Extra slots for barbarians. |
+| `BarbarianTechnologyCapacity` | 0 | 1 lets barbarians gain the `Stacking_Technologies` slots. At 0 they keep the base capacity all game. |
 
 Table `Stacking_Technologies` (`TechType`, `CapacityBonus`): one row per
 technology that raises capacity. Add, remove or change rows freely.
@@ -311,6 +312,21 @@ Force wanted = `AIAssaultBaseUnits` + (capacity - 1) x
 | `AIOperationMovingStallTurns` | 12 | Turns a march may make no progress. |
 | `AIOperationContactStallTurns` | 20 | Same, after the army has fought. |
 | `AIOperationContactHoldPercent` | 50 | Share of exposed units at which the core holds its position. |
+
+### 3.10 Barbarian camp clearing
+
+Major civs clear camps with spare units only, after war, reinforcement and
+offensive moves. Armies and units committed to an offensive are never used, nor
+are city defenders while the civ is at war with a major civ. A party attacks
+once it has one more good attacker within four tiles (the tactical search
+radius) than the camp has visible defenders.
+
+| Option | Default | Effect |
+|---|---:|---|
+| `AIBarbarianCampPartyMaximum` | 4 | Largest party sent to one camp (at least 3 when the limit allows). |
+| `AIBarbarianCampWarRadius` | 5 | At war, unless every war is being won, only camps within this many tiles of one of the player's cities are cleared. |
+| `AIBarbarianCampCityStateRadius` | 4 | A camp this close to a city-state's city, with no nearer city, counts as threatening it. |
+| `AIBarbarianCampCityStateBonus` | 20 | Priority added to such camps, since city-states cannot clear camps themselves. |
 
 ## 4. Performance and work budgets
 

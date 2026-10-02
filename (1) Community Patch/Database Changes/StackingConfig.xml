@@ -114,6 +114,12 @@
     <Row Name="AIOffensiveSupportMemoryTurns" Value="12"/>
     <Row Name="AIOffensiveSupportMinimumUnits" Value="12"/>
     <Row Name="AIOffensiveSupportMaximumUnits" Value="32"/>
+    <!-- Barbarian camp clearing parties (mid-priority moves after war,
+         reinforcement and offensive moves). -->
+    <Row Name="AIBarbarianCampPartyMaximum" Value="4"/>
+    <Row Name="AIBarbarianCampWarRadius" Value="5"/>
+    <Row Name="AIBarbarianCampCityStateRadius" Value="4"/>
+    <Row Name="AIBarbarianCampCityStateBonus" Value="20"/>
     <Row Name="AIOffensiveSupportReserveUnits" Value="4"/>
     <Row Name="AIOffensiveSupportStrengthPercent" Value="150"/>
     <Row Name="AIOffensiveSupportReservePercent" Value="25"/>
@@ -227,6 +233,7 @@
     <Row Name="CityCapacityBonus" Value="0" />
     <Row Name="MinorCapacityBonus" Value="0" />
     <Row Name="BarbarianCapacityBonus" Value="0" />
+    <Row Name="BarbarianTechnologyCapacity" Value="0" />
     <Row Name="CollateralPercent" Value="20" />
     <Row Name="CollateralHPFloorPercent" Value="50" />
     <Row Name="CollateralMinimumDamage" Value="1" />

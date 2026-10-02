@@ -545,6 +545,14 @@ void CvTacticalAI::FindTacticalTargets()
 				if (bSuspectedBarbCamp && (m_pPlayer->isMajorCiv() || m_pPlayer->isBarbarian()))
 				{
 					int iBaseScore = pLoopPlot->isVisible(m_pPlayer->getTeam()) ? 100 : 50;
+					// City-states cannot clear camps, so camps threatening one come first.
+					if (CvStackingAI::Enabled(m_pPlayer->GetID()))
+					{
+						const CvCity* pClosestCity = GC.getGame().GetClosestCityByPlots(pLoopPlot);
+						if (pClosestCity && GET_PLAYER(pClosestCity->getOwner()).isMinorCiv() &&
+							plotDistance(*pClosestCity->plot(), *pLoopPlot) <= CvStacking::GetInt("AIBarbarianCampCityStateRadius", 4))
+							iBaseScore += CvStacking::GetInt("AIBarbarianCampCityStateBonus", 20);
+					}
 					newTarget.SetTargetType(AI_TACTICAL_TARGET_BARBARIAN_CAMP);
 					newTarget.SetAuxIntData(iBaseScore - m_pPlayer->GetCityDistancePathLength(pLoopPlot));
 					m_AllTargets.push_back(newTarget);
@@ -1207,6 +1215,47 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 	}
 }
 
+/// Visible enemy defenders in a camp and their total hit points. An unseen camp
+/// is assumed to hold one full-health defender.
+static int CountCampDefenders(const CvPlot* pPlot, PlayerTypes ePlayer, int* piTotalHitPoints = NULL)
+{
+	const TeamTypes eTeam = GET_PLAYER(ePlayer).getTeam();
+	int iDefenders = 0, iHitPoints = 0;
+	if (pPlot->isVisible(eTeam))
+	{
+		for (int i = 0; i < pPlot->getNumUnits(); ++i)
+		{
+			const CvUnit* pUnit = pPlot->getUnitByIndex(i);
+			if (!pUnit || !pUnit->IsCanDefend() || pUnit->isDelayedDeath() || pUnit->isInvisible(eTeam, false) || !GET_TEAM(eTeam).isAtWar(pUnit->getTeam()))
+				continue;
+			++iDefenders;
+			iHitPoints += pUnit->GetCurrHitPoints();
+		}
+	}
+	else
+	{
+		iDefenders = 1;
+		iHitPoints = GD_INT_GET(MAX_HIT_POINTS);
+	}
+	if (piTotalHitPoints)
+		*piTotalHitPoints = iHitPoints;
+	return iDefenders;
+}
+
+/// Whether a barbarian holds its camp (or, with bCities, its city) and must stay.
+/// VP held every barbarian standing there, since only one fitted; with stacking
+/// only the designated defender (the best one, which camp defense handles)
+/// stays and any others roam as usual.
+static bool IsHeldBarbarianDefender(CvUnit* pUnit, bool bCities)
+{
+	if (!pUnit || !pUnit->isBarbarian())
+		return false;
+	CvPlot* pPlot = pUnit->plot();
+	if (!pPlot || (pPlot->getImprovementType() != GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT) && !(bCities && pPlot->isCity())))
+		return false;
+	return !CvStacking::IsEnabled() || pPlot->getBestDefender(BARBARIAN_PLAYER) == pUnit;
+}
+
 /// Assign a unit to capture an undefended barbarian camp
 void CvTacticalAI::PlotGrabGoodyMoves()
 {
@@ -1241,11 +1290,23 @@ void CvTacticalAI::PlotGrabGoodyMoves()
 	}
 
 	//then barb camps, occupied or not
+	//with stacking, a party is sized for the camp's defenders. These moves run after
+	//war, reinforcement and offensive moves; at war, only camps near our cities qualify
+	//unless every war is being won
+	const bool bCampParties = CvStackingAI::Enabled(m_pPlayer->GetID());
+	const bool bCampsNearCitiesOnly = bCampParties && m_pPlayer->IsAtWarAnyMajor() && m_pPlayer->GetDiplomacyAI()->GetStateAllWars() != STATE_ALL_WARS_WINNING;
 	ClearCurrentMoveUnits(AI_TACTICAL_BARBARIAN_CAMP);
 	for (CvTacticalTarget* pTarget = GetFirstZoneTarget(AI_TACTICAL_TARGET_BARBARIAN_CAMP); pTarget!=NULL; pTarget = GetNextZoneTarget())
 	{
 		CvPlot* pPlot = GC.getMap().plot(pTarget->GetTargetX(), pTarget->GetTargetY());
-		if (FindUnitsForHarassing(pPlot,iRange,-1,-1,DOMAIN_LAND,false,true,3))
+		int iMaxUnits = 3;
+		if (bCampParties)
+		{
+			if (bCampsNearCitiesOnly && m_pPlayer->GetCityDistanceInPlots(pPlot) > CvStacking::GetInt("AIBarbarianCampWarRadius", 5))
+				continue;
+			iMaxUnits = std::min(CvStacking::GetInt("AIBarbarianCampPartyMaximum", 4), std::max(3, CountCampDefenders(pPlot, m_pPlayer->GetID()) + 2));
+		}
+		if (FindUnitsForHarassing(pPlot,iRange,-1,-1,DOMAIN_LAND,false,true,iMaxUnits))
 		{
 			ExecuteBarbarianCampMove(pPlot);
 			if( GC.getLogging() && GC.getAILogging() )
@@ -1583,7 +1644,7 @@ void CvTacticalAI::ExecuteCivilianAttackMoves(AITacticalTargetType eTargetType)
 				if (!pUnit || !pUnit->canMoveInto(*pPlot, CvUnit::MOVEFLAG_ATTACK))
 					continue;
 				//don't allow humans to use civilians as bait to lure units out of camps
-				if (pUnit->GetDanger() == 0 || pUnit->plot()->getImprovementType()!=(ImprovementTypes)GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT))
+				if (pUnit->GetDanger() == 0 || !IsHeldBarbarianDefender(pUnit, false))
 				{
 					pUnit->PushMission(CvTypes::getMISSION_MOVE_TO(), pPlot->getX(), pPlot->getY(), CvUnit::MOVEFLAG_NO_EMBARK);
 
@@ -3214,7 +3275,53 @@ void CvTacticalAI::ExecuteBarbarianCampMove(CvPlot* pTargetPlot)
 {
 	//ignore visibility here so the AI doesn't go naively after revealed but invisible camps
 	//and then a unit is stuck there without being able to attack
-	if (pTargetPlot->isEnemyUnit(m_pPlayer->GetID(), true, false))
+	if (pTargetPlot->isEnemyUnit(m_pPlayer->GetID(), true, false) && CvStackingAI::Enabled(m_pPlayer->GetID()))
+	{
+		// A stacked camp has several defenders. Commit a party with one more good
+		// attacker than there are defenders, and attack once that many are inside
+		// the tactical search radius: positioning alone stops at its edge, out of
+		// the camp's reach. Like VP, a camp may take several turns.
+		int iDefenderHitPoints = 0;
+		const int iDefenders = CountCampDefenders(pTargetPlot, m_pPlayer->GetID(), &iDefenderHitPoints);
+		const int iRequiredAttackers = std::max(2, iDefenders + 1);
+		vector<int> vPartyIDs;
+		vector<CvUnit*> vInPlace;
+		int nGoodAttackers = 0;
+		for (size_t i = 0; i < m_CurrentMoveUnits.size(); i++)
+		{
+			CvUnit* pUnit = m_pPlayer->getUnit(m_CurrentMoveUnits[i].GetID());
+			if (!pUnit)
+				continue;
+			vPartyIDs.push_back(pUnit->GetID());
+			if (!TacticalAIHelpers::IsAttackNetPositive(pUnit, pTargetPlot, 0))
+				continue;
+			nGoodAttackers++;
+			if (plotDistance(*pUnit->plot(), *pTargetPlot) <= TACTICAL_COMBAT_MAX_TARGET_DISTANCE)
+				vInPlace.push_back(pUnit);
+		}
+
+		const bool bStrike = (int)vInPlace.size() >= iRequiredAttackers;
+		const bool bGather = nGoodAttackers >= iRequiredAttackers;
+		CvStackingDiagnostics::Record(1, m_pPlayer->GetID(), "BARBARIAN_CAMP", "target=%d:%d defenders=%d hp=%d party=%u good=%d inPlace=%u action=%s",
+			pTargetPlot->getX(), pTargetPlot->getY(), iDefenders, iDefenderHitPoints, (unsigned int)vPartyIDs.size(), nGoodAttackers, (unsigned int)vInPlace.size(),
+			bStrike ? "strike" : bGather ? "gather" : "insufficient");
+		if (bStrike)
+			TacticalAIHelpers::FindAndExecuteBestUnitAssignments(m_pPlayer->GetID(), vInPlace, pTargetPlot, AL_MEDIUM);
+		if (bStrike || bGather)
+		{
+			// Combat can destroy or upgrade units; bring the rest of the party up.
+			vector<CvUnit*> vRemaining;
+			for (size_t i = 0; i < vPartyIDs.size(); i++)
+			{
+				CvUnit* pUnit = m_pPlayer->getUnit(vPartyIDs[i]);
+				if (pUnit && !pUnit->isDelayedDeath() && !pUnit->TurnProcessed())
+					vRemaining.push_back(pUnit);
+			}
+			if (!vRemaining.empty())
+				PositionUnitsAroundTarget(vRemaining, pTargetPlot);
+		}
+	}
+	else if (pTargetPlot->isEnemyUnit(m_pPlayer->GetID(), true, false))
 	{
 		int nGoodAttackers = 0;
 		vector<CvUnit*> vUnits;
@@ -4305,7 +4412,7 @@ void CvTacticalAI::ExecuteBarbarianRoaming()
 			if(pUnit->getDomainType() == DOMAIN_LAND)
 			{
 				CvPlot* pPlot = pUnit->plot();
-				if(pPlot && (pPlot->getImprovementType() == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT) || pPlot->isCity()))
+				if(IsHeldBarbarianDefender(pUnit, true))
 				{
 					pUnit->PushMission(CvTypes::getMISSION_SKIP());
 					UnitProcessed(pUnit->GetID());
@@ -4783,7 +4890,7 @@ void CvTacticalAI::ExecuteEscortEmbarkedMoves(std::vector<CvUnit*> vTargets)
 CvPlot* CvTacticalAI::GetBestRepositionPlot(CvUnit* pUnit, CvPlot* plotTarget, int iAcceptableDanger)
 {
 	//safety: barbarians don't leave camp
-	if (pUnit->isBarbarian() && pUnit->plot()->getImprovementType() == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT))
+	if (IsHeldBarbarianDefender(pUnit, false))
 		return NULL;
 
 	//don't pull units out of cities for repositioning
@@ -5072,7 +5179,7 @@ bool CvTacticalAI::FindUnitsWithinStrikingDistance(CvPlot* pTarget)
 			continue;
 
 		// Don't pull barbarian units out of camps to attack.
-		if(pLoopUnit->isBarbarian() && (pLoopUnit->plot()->getImprovementType() == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT)))
+		if(IsHeldBarbarianDefender(pLoopUnit, false))
 			continue;
 
 		// Some units can't enter cities
@@ -5316,9 +5423,14 @@ bool CvTacticalAI::FindUnitsForHarassing(CvPlot* pTarget, int iNumTurnsAway, int
 				//don't use garrisons if there is an enemy around. the garrison may still attack when we do garrison moves!
 				if (pLoopUnit->IsGarrisoned() && pLoopUnit->GetGarrisonedCity()->NeedsGarrison() && pLoopUnit->getDomainType() != DOMAIN_SEA)
 					continue;
+
+				//nor armies, units committed to an offensive or, at war, the other city defenders
+				if (CvStackingAI::Enabled(m_pPlayer->GetID()) && (pLoopUnit->getArmyID() != -1 || CvStackingOffensiveAI::HasCommitment(pLoopUnit) ||
+					(m_pPlayer->IsAtWarAnyMajor() && CvStackingAI::RetainCityUnit(pLoopUnit))))
+					continue;
 			}
 
-			if (pLoopUnit->isBarbarian() && pLoopUnit->plot()->getImprovementType() == GD_INT_GET(BARBARIAN_CAMP_IMPROVEMENT))
+			if (IsHeldBarbarianDefender(pLoopUnit, false))
 				continue;
 
 			if (eDomain != NO_DOMAIN && pLoopUnit->getDomainType() != eDomain)

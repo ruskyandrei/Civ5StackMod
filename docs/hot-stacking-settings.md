@@ -1,13 +1,13 @@
 # Typed lookup for hot stacking settings
 
-`CvStacking::GetIntByKey` reads24 frequently used XML settings through fixed value/presence arrays in the existing `RulesCache`. Known constant calls in capacity rules, combat selection/collateral and tactical stack scoring use this path. It removes repeated tree traversal and text comparisons. The existing string map already avoided temporary-string allocations; the typed lookup adds no heap storage for queries or forecast-cache entries.
+`CvStacking::GetIntByKey` reads 25 frequently used XML settings through fixed value/presence arrays in the existing `RulesCache`. Known constant calls in capacity rules, combat selection/collateral and tactical stack scoring use this path. It removes repeated tree traversal and text comparisons. The existing string map already avoided temporary-string allocations; the typed lookup adds no heap storage for queries or forecast-cache entries.
 
-The public string `GetInt(const char*,int)` body remains unchanged. Dynamic callers retain null, empty, unknown, case-sensitive and UTF-8 name behavior and their caller-specific fallbacks. All24 settings keep their XML names, defaults, ranges and override rules. The enum is an internal C++ lookup key; it is not serialized or used as an XML ID.
+The public string `GetInt(const char*,int)` body remains unchanged. Dynamic callers retain null, empty, unknown, case-sensitive and UTF-8 name behavior and their caller-specific fallbacks. All 25 settings keep their XML names, defaults, ranges and override rules. The enum is an internal C++ lookup key; it is not serialized or used as an XML ID.
 
 | Purpose | XML settings |
 | --- | --- |
 | Selection and feature switches | `DefenderSelectionEnabled`, `FlankingEnabled`, `CollateralEnabled`, `DisableCityRangedAttacks`, `AIEnabled` |
-| Capacity | `BaseCapacity`, `MaximumCapacity`, `LandCapacityBonus`, `SeaCapacityBonus`, `CityCapacityBonus`, `MinorCapacityBonus`, `BarbarianCapacityBonus` |
+| Capacity | `BaseCapacity`, `MaximumCapacity`, `LandCapacityBonus`, `SeaCapacityBonus`, `CityCapacityBonus`, `MinorCapacityBonus`, `BarbarianCapacityBonus`, `BarbarianTechnologyCapacity` |
 | Collateral | `CollateralPercent`, `CollateralHPFloorPercent`, `CollateralMinimumDamage` |
 | City protection | `CityProtectionMaximumPercent`, `CityProtectionScalesWithHP` |
 | Tactical scoring | `AIStackCollateralWeight`, `AIStackProtectionWeight`, `AIStackJoinBonus`, `AIStackAntiFlankBonus`, `AIStackConcentrationFreeUnits`, `AIStackConcentrationPenalty`, `AIStackLeaveProtectorPenalty` |

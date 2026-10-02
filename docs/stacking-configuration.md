@@ -33,12 +33,13 @@ All these rows are in `Stacking_Settings(Name, Value)` and use integers. The DLL
 | CityCapacityBonus | 0 | Extra slots inside a city, still limited by MaximumCapacity; 0–SAFE_INTEGER. |
 | MinorCapacityBonus | 0 | Additional city-state slots; 0–SAFE_INTEGER. |
 | BarbarianCapacityBonus | 0 | Additional barbarian slots; 0–SAFE_INTEGER. |
+| BarbarianTechnologyCapacity | 0 | 1 applies `Stacking_Technologies` bonuses to barbarians; 0 keeps them at base capacity plus their category bonus; 0–1. |
 | CollateralPercent | 20 | Percent of the calculated primary hit used as secondary damage; 0–100. |
 | CollateralHPFloorPercent | 50 | Secondary victims retain at least this percentage of their own maximum HP; 0–100. |
 | CollateralMinimumDamage | 1 | Minimum after protection/rounding when base collateral is positive and protection is below 100%, before the HP floor; 0–SAFE_INTEGER. |
 | CityProtectionMaximumPercent | 90 | Cap on additive building protection; 0–100. A value of 100 deliberately permits complete protection. |
 
-Capacity is `min(MaximumCapacity, BaseCapacity + domain bonus + city bonus + player-category bonus + researched technology bonuses)`. It uses the moving unit's owning team, never the plot owner's technology. City-states and barbarians use their own team's researched technologies plus their separate optional bonus. Civilian/support/air capacity rules remain separate. Callers retain VP's foreign-occupant legality checks.
+Capacity is `min(MaximumCapacity, BaseCapacity + domain bonus + city bonus + player-category bonus + researched technology bonuses)`. It uses the moving unit's owning team, never the plot owner's technology. City-states use their own team's researched technologies plus their separate optional bonus. Barbarians get only their optional bonus unless `BarbarianTechnologyCapacity` is 1. They receive most technologies from the major civs, and growing barbarian stacks made camps and roaming groups much harder to clear. Civilian/support/air capacity rules remain separate. Callers retain VP's foreign-occupant legality checks.
 
 Capacity and integer additions are bounded internally at `INT_MAX / 4` to prevent signed overflow. This is an arithmetic safeguard rather than a practical balance limit. Very large XML caps are not a promise of acceptable AI performance or UI usability.
 
@@ -115,6 +116,12 @@ All AI tuning rows are in `Stacking_Settings`. The DLL uses the individual nonne
 | AIStackPairRecruitBonus | 25 | 0–10000 | Score bonus retaining protector/ranged pairs during recruitment. |
 | AIStackConcentrationFreeUnits | 2 | 0–100 | Eligible stack members before concentration penalties begin. |
 | AIStackPairRecruitRange | 1 | 0–10 | Hex distance when retaining protector/ranged pairs in recruitment. |
+| AIBarbarianCampPartyMaximum | 4 | 1–8 | Largest camp-clearing party: defenders plus two, at least VP's three, capped here. |
+| AIBarbarianCampWarRadius | 5 | 0–30 | At war and not winning every war, camps farther than this from the player's cities are skipped. |
+| AIBarbarianCampCityStateRadius | 4 | 0–10 | Distance from a camp to its nearest city, when that city belongs to a city-state, for the priority bonus. |
+| AIBarbarianCampCityStateBonus | 20 | 0–200 | Target-score bonus for camps threatening a city-state, which cannot clear camps itself. |
+
+Camp clearing stays one of VP's mid-priority tactical moves, after zone combat, reinforcements and offensive staging. With the stacking AI enabled, parties never take units in armies or units committed to an offensive, and while the player is at war with a major civ they also skip units the city-defence allocation retains (this applies to every harassing move: camps, pillage and plunder). At peace, VP's single-garrison rule applies. A party attacks an occupied camp, at medium aggression, when its good attackers within the tactical search radius (four tiles) number at least the defenders plus one; positioning alone stops at that edge, out of the camp's reach. Otherwise it gathers if the whole party has that many, or leaves the camp alone; a camp may take several turns, as in VP.
 
 Existing tactical search limits remain bounded at their upstream defaults rather than scaling with stack capacity. These values tune preferences; shared eligibility, capacity, defender selection and damage forecasting establish which actions are legal.
 

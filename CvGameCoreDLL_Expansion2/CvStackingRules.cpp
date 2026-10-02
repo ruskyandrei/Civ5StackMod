@@ -112,6 +112,10 @@ namespace
 		{"AIOffensiveSupportMemoryTurns", 12, 2, 40},
 		{"AIOffensiveSupportMinimumUnits", 12, 2, 40},
 		{"AIOffensiveSupportMaximumUnits", 32, 4, 64},
+		{"AIBarbarianCampPartyMaximum", 4, 1, 8},
+		{"AIBarbarianCampWarRadius", 5, 0, 30},
+		{"AIBarbarianCampCityStateRadius", 4, 0, 10},
+		{"AIBarbarianCampCityStateBonus", 20, 0, 200},
 		{"AIOffensiveSupportReserveUnits", 4, 0, 16},
 		{"AIOffensiveSupportStrengthPercent", 150, 100, 400},
 		{"AIOffensiveSupportReservePercent", 25, 0, 100},
@@ -217,6 +221,7 @@ namespace
 		{"CityCapacityBonus", 0, 0, SAFE_INTEGER},
 		{"MinorCapacityBonus", 0, 0, SAFE_INTEGER},
 		{"BarbarianCapacityBonus", 0, 0, SAFE_INTEGER},
+		{"BarbarianTechnologyCapacity", 0, 0, 1},
 		{"CollateralPercent", 20, 0, 100},
 		{"CollateralHPFloorPercent", 50, 0, 100},
 		{"CollateralMinimumDamage", 1, 0, SAFE_INTEGER},
@@ -254,6 +259,7 @@ namespace
 		"CityCapacityBonus",
 		"MinorCapacityBonus",
 		"BarbarianCapacityBonus",
+		"BarbarianTechnologyCapacity",
 		"CollateralPercent",
 		"CollateralHPFloorPercent",
 		"CollateralMinimumDamage",
@@ -628,7 +634,9 @@ namespace CvStacking
 			capacity = SaturatingAdd(capacity, GetIntByKey(HOT_MinorCapacityBonus, 0));
 		if (player.isBarbarian())
 			capacity = SaturatingAdd(capacity, GetIntByKey(HOT_BarbarianCapacityBonus, 0));
-		const CvTeamTechs* techs = GET_TEAM(player.getTeam()).GetTeamTechs();
+		// Barbarians receive most technologies from the major civs. Unless enabled,
+		// their stacks keep the base capacity instead of growing with those techs.
+		const CvTeamTechs* techs = player.isBarbarian() && GetIntByKey(HOT_BarbarianTechnologyCapacity, 0) == 0 ? NULL : GET_TEAM(player.getTeam()).GetTeamTechs();
 		const std::vector<std::pair<int, int> >& bonuses = Cache().technologies;
 		for (size_t i = 0; techs && i < bonuses.size(); ++i)
 			if (techs->HasTech((TechTypes)bonuses[i].first))

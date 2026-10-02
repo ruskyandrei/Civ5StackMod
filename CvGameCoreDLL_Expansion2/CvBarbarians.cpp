@@ -1063,6 +1063,7 @@ void CvBarbarians::SpawnBarbarianUnits(CvPlot* pPlot, int iNumUnits, BarbSpawnRe
 	int iX = pPlot->getX();
 	int iY = pPlot->getY();
 	bool bSpawnOnPlot = !bNotBasePlot;
+	bool bSpawnerDefended = false;
 	for (CvUnit* pLoopUnit = GET_PLAYER(BARBARIAN_PLAYER).firstUnit(&iUnitLoop); pLoopUnit != NULL; pLoopUnit = GET_PLAYER(BARBARIAN_PLAYER).nextUnit(&iUnitLoop))
 	{
 		if (!pLoopUnit->IsCanDefend() || pLoopUnit->isDelayedDeath())
@@ -1072,7 +1073,14 @@ void CvBarbarians::SpawnBarbarianUnits(CvPlot* pPlot, int iNumUnits, BarbSpawnRe
 		if (pLoopPlot)
 		{
 			if (pLoopPlot == pPlot)
+			{
+				// The first unit defends the spawner. With stacking, further occupants
+				// count toward the spawn cap like units nearby, or camps fill up first.
+				if (bSpawnerDefended)
+					iCount++;
+				bSpawnerDefended = true;
 				bSpawnOnPlot = false;
+			}
 			else if (plotDistance(pLoopPlot->getX(), pLoopPlot->getY(), iX, iY) <= iMaxBarbarianRange)
 				iCount++;
 		}
