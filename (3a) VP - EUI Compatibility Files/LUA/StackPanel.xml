@@ -16,6 +16,16 @@
     </ScrollPanel>
     <Label ID="StackSummary" Anchor="L,T" Offset="16,148" WrapWidth="326" Font="TwCenMT16"/>
   </Grid>
+  <Grid ID="ForeignStackPanel" Anchor="L,B" Offset="480,220" Size="360,165" Padding="0,0" Style="Grid9FrameBlack" Hidden="1">
+    <Label ID="ForeignStackTitle" Anchor="L,T" Offset="16,16"/>
+    <Label ID="ForeignStackCapacity" Anchor="L,T" Offset="16,44" Font="TwCenMT16" WrapWidth="330"/>
+    <ScrollPanel ID="ForeignStackScroll" Anchor="L,T" Offset="12,68" Size="336,76" Vertical="1" AutoScrollBar="1">
+      <Stack ID="ForeignStackRows" Anchor="L,T" StackGrowth="Bottom" Padding="2"/>
+      <ScrollBar Style="VertSlider" Anchor="R,C" Length="60" AnchorSide="o,i"/>
+      <UpButton Style="ScrollBarUp" Anchor="R,T" AnchorSide="o,i"/>
+      <DownButton Style="ScrollBarDown" Anchor="R,B" AnchorSide="o,i"/>
+    </ScrollPanel>
+  </Grid>
   <GridButton ID="StackDiagnosticsOpen" Anchor="C,T" Offset="0,36" Size="156,28" Style="SmallButton" ConsumeMouse="1" Hidden="1" ToolTip="Stack diagnostics: Off, Summary or Verbose. Logging only.">
     <Label Anchor="C,C" String="Diagnostics"/>
   </GridButton>
@@ -35,7 +45,11 @@
     <GridButton ID="Row" Size="318,38" Style="SmallButton2" ConsumeMouse="1">
       <Image ID="Portrait" Anchor="L,C" Offset="3,0" Size="32,32"/>
       <Label ID="Name" Anchor="L,T" Offset="42,4" Font="TwCenMT16" TruncateWidth="255"/>
-      <Label ID="Detail" Anchor="L,T" Offset="42,24" Font="TwCenMT14" TruncateWidth="255"/>
+      <Box ID="Health" Anchor="L,T" Offset="42,25" Size="62,15" Color="0,0,0,160">
+        <Bar ID="HealthBar" Anchor="C,C" Size="60,13" Direction="Right" FGColor="0,255,0,255" BGColor="0,0,0,0"/>
+        <Label ID="HealthText" Anchor="C,C" Offset="0,1" Font="TwCenMT14" FontStyle="Shadow" ColorSet="Beige_Black_Alpha"/>
+      </Box>
+      <Label ID="Detail" Anchor="L,T" Offset="110,24" Font="TwCenMT14" TruncateWidth="187"/>
     </GridButton>
   </Instance>
 </Context>

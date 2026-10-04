@@ -40,7 +40,8 @@ function sourcePlot:IsVisible() return true end
 function sourcePlot:IsCity() return false end
 function sourcePlot:GetX() return 1 end
 function sourcePlot:GetY() return 1 end
-destination={GetX=function() return 2 end,GetY=function() return 1 end}
+destination={GetX=function() return 2 end,GetY=function() return 1 end,GetNumUnits=function() return 0 end}
+Teams={[0]={IsAtWar=function(self,other) return other==1 end}}
 Map={GetPlot=function() return destination end}
 Players={[0]={}}
 Players[0].GetUnitByID=function(self,id) return sourcePlot.units[id] end
@@ -113,7 +114,7 @@ function Vector4(x,y,z,w) return {x=x,y=y,z=z,w=w} end
 created={}
 ContextPtr={}
 function ContextPtr:BuildInstanceForControl(name,instance,parent)
-    for _,id in ipairs({"Row","Portrait","Name","Detail"}) do instance[id]=control() end
+    for _,id in ipairs({"Row","Portrait","Name","Detail","Health","HealthBar","HealthText"}) do instance[id]=control() end
     created[#created+1]=instance
 end
 function ContextPtr:SetUpdate(f) self.update=f end
@@ -126,7 +127,10 @@ lua.execute(r"""
 ContextPtr.update(0.1)
 assert(#created==10,"all 10 members have rows")
 assert(Controls.StackCapacity.values.SetText[1]=="Land 10/10","capacity agrees with combat occupants")
-assert(created[1].Detail.values.SetText[1]:find("75/100 HP"),"health visible")
+assert(created[1].HealthText.values.SetText[1]=="75/100","exact health on the bar")
+assert(created[1].HealthBar.values.SetPercent[1]==0.75,"bar length follows health")
+local c=created[1].HealthBar.values.SetFGColor[1]
+assert(c.x==0.5 and c.y==1 and c.z==0,"75% health is yellow-green")
 assert(created[1].Detail.values.SetText[1]:find("1.5"),"moves use game denominator")
 assert(created[3].Name.values.SetText[1]:find("COLOR_YELLOW"),"selected member indicated")
 Controls.StackMove.callback()
@@ -473,4 +477,49 @@ assert(highlights["2,1"]==c and highlights["3,1"].x==1,"area overlay kept under 
 sourcePlot.units[3].GetStackMovePreview=saved
 altHeld=false;ContextPtr.update(0.1)
 print("PASS: area green only where every member arrives; hovered tile green/yellow/gray/red")
+""")
+
+
+# Hovering another player's visible stack shows a read-only roster beside the own one.
+lua.execute(r"""
+local function foreignUnit(id,owner,hp,invisible)
+    local u=setmetatable({id=id,owner=owner,hp=hp},{__index=sourcePlot.units[1]})
+    u.GetOwner=function(self) return self.owner end
+    u.GetCurrHitPoints=function(self) return self.hp end
+    u.GetName=function(self) return "Hand-Axe "..self.id end
+    u.IsInvisible=function() return invisible or false end
+    return u
+end
+Players[1]={GetPlayerColors=function() return 1,2 end,GetTeam=function() return 1 end,
+    GetCivilizationShortDescription=function() return "Barbarians" end}
+local camp={units={foreignUnit(41,1,100),foreignUnit(42,1,20),foreignUnit(43,1,100,true)}}
+for k,v in pairs(sourcePlot) do if type(v)=="function" then camp[k]=v end end
+camp.GetX=function() return 5 end;camp.GetY=function() return 5 end
+Map.GetPlot=function(x,y) if x==5 then return camp end return destination end
+UI.GetMouseOverHex=function() return 5,5 end
+ContextPtr.update(0.1)
+Events.SerialEventMouseOverHex()
+assert(Controls.ForeignStackPanel.values.SetHide[1]==false,"foreign stack roster opens on hover")
+local title=Controls.ForeignStackTitle.values.SetText[1]
+assert(title:find("Barbarians: 2 units") and title:find("NEGATIVE"),"invisible member hidden; at-war owner in red: "..title)
+local x=Controls.ForeignStackPanel.values.SetOffsetVal[1]
+assert(x==Controls.StackPanel.values.SetOffsetVal[1]+360+8,"placed beside the own roster")
+local weak
+for _,inst in ipairs(created) do if inst.HealthText.values.SetText and inst.HealthText.values.SetText[1]=="20/100" then weak=inst end end
+local c=weak.HealthBar.values.SetFGColor[1]
+assert(c.x==1 and c.y==0.4,"20% health is red-orange")
+UI.GetMouseOverHex=function() return 2,1 end
+Events.SerialEventMouseOverHex()
+assert(Controls.ForeignStackPanel.values.SetHide[1]==true,"leaving the stack hides the roster")
+camp.units[2]=nil
+UI.GetMouseOverHex=function() return 5,5 end
+Events.SerialEventMouseOverHex()
+assert(Controls.ForeignStackPanel.values.SetHide[1]==true,"a single visible foreign unit is not a stack")
+camp.units[2]=foreignUnit(42,1,20)
+Controls.StackPanel.IsHidden=function() return true end
+Events.SerialEventMouseOverHex()
+assert(Controls.ForeignStackPanel.values.SetOffsetVal[1]==x,"same place when the own roster is hidden")
+Controls.StackPanel.IsHidden=nil
+Map.GetPlot=function() return destination end
+print("PASS: foreign stack hover roster, fog/invisible filtering, war colour, placement and health colours")
 """)

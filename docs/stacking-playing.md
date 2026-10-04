@@ -45,7 +45,7 @@ Normal purchases require an available legal placement. Civilian, aircraft and sp
 
 ## Reading and moving a stack
 
-Select a stacked unit to open the roster. Each row shows health, movement and combat role. Click an owned row to select that unit; click the stack title to collapse or reopen the list. Left-click an empty map hex to dismiss the roster, then select a unit or click its stack badge to reopen it. Large rosters scroll. Compact map flags show a count badge once the configured threshold is reached.
+Select a stacked unit to open the roster. Each row shows a health bar (green at full health, through yellow, to red) with the exact hit points on it, movement and combat role. Hovering a tile with two or more visible units of another player opens a read-only roster of that stack to the right of where your own roster sits, whether or not yours is open; its title shows the owner, in red when you are at war. Click an owned row to select that unit; click the stack title to collapse or reopen the list. Left-click an empty map hex to dismiss the roster, then select a unit or click its stack badge to reopen it. Large rosters scroll. Compact map flags show a count badge once the configured threshold is reached.
 
 To move a group:
 

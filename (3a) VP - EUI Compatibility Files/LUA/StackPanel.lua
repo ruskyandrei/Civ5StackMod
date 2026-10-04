@@ -19,6 +19,11 @@ local rosterDismissed = false
 local dismissedOwner, dismissedUnitID
 local rowInstances, rowByID = {}, {}
 local displayedRowCount = 0
+-- Read-only roster for another player's stack under the cursor.
+local foreignInstances, foreignPlot, rosterPlot = {}, nil, nil
+-- Where the own roster was last placed; the foreign roster sits beside it.
+local panelX, panelOffsetY, panelHeight
+local healthWidth = 62
 local width = math.max(260, setting("UIStackRosterWidth", 360))
 local rowHeight = math.max(32, setting("UIStackRosterRowHeight", 38))
 local maxHeight = math.max(rowHeight, setting("UIStackRosterMaximumHeight", 430))
@@ -147,8 +152,9 @@ local function layoutPanel()
     Controls.StackScroll:SetHide(collapsed)
     Controls.StackSummary:SetHide(status == "")
     Controls.StackSummary:SetOffsetVal(16, scrollY + height + 8)
-    Controls.StackPanel:SetSizeVal(width, scrollY + height + footerSpace)
-    Controls.StackPanel:SetOffsetVal(math.min(setting("UIStackRosterOffsetX", 110), math.max(0, screenX - width)), offsetY)
+    panelX, panelOffsetY, panelHeight = math.min(setting("UIStackRosterOffsetX", 110), math.max(0, screenX - width)), offsetY, scrollY + height + footerSpace
+    Controls.StackPanel:SetSizeVal(width, panelHeight)
+    Controls.StackPanel:SetOffsetVal(panelX, offsetY)
     Controls.StackToggle:SetSizeX(width - 140)
 end
 
@@ -294,9 +300,66 @@ local function startQuick(unit)
     refreshNeeded = true
     updateHover()
 end
+-- Green at full health through yellow at half to red near death.
+local function healthColor(fraction)
+    fraction = math.max(0, math.min(1, fraction))
+    if fraction >= 0.5 then return Vector4((1 - fraction) * 2, 1, 0, 1) end
+    return Vector4(1, fraction * 2, 0, 1)
+end
+local function fillRow(instance, unit, highlight)
+    instance.Row:SetSizeVal(width - 42, rowHeight)
+    instance.Name:SetTruncateWidth(width - 95)
+    instance.Detail:SetTruncateWidth(width - 101 - healthWidth)
+    local hp, maxHP = unit:GetCurrHitPoints(), unit:GetMaxHitPoints()
+    local moves = unit:MovesLeft() / GameDefines.MOVE_DENOMINATOR
+    instance.Name:SetText((highlight and "[COLOR_YELLOW]" or "") .. unit:GetName() .. (highlight and "[ENDCOLOR]" or ""))
+    local fraction = maxHP > 0 and hp / maxHP or 0
+    instance.HealthBar:SetPercent(fraction)
+    instance.HealthBar:SetFGColor(healthColor(fraction))
+    instance.HealthText:SetText(hp .. "/" .. maxHP)
+    instance.Detail:SetText(string.format("%.1f[ICON_MOVES]  %s", moves, roleText(unit)))
+    local nameHeight = instance.Name:GetSizeY() or 20
+    local detailHeight = math.max(instance.Detail:GetSizeY() or 18, 16)
+    local detailY = 4 + nameHeight + 2
+    instance.Health:SetOffsetVal(42, detailY + 1)
+    instance.Detail:SetOffsetVal(42 + healthWidth + 6, detailY)
+    -- The XML row-height setting is a minimum; never clip either rendered line.
+    rowHeight = math.max(rowHeight, detailY + detailHeight + 6, 32 + 8)
+    instance.Row:SetToolTipString(unit:GetName() .. "[NEWLINE]" .. roleText(unit) .. "[NEWLINE]" ..
+        hp .. "/" .. maxHP .. " HP; " .. string.format("%.1f", moves) .. " movement remaining")
+    -- Unit portrait atlases do not necessarily contain a 32px sheet. Flag atlases
+    -- do, and use the same icons as the map flags. Cache the hookup per row.
+    local ownerID = unit:GetOwner()
+    local flagIndex, flagAtlas = UI.GetUnitFlagIcon(unit)
+    local iconKey = tostring(flagIndex) .. ":" .. tostring(flagAtlas) .. ":" .. ownerID
+    if instance.StackIconKey ~= iconKey then
+        IconHookup(flagIndex, 32, flagAtlas, instance.Portrait)
+        local iconColor = Players[ownerID]:GetPlayerColors()
+        instance.Portrait:SetColor(iconColor)
+        instance.StackIconKey = iconKey
+    end
+end
+local function capacityText(plot, units)
+    local land, sea, support, landCap, seaCap = 0, 0, 0, nil, nil
+    for _, unit in ipairs(units) do
+        if unit:GetStackRoleInfo().CountsTowardCapacity and unit:GetDomainType() == DomainTypes.DOMAIN_LAND then
+            land = land + 1; landCap = unit:GetStackingLimit(plot)
+        elseif unit:GetStackRoleInfo().CountsTowardCapacity and unit:GetDomainType() == DomainTypes.DOMAIN_SEA then
+            sea = sea + 1; seaCap = unit:GetStackingLimit(plot)
+        else support = support + 1 end
+    end
+    local capacity = {}
+    if landCap then capacity[#capacity + 1] = "Land " .. land .. "/" .. landCap end
+    if seaCap then capacity[#capacity + 1] = "Sea " .. sea .. "/" .. seaCap end
+    if support > 0 then capacity[#capacity + 1] = "Other " .. support end
+    local cityProtection = (#units > 0 and units[1]:GetStackRoleInfo().CityProtection) or 0
+    if plot:IsCity() and cityProtection > 0 then capacity[#capacity + 1] = cityProtection .. "% collateral protection" end
+    return table.concat(capacity, "  |  ")
+end
 local function buildRows()
     local screenWidth = UIManager:GetScreenSizeVal()
     width = math.min(math.max(260, setting("UIStackRosterWidth", 360)), math.max(260, screenWidth - 20))
+    rosterPlot = nil
     if inCityScreen or rosterDismissed then Controls.StackPanel:SetHide(true); return end
     local selected = UI.GetHeadSelectedUnit()
     if not selected and inspectPlot then
@@ -311,22 +374,9 @@ local function buildRows()
     local list = members(plot, false)
     if #list < 2 and not active and not pending then Controls.StackPanel:SetHide(true); return end
     Controls.StackPanel:SetHide(false)
+    rosterPlot = plot
     local own = members(plot, true)
-    local land, sea, support, landCap, seaCap = 0, 0, 0, nil, nil
-    for _, unit in ipairs(own) do
-        if unit:GetStackRoleInfo().CountsTowardCapacity and unit:GetDomainType() == DomainTypes.DOMAIN_LAND then
-            land = land + 1; landCap = unit:GetStackingLimit(plot)
-        elseif unit:GetStackRoleInfo().CountsTowardCapacity and unit:GetDomainType() == DomainTypes.DOMAIN_SEA then
-            sea = sea + 1; seaCap = unit:GetStackingLimit(plot)
-        else support = support + 1 end
-    end
-    local capacity = {}
-    if landCap then capacity[#capacity + 1] = "Land " .. land .. "/" .. landCap end
-    if seaCap then capacity[#capacity + 1] = "Sea " .. sea .. "/" .. seaCap end
-    if support > 0 then capacity[#capacity + 1] = "Other " .. support end
-    local cityProtection = (#own > 0 and own[1]:GetStackRoleInfo().CityProtection) or 0
-    if plot:IsCity() and cityProtection > 0 then capacity[#capacity + 1] = cityProtection .. "% collateral protection" end
-    Controls.StackCapacity:SetText(table.concat(capacity, "  |  "))
+    Controls.StackCapacity:SetText(capacityText(plot, own))
     Controls.StackTitle:SetText((collapsed and "[ICON_PLUS] " or "[ICON_MINUS] ") .. "Stack: " .. #list .. " units")
     Controls.StackMove:SetHide(#own < moveMinimum or plot ~= selected:GetPlot())
     Controls.StackMove:SetDisabled(not player():IsTurnActive())
@@ -340,23 +390,7 @@ local function buildRows()
             ContextPtr:BuildInstanceForControl("StackMember", instance, Controls.StackRows)
             rowInstances[i] = instance
         else instance.Row:ChangeParent(Controls.StackRows) end
-        instance.Row:SetSizeVal(width - 42, rowHeight)
-        instance.Name:SetTruncateWidth(width - 95)
-        instance.Detail:SetTruncateWidth(width - 95)
-        local hp = unit:GetCurrHitPoints()
-        local moves = unit:MovesLeft() / GameDefines.MOVE_DENOMINATOR
-        local isSelected = unit:GetOwner() == selected:GetOwner() and unit:GetID() == selected:GetID()
-        instance.Name:SetText((isSelected and "[COLOR_YELLOW]" or "") .. unit:GetName() ..
-            (isSelected and "[ENDCOLOR]" or ""))
-        instance.Detail:SetText(string.format("%d/%d HP  %s[ICON_MOVES]  %s", hp, unit:GetMaxHitPoints(),
-            string.format("%.1f", moves), roleText(unit)))
-        local nameHeight = instance.Name:GetSizeY() or 20
-        local detailHeight = instance.Detail:GetSizeY() or 18
-        instance.Detail:SetOffsetVal(42, 4 + nameHeight + 2)
-        -- The XML row-height setting is a minimum; never clip either rendered line.
-        rowHeight = math.max(rowHeight, 4 + nameHeight + 2 + detailHeight + 6, 32 + 8)
-        instance.Row:SetToolTipString(unit:GetName() .. "[NEWLINE]" .. roleText(unit) .. "[NEWLINE]" ..
-            hp .. "/" .. unit:GetMaxHitPoints() .. " HP; " .. string.format("%.1f", moves) .. " movement remaining")
+        fillRow(instance, unit, unit:GetOwner() == selected:GetOwner() and unit:GetID() == selected:GetID())
         local unitID, ownerID = unit:GetID(), unit:GetOwner()
         instance.Row:SetDisabled(ownerID ~= Game.GetActivePlayer())
         instance.Row:RegisterCallback(Mouse.eLClick, function()
@@ -367,16 +401,6 @@ local function buildRows()
             status = ""
             refreshNeeded = true
         end)
-        -- Unit portrait atlases do not necessarily contain a 32px sheet. Flag atlases
-        -- do, and use the same icons as the map flags. Cache the hookup per row.
-        local flagIndex, flagAtlas = UI.GetUnitFlagIcon(unit)
-        local iconKey = tostring(flagIndex) .. ":" .. tostring(flagAtlas) .. ":" .. ownerID
-        if instance.StackIconKey ~= iconKey then
-            IconHookup(flagIndex, 32, flagAtlas, instance.Portrait)
-            local iconColor = Players[ownerID]:GetPlayerColors()
-            instance.Portrait:SetColor(iconColor)
-            instance.StackIconKey = iconKey
-        end
         if ownerID == Game.GetActivePlayer() then rowByID[unitID] = instance end
     end
     displayedRowCount = #list
@@ -386,6 +410,73 @@ local function buildRows()
     Controls.StackSummary:SetText(status)
     layoutPanel()
     if active then updateHover() end
+end
+-- Hovering another player's visible stack shows its units beside the own roster,
+-- bottom-aligned with it so both rise together above the combat preview.
+local function hideForeign()
+    if foreignPlot then Controls.ForeignStackPanel:SetHide(true) end
+    foreignPlot = nil
+end
+local function updateForeign()
+    if inCityScreen or setting("UIStackEnabled", 1) == 0 then hideForeign(); return end
+    local plot = Map.GetPlot(UI.GetMouseOverHex())
+    local list, owners, owner = {}, 0, nil
+    if plot and plot ~= rosterPlot then
+        for _, unit in ipairs(members(plot, false)) do
+            if unit:GetOwner() ~= Game.GetActivePlayer() then
+                list[#list + 1] = unit
+                if unit:GetOwner() ~= owner then owners = owners + 1; owner = unit:GetOwner() end
+            end
+        end
+    end
+    if #list < 2 then hideForeign(); return end
+    foreignPlot = plot
+    local name = "Stack"
+    if owners == 1 and Players[owner].GetCivilizationShortDescription then
+        name = Players[owner]:GetCivilizationShortDescription()
+    end
+    local atWar = owners == 1 and Teams[Game.GetActiveTeam()]:IsAtWar(Players[owner]:GetTeam())
+    Controls.ForeignStackTitle:SetText((atWar and "[COLOR_NEGATIVE_TEXT]" or "") .. name .. ": " .. #list .. " units" ..
+        (atWar and "[ENDCOLOR]" or ""))
+    Controls.ForeignStackCapacity:SetWrapWidth(width - 34)
+    Controls.ForeignStackCapacity:SetText(owners == 1 and capacityText(plot, list) or "")
+    for _, instance in ipairs(foreignInstances) do instance.Row:ChangeParent(Controls.StackScrap) end
+    for i, unit in ipairs(list) do
+        local instance = foreignInstances[i]
+        if not instance then
+            instance = {}
+            ContextPtr:BuildInstanceForControl("StackMember", instance, Controls.ForeignStackRows)
+            instance.Row:SetDisabled(true)
+            foreignInstances[i] = instance
+        else instance.Row:ChangeParent(Controls.ForeignStackRows) end
+        fillRow(instance, unit, false)
+    end
+    for i = 1, #list do foreignInstances[i].Row:SetSizeVal(width - 42, rowHeight) end
+    Controls.ForeignStackRows:CalculateSize()
+    Controls.ForeignStackRows:ReprocessAnchoring()
+    local screenX, screenY = UIManager:GetScreenSizeVal()
+    local scrollY = 44 + (Controls.ForeignStackCapacity:GetSizeY() or 18) + 8
+    -- Always beside the own roster's place, shown or not, so the two never swap spots.
+    local ownShown = rosterPlot ~= nil and not Controls.StackPanel:IsHidden() and panelX ~= nil
+    local ownX = math.min(setting("UIStackRosterOffsetX", 110), math.max(0, screenX - width))
+    local x = ownX + width + 8
+    local offsetY = setting("UIStackRosterOffsetY", 220)
+    if combatPreviewVisible then offsetY = math.max(offsetY, combatPreviewTop + math.max(0, math.min(100, setting("UIStackCombatPreviewGap", 8)))) end
+    if ownShown then offsetY = panelOffsetY end
+    -- No room beside it on a narrow screen: sit above the own roster instead.
+    if x + width > screenX then
+        x = ownX
+        if ownShown then offsetY = panelOffsetY + panelHeight + 8 end
+    end
+    local available = screenY - offsetY - scrollY - 16 - 60
+    if available < rowHeight then hideForeign(); return end
+    local height = math.min(#list * (rowHeight + 2), maxHeight, available)
+    Controls.ForeignStackScroll:SetSizeVal(width - 24, height)
+    Controls.ForeignStackScroll:SetOffsetVal(12, scrollY)
+    Controls.ForeignStackScroll:CalculateInternalSize()
+    Controls.ForeignStackPanel:SetSizeVal(width, scrollY + height + 16)
+    Controls.ForeignStackPanel:SetOffsetVal(x, offsetY)
+    Controls.ForeignStackPanel:SetHide(false)
 end
 -- Diagnostics is independent of the selected stack and starts no Lua observer.
 -- A standalone control avoids hidden EUI dropdowns and listener-order dependencies.
@@ -574,11 +665,12 @@ LuaEvents.StackCombatPreviewBounds.Add(function(hidden, x, top)
     refreshNeeded = true
 end)
 Events.SerialEventMouseOverHex.Add(updateHover)
+Events.SerialEventMouseOverHex.Add(updateForeign)
 Events.SerialEventUnitInfoDirty.Add(function() refreshNeeded = true end)
 Events.UnitVisibilityChanged.Add(function() refreshNeeded = true end)
 Events.UnitStateChangeDetected.Add(function() refreshNeeded = true end)
 Events.HexFOWStateChanged.Add(function() refreshNeeded = true end)
-Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); stopQuick(); refreshNeeded = true end)
+Events.SerialEventEnterCityScreen.Add(function() inCityScreen = true; closeDiagnostics(); updateDiagnosticsAccess(); stopMode(); stopQuick(); hideForeign(); refreshNeeded = true end)
 Events.SerialEventExitCityScreen.Add(function() inCityScreen = false; updateDiagnosticsAccess(); refreshNeeded = true end)
 Events.UnitSelectionChanged.Add(function(ownerID, unitID, x, y, z, isSelected)
     if isSelected and (not rosterDismissed or ownerID ~= dismissedOwner or unitID ~= dismissedUnitID) then
@@ -617,6 +709,8 @@ ContextPtr:SetUpdate(function(delta)
         buildRows()
         -- Also when the roster itself is hidden or dismissed.
         if quick then updateHover() end
+        -- Health, deaths and the own roster's position all move the foreign roster.
+        if foreignPlot then updateForeign() end
     end
     if pending then
         pending.elapsed = pending.elapsed + delta
