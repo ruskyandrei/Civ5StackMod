@@ -39926,10 +39926,11 @@ bool CvPlayer::HasResourceForNewUnit(const UnitTypes eUnit, const bool bNoRequir
 	CvString strTotalResources;
 	CvString strNetNegResources;
 
-	const std::vector<int>* resourceIDs = pUnitInfo->GetResourceQuantityCheckIDs();
-	for (int iResourceCheck = 0; iResourceCheck < (resourceIDs ? (int)resourceIDs->size() : GC.getNumResourceInfos()); iResourceCheck++)
+	// only resources with a positive requirement or total can fail the checks below
+	const std::vector<int>& vResourceIDs = pUnitInfo->GetResourceQuantityCheckIDs();
+	for (std::vector<int>::const_iterator it = vResourceIDs.begin(); it != vResourceIDs.end(); ++it)
 	{
-		const int iResourceLoop = resourceIDs ? (*resourceIDs)[iResourceCheck] : iResourceCheck;
+		const int iResourceLoop = *it;
 		const ResourceTypes eResource = static_cast<ResourceTypes>(iResourceLoop);
 
 		int iResourceTotal = pUnitInfo->GetResourceQuantityTotal(eResource);

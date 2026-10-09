@@ -6034,10 +6034,12 @@ Localization::String CvGame::GetDiploResponse(const char* szLeader, const char* 
 				{
 					response = Localization::Lookup(probabilities[choice].c_str());
 					response << strOptionalKey1 << strOptionalKey2;
+					delete tempDatabase;
 					return response;
 				}
 			}
 		}
+		delete tempDatabase;
 	}
 
 	ASSERT(totbias == 0);

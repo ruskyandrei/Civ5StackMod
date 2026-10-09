@@ -16382,21 +16382,6 @@ int CvUnit::GetGenericMeleeStrengthModifier(const CvUnit* pOtherUnit, const CvPl
 	return result;
 }
 
-// Combat strength code runs millions of times per AI turn; a string lookup
-// per call cost about a fifth of uncached tactical search time. Info type
-// IDs are fixed once the database is loaded.
-static UnitCombatTypes MountedUnitCombatType()
-{
-	static UnitCombatTypes eMounted = NO_UNITCOMBAT;
-	static bool bResolved = false;
-	if (!bResolved)
-	{
-		eMounted = static_cast<UnitCombatTypes>(GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true));
-		bResolved = GC.getNumUnitCombatClassInfos() > 0;
-	}
-	return eMounted;
-}
-
 int CvUnit::GetGenericMeleeStrengthModifierUncached(const CvUnit* pOtherUnit, const CvPlot* pBattlePlot, bool bAttacking,
 				bool bIgnoreUnitAdjacencyBoni, const CvPlot* pFromPlot, bool bQuickAndDirty) const
 {
@@ -16686,7 +16671,7 @@ int CvUnit::GetGenericMeleeStrengthModifierUncached(const CvUnit* pOtherUnit, co
 			int iTempModifier = unitCombatModifier(combatType);
 
 			//hack: mounted units can have secondary combat class
-			UnitCombatTypes mountedCombat = MountedUnitCombatType();
+			UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 			if (pOtherUnit->getUnitInfo().IsMounted() && combatType != mountedCombat)
 				iTempModifier += unitCombatModifier(mountedCombat);
 
@@ -16927,7 +16912,7 @@ int CvUnit::GetMaxAttackStrengthUncached(const CvPlot* pFromPlot, const CvPlot* 
 			int iTempModifier = getExtraUnitCombatModifierAttack(combatType);
 
 			//hack: mounted units can have secondary combat class
-			UnitCombatTypes mountedCombat = MountedUnitCombatType();
+			UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 			if (pDefender->getUnitInfo().IsMounted() && combatType != mountedCombat)
 				iTempModifier += getExtraUnitCombatModifierAttack(mountedCombat);
 
@@ -17131,7 +17116,7 @@ int CvUnit::GetMaxDefenseStrengthUncached(const CvPlot* pInPlot, const CvUnit* p
 			int iTempModifier = getExtraUnitCombatModifierDefense(combatType);
 
 			//hack: mounted units can have secondary combat class
-			UnitCombatTypes mountedCombat = MountedUnitCombatType();
+			UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 			if (pAttacker->getUnitInfo().IsMounted() && combatType != mountedCombat)
 				iTempModifier += getExtraUnitCombatModifierDefense(mountedCombat);
 
@@ -17640,7 +17625,7 @@ int CvUnit::GetMaxRangedCombatStrengthUncached(const CvUnit* pOtherUnit, const C
 			int iTempModifier = unitCombatModifier(eUnitCombat);
 			if (pOtherUnit->getUnitInfo().IsMounted())
 			{
-				static UnitCombatTypes eMountedCombat = (UnitCombatTypes) GC.getInfoTypeForString("UNITCOMBAT_MOUNTED", true);
+				UnitCombatTypes eMountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 				if (eMountedCombat != eUnitCombat)
 					iTempModifier += unitCombatModifier(eMountedCombat);
 			}
@@ -17727,7 +17712,7 @@ int CvUnit::GetMaxRangedCombatStrengthUncached(const CvUnit* pOtherUnit, const C
 				int iTempModifier = getExtraUnitCombatModifierAttack(combatType);
 
 				//hack: mounted units can have secondary combat class
-				UnitCombatTypes mountedCombat = MountedUnitCombatType();
+				UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 				if (pOtherUnit->getUnitInfo().IsMounted() && combatType != mountedCombat)
 					iTempModifier += getExtraUnitCombatModifierAttack(mountedCombat);
 
@@ -17751,7 +17736,7 @@ int CvUnit::GetMaxRangedCombatStrengthUncached(const CvUnit* pOtherUnit, const C
 				int iTempModifier = getExtraUnitCombatModifierDefense(combatType);
 
 				//hack: mounted units can have secondary combat class
-				UnitCombatTypes mountedCombat = MountedUnitCombatType();
+				UnitCombatTypes mountedCombat = (UnitCombatTypes)GD_INT_GET(UNITCOMBAT_MOUNTED);
 				if (pOtherUnit->getUnitInfo().IsMounted() && combatType != mountedCombat)
 					iTempModifier += getExtraUnitCombatModifierDefense(mountedCombat);
 

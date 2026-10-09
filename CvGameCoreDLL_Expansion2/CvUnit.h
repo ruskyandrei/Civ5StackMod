@@ -227,7 +227,7 @@ struct SUnitIDValueContainer
 			}
 			else
 			{
-				// promote to vector; one allocation covers the common small stacks
+				// promote to vector; one allocation covers the common small cases
 				m_aExtraStorage.reserve(4);
 				m_aExtraStorage.push_back(std::make_pair(m_iUnitID, m_iValue));
 				m_aExtraStorage.push_back(std::make_pair(iUnitID, iChange));
@@ -269,7 +269,7 @@ struct SUnitIDValueContainer
 			}
 			else
 			{
-				// promote to vector; one allocation covers the common small stacks
+				// promote to vector; one allocation covers the common small cases
 				m_aExtraStorage.reserve(4);
 				m_aExtraStorage.push_back(std::make_pair(m_iUnitID, m_iValue));
 				m_aExtraStorage.push_back(std::make_pair(iUnitID, iValue));
@@ -918,7 +918,7 @@ public:
 	bool isDefending() const;
 	bool isInCombat() const;
 
-	// Inline: called millions of times per turn from other translation units.
+	// Inline: called very often from other translation units.
 	int GetMaxHitPoints() const
 	{
 		VALIDATE_OBJECT();

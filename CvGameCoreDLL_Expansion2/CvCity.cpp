@@ -22627,7 +22627,7 @@ int CvCity::getBaseYieldRateModifier(YieldTypes eIndex, int iAssumedExtraModifie
 		if (HasBuilding(*it))
 		{
 			CvBuildingEntry* pkBuildingInfo = GC.getBuildingInfo(*it);
-			std::map<int, std::map<int, int>> m_BuildingModifiersFromAccomplishments = pkBuildingInfo->GetYieldModifiersFromAccomplishments();
+			const std::map<int, std::map<int, int>>& m_BuildingModifiersFromAccomplishments = pkBuildingInfo->GetYieldModifiersFromAccomplishments();
 			for (std::map<int, std::map<int, int>>::const_iterator it2 = m_BuildingModifiersFromAccomplishments.begin(); it2 != m_BuildingModifiersFromAccomplishments.end(); ++it2)
 			{
 				int iNumTimesAccomplishmentCompleted = GET_PLAYER(getOwner()).GetNumTimesAccomplishmentCompleted((AccomplishmentTypes)(*it2).first);

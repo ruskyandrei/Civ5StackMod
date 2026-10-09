@@ -937,6 +937,9 @@ void UpdateNodeCacheData(CvAStarNode* node, const CvUnit* pUnit, const CvAStar* 
 	}
 	CvStackingDiagnostics::CountPathNodeCache(false); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
 
+	//a new search may have a different unit, so forget the end turn danger
+	kToNodeCacheData.bEndTurnDangerKnown = false;
+
 	const CvPlot* pPlot = GC.getMap().plotUnchecked(node->m_iX, node->m_iY);
 	TeamTypes eUnitTeam = pUnit->getTeam();
 	CvTeam& kUnitTeam = GET_TEAM(eUnitTeam);
@@ -1295,11 +1298,17 @@ int PathEndTurnCost(CvPlot* pToPlot, const CvPathNodeCacheData& kToNodeCacheData
 		if (!pToPlot->isVisible(eUnitTeam))
 			iCost += PATH_END_TURN_INVISIBLE_WEIGHT;
 
-		//calculcate danger. this is expensive but the last result is cached for each plot
+		//calculcate danger. this is expensive, so compute it once per plot per search
+		//every route which ends the turn here sees the same danger
 		//note: it includes an overkill factor because usually not all enemy units will attack this one unit
-		CvStackingDiagnostics::PathProfileScope dangerProfile(CvStackingDiagnostics::PATH_RAW_DANGER,pUnit,pToPlot); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
-		int iPlotDanger = pUnit->GetDanger(pToPlot);
-		dangerProfile.Finish(); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
+		if (!kToNodeCacheData.bEndTurnDangerKnown)
+		{
+			CvStackingDiagnostics::PathProfileScope dangerProfile(CvStackingDiagnostics::PATH_RAW_DANGER,pUnit,pToPlot); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
+			kToNodeCacheData.iEndTurnDanger = pUnit->GetDanger(pToPlot);
+			dangerProfile.Finish(); // PATH_QUERY_PROFILE_DIAGNOSTIC_ONLY
+			kToNodeCacheData.bEndTurnDangerKnown = true;
+		}
+		int iPlotDanger = kToNodeCacheData.iEndTurnDanger;
 
 		//we should give more weight to the first end-turn plot, the danger values for future stops are less concrete
 		int iFutureFactor = std::max(1,4-iTurnsInFuture);
@@ -3054,6 +3063,7 @@ bool CvTwoLayerPathFinder::AddStopNodeIfRequired(const CvAStarNode* current, con
 		//we sort the nodes by total cost!
 		pStopNode->m_iTotalCost = pStopNode->m_iKnownCost*giKnownCostWeight + pStopNode->m_iHeuristicCost*giHeuristicCostWeight;
 		pStopNode->m_pParent = current->m_pParent;
+		//this also copies the end turn danger, which is fine because it's the same plot
 		pStopNode->m_kCostCacheData = current->m_kCostCacheData;
 		pStopNode->m_bIsStopNode = true;
 		

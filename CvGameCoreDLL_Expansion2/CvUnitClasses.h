@@ -220,7 +220,8 @@ public:
 	int* GetUnitNewEraPromotionsChangesArray(int i);
 
 	int GetResourceQuantityTotal(int i) const;
-	const std::vector<int>* GetResourceQuantityCheckIDs() const;
+	void CacheResourceQuantityCheckIDs();
+	const std::vector<int>& GetResourceQuantityCheckIDs() const;
 
 	bool GetFreePromotions(int i) const;
 
@@ -418,10 +419,7 @@ private:
 	int** m_ppiEraUnitPromotions;
 
 	std::map<int, int> m_piResourceQuantityTotals;
-	// Derived immutable metadata; NULL getter fallback until fully loaded.
-	std::vector<int> m_vResourceQuantityCheckIDs;
-	int m_iResourceQuantityCheckInfoCount;
-	void CacheResourceQuantityCheckIDs();
+	std::vector<int> m_viResourceQuantityCheckIDs;
 
 	bool* m_pbFreePromotions;
 

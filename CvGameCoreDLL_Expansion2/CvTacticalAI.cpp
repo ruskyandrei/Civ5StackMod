@@ -14077,7 +14077,7 @@ bool CvTacticalPosition::addTacticalPlot(const CvPlot* pPlot, const vector<const
 		return false; 
 
 	//cannot process more than this
-	if (tactPlots.read().size() == 255)
+	if (tactPlots.read().size() == MAX_TACT_PLOTS)
 		return false;
 
 	CvTacticalPlot newPlot(pPlot, ePlayer, allOurUnits);
@@ -14656,7 +14656,7 @@ void CvSupportPosition::getPreferredAssignmentsForUnit(const SUnitStats& unit, i
 	//don't return more than requested unless there is a tie
 	if (gPossibleMoves.size() > (size_t)nMaxCount)
 	{
-		while (gPossibleMoves[nMaxCount].score == gPossibleMoves[nMaxCount - 1].score && (size_t)nMaxCount < gPossibleMoves.size())
+		while ((size_t)nMaxCount < gPossibleMoves.size() && gPossibleMoves[nMaxCount].score == gPossibleMoves[nMaxCount - 1].score)
 			nMaxCount++;
 
 		gPossibleMoves.erase(gPossibleMoves.begin() + nMaxCount, gPossibleMoves.end());
@@ -15666,6 +15666,12 @@ vector<STacticalAssignment> TacticalAIHelpers::FindBestUnitAssignments(
 		return result;
 
 	initialPosition->initFromScratch(ePlayer, eAggLvl, pTarget, bTargetDistanceRelevant, bReturnToStartPositions, iSaveMovement);
+
+	//the initial position absorbs all the tactical plots (up to the hard cap)
+	//in the passes below; reserve up front so the setup never reallocates.
+	//under address-space exhaustion the reallocation copy is exactly what
+	//fails (see issue #13254). child positions copy exact-size and stay lean.
+	initialPosition->reservePlotStorage();
 
 	//first pass: make sure there are no duplicates and other invalid inputs
 	vector<const CvUnit*> ourUnits;
