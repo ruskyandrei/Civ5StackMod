@@ -10,7 +10,7 @@ import argparse, hashlib, json, re, shutil, subprocess, sys, zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-STAGE = ROOT / 'work/staging/vp-5.4.6-full-eui'
+STAGE = ROOT / 'work/staging/vp-5.4.7-full-eui'
 OUT = ROOT / 'work/release'
 PDB = 'user-data/MODS/(1) Community Patch/CvGameCore_Expansion2.pdb'
 DOCS = ['docs/stacking-playing.md', 'docs/stacking-configuration.md']

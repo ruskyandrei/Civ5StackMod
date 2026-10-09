@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $script:ProjectRoot = [IO.Path]::GetFullPath('E:\Projects\Civ5StackMod')
 $script:WorkRoot = Join-Path $script:ProjectRoot 'work'
-$script:StageRoot = Join-Path $script:WorkRoot 'staging\vp-5.4.6-full-eui'
+$script:StageRoot = Join-Path $script:WorkRoot 'staging\vp-5.4.7-full-eui'
 $script:UserDataRoot = "C:\Users\rusit\Documents\My Games\Sid Meier's Civilization 5"
 $script:GameRoot = "E:\SteamLibrary\steamapps\common\Sid Meier's Civilization V"
 $script:ModNames = @('(1) Community Patch','(2) Vox Populi','(3a) VP - EUI Compatibility Files','(4a) Squads for VP','(5) Modpack Maker for VP')
@@ -116,11 +116,11 @@ function Get-ValidatedStage {
     Assert-NoReparsePoints $script:StageRoot -Tree
     $path = Join-Path $script:StageRoot 'deploy-manifest.json'
     $manifest = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if ($manifest.schema -ne 1 -or $manifest.version -ne '5.4.6' -or $manifest.component -ne 'FullEUI') { throw 'Wrong staging manifest version/component.' }
+    if ($manifest.schema -ne 1 -or $manifest.version -ne '5.4.7' -or $manifest.component -ne 'FullEUI') { throw 'Wrong staging manifest version/component.' }
     if ($manifest.source_commit -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Invalid staging source commit.' }
     # Local implementation checkpoints must retain the verified upstream release.
-    & git -C $script:ProjectRoot merge-base --is-ancestor dcb33a654cd9e8efb038a0733b4025e19cbcd8ba $manifest.source_commit
-    if ($LASTEXITCODE -ne 0) { throw 'Staged source is not a descendant of the verified VP 5.4.6 release.' }
+    & git -C $script:ProjectRoot merge-base --is-ancestor 44c1e14ff75d80c1dba5c8a71e8289439a53aafb $manifest.source_commit
+    if ($LASTEXITCODE -ne 0) { throw 'Staged source is not a descendant of the verified VP 5.4.7 release.' }
     & git -C $script:ProjectRoot merge-base --is-ancestor $manifest.source_commit HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Staged source is not part of the current project history.' }
     Assert-SamePath $manifest.stage_root $script:StageRoot

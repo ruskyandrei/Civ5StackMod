@@ -1,5 +1,5 @@
 <#
-Deploy staged VP 5.4.6 FullEUI after verifying hashes and the initial backup.
+Deploy staged VP 5.4.7 FullEUI after verifying hashes and the initial backup.
 Must run with the game closed and adequate permissions for both installation roots.
 All replaced content is moved to a new project archive; no recursive deletes occur.
 Use -ValidateOnly for a read-only preflight. This script never touches saves.
@@ -71,7 +71,7 @@ try {
         if (-not [regex]::IsMatch($configText, '(?m)^'+[regex]::Escape($flag)+'[ \t]*=[ \t]*1[ \t]*\r?$')) { throw "Logging setting verification failed: $flag" }
     }
     Write-JsonFile (Join-Path $archive 'installed-files.json') $installedRecords
-    $report = [pscustomobject]@{Status='deployed_and_hash_verified';TimeUTC=[DateTime]::UtcNow.ToString('o');Version='5.4.6';Files=$installedRecords.Count;DLL_SHA256=$stage.DLL.SHA256;PDB_SHA256=$stage.PDB.SHA256;ReplacementArchive=$archive;InitialBackup=$initial.Root;GraphicsSettingsUnchanged=$true;SavesTouched=$false;KnownUpstreamMissingActions=$stage.Manifest.known_upstream_missing_actions_preserved}
+    $report = [pscustomobject]@{Status='deployed_and_hash_verified';TimeUTC=[DateTime]::UtcNow.ToString('o');Version='5.4.7';Files=$installedRecords.Count;DLL_SHA256=$stage.DLL.SHA256;PDB_SHA256=$stage.PDB.SHA256;ReplacementArchive=$archive;InitialBackup=$initial.Root;GraphicsSettingsUnchanged=$true;SavesTouched=$false;KnownUpstreamMissingActions=$stage.Manifest.known_upstream_missing_actions_preserved}
     Write-JsonFile (Join-Path $archive 'result.json') $report
     [IO.File]::WriteAllText((Join-Path $script:WorkRoot 'last-deployment-path.txt'), $archive, (New-Object Text.UTF8Encoding($false)))
     Add-Journal 'completed' $script:StageRoot $archive

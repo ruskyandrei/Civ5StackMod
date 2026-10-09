@@ -1,4 +1,4 @@
-﻿"""Stage the exact VP 5.4.6 FullEUI payload without touching the installation.
+﻿"""Stage the exact VP 5.4.7 FullEUI payload without touching the installation.
 
 Uses released modinfo metadata and validates its file/import list against civ5proj.
 Only staged copies of file checksums are updated. Upstream source stays untouched.
@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 sys.dont_write_bytecode = True
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / 'work'
-STAGE = WORK / 'staging' / 'vp-5.4.6-full-eui'
+STAGE = WORK / 'staging' / 'vp-5.4.7-full-eui'
 MODS = [
     '(1) Community Patch', '(2) Vox Populi',
     '(3a) VP - EUI Compatibility Files', '(4a) Squads for VP',
@@ -26,8 +26,8 @@ MODS = [
 USER_ROOT = Path(r"C:\Users\rusit\Documents\My Games\Sid Meier's Civilization 5")
 GAME_ROOT = Path(r"E:\SteamLibrary\steamapps\common\Sid Meier's Civilization V")
 DLL_REL = '(1) Community Patch/CvGameCore_Expansion2.dll'
-VERSION = '5.4.6'
-COMMIT = 'dcb33a654cd9e8efb038a0733b4025e19cbcd8ba'
+VERSION = '5.4.7'
+COMMIT = '44c1e14ff75d80c1dba5c8a71e8289439a53aafb'
 KNOWN_UPSTREAM_MISSING_ACTIONS = {
     '(1) Community Patch': ['Database Changes/Text/en_US/CoreGameOptionTextChanges.xml'],
 }

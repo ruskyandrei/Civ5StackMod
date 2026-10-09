@@ -7,7 +7,7 @@ bombardment, and an AI that plans and fights with stacks.
 
 This package is a complete, modified copy of Vox Populi (EUI version), built
 from https://github.com/ruskyandrei/Civ5StackMod at commit @COMMIT@.
-It is based on Vox Populi 5.4.6 plus the upstream changes up to @UPSTREAM@.
+It is based on Vox Populi 5.4.7 plus the upstream changes up to @UPSTREAM@.
 It replaces a normal Vox Populi installation; you cannot have both at once.
 
 Requirements
