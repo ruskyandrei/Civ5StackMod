@@ -125,6 +125,23 @@ local function roleText(unit)
     if role.CollateralTargets > 0 then parts[#parts + 1] = "Collateral " .. role.CollateralTargets end
     return table.concat(parts, ", ")
 end
+-- Members that fight for the tile. Civilians, cargo and aircraft never do, and
+-- ships in a city leave its defence to the land garrison.
+local function isCombatant(unit, plot)
+    if not unit:GetStackRoleInfo().CountsTowardCapacity then return false end
+    return not (plot and plot:IsCity() and unit:GetDomainType() == DomainTypes.DOMAIN_SEA)
+end
+-- Display order: per owner, combatants first, then support; IDs keep it stable.
+local function rosterOrder(list, plot)
+    local combatant = {}
+    for _, unit in ipairs(list) do combatant[unit] = isCombatant(unit, plot) end
+    table.sort(list, function(a, b)
+        if a:GetOwner() ~= b:GetOwner() then return a:GetOwner() < b:GetOwner() end
+        if combatant[a] ~= combatant[b] then return combatant[a] end
+        return a:GetID() < b:GetID()
+    end)
+    return list, combatant
+end
 -- Measure the wrapped labels rather than relying on a fixed footer allowance.
 -- Top anchoring avoids multiline labels extending below the panel's bottom edge.
 local function layoutPanel()
@@ -306,13 +323,16 @@ local function healthColor(fraction)
     if fraction >= 0.5 then return Vector4((1 - fraction) * 2, 1, 0, 1) end
     return Vector4(1, fraction * 2, 0, 1)
 end
-local function fillRow(instance, unit, highlight)
+-- Support rows are dimmed so the fighting members stand out.
+local function fillRow(instance, unit, highlight, support)
     instance.Row:SetSizeVal(width - 42, rowHeight)
+    instance.Row:SetAlpha(support and 0.55 or 1)
     instance.Name:SetTruncateWidth(width - 95)
     instance.Detail:SetTruncateWidth(width - 101 - healthWidth)
     local hp, maxHP = unit:GetCurrHitPoints(), unit:GetMaxHitPoints()
     local moves = unit:MovesLeft() / GameDefines.MOVE_DENOMINATOR
-    instance.Name:SetText((highlight and "[COLOR_YELLOW]" or "") .. unit:GetName() .. (highlight and "[ENDCOLOR]" or ""))
+    local nameColor = (highlight and "[COLOR_YELLOW]") or (support and "[COLOR_GREY]") or nil
+    instance.Name:SetText(nameColor and (nameColor .. unit:GetName() .. "[ENDCOLOR]") or unit:GetName())
     local fraction = maxHP > 0 and hp / maxHP or 0
     instance.HealthBar:SetPercent(fraction)
     instance.HealthBar:SetFGColor(healthColor(fraction))
@@ -326,7 +346,8 @@ local function fillRow(instance, unit, highlight)
     -- The XML row-height setting is a minimum; never clip either rendered line.
     rowHeight = math.max(rowHeight, detailY + detailHeight + 6, 32 + 8)
     instance.Row:SetToolTipString(unit:GetName() .. "[NEWLINE]" .. roleText(unit) .. "[NEWLINE]" ..
-        hp .. "/" .. maxHP .. " HP; " .. string.format("%.1f", moves) .. " movement remaining")
+        hp .. "/" .. maxHP .. " HP; " .. string.format("%.1f", moves) .. " movement remaining" ..
+        (support and "[NEWLINE]Not part of this tile's combat stack" or ""))
     -- Unit portrait atlases do not necessarily contain a 32px sheet. Flag atlases
     -- do, and use the same icons as the map flags. Cache the hookup per row.
     local ownerID = unit:GetOwner()
@@ -371,7 +392,7 @@ local function buildRows()
         return
     end
     local plot = active and source or inspectPlot or selected:GetPlot()
-    local list = members(plot, false)
+    local list, combatant = rosterOrder(members(plot, false), plot)
     if #list < 2 and not active and not pending then Controls.StackPanel:SetHide(true); return end
     Controls.StackPanel:SetHide(false)
     rosterPlot = plot
@@ -390,7 +411,7 @@ local function buildRows()
             ContextPtr:BuildInstanceForControl("StackMember", instance, Controls.StackRows)
             rowInstances[i] = instance
         else instance.Row:ChangeParent(Controls.StackRows) end
-        fillRow(instance, unit, unit:GetOwner() == selected:GetOwner() and unit:GetID() == selected:GetID())
+        fillRow(instance, unit, unit:GetOwner() == selected:GetOwner() and unit:GetID() == selected:GetID(), not combatant[unit])
         local unitID, ownerID = unit:GetID(), unit:GetOwner()
         instance.Row:SetDisabled(ownerID ~= Game.GetActivePlayer())
         instance.Row:RegisterCallback(Mouse.eLClick, function()
@@ -430,6 +451,8 @@ local function updateForeign()
         end
     end
     if #list < 2 then hideForeign(); return end
+    local combatant
+    list, combatant = rosterOrder(list, plot)
     foreignPlot = plot
     local name = "Stack"
     if owners == 1 and Players[owner].GetCivilizationShortDescription then
@@ -449,7 +472,7 @@ local function updateForeign()
             instance.Row:SetDisabled(true)
             foreignInstances[i] = instance
         else instance.Row:ChangeParent(Controls.ForeignStackRows) end
-        fillRow(instance, unit, false)
+        fillRow(instance, unit, false, not combatant[unit])
     end
     for i = 1, #list do foreignInstances[i].Row:SetSizeVal(width - 42, rowHeight) end
     Controls.ForeignStackRows:CalculateSize()
