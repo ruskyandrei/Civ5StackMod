@@ -214,9 +214,9 @@ In observer mode or during autoplay, click Diagnostics near the top center of th
 | DiagnosticsDetailInterval | 10 | 0–10000 | Verbose unit/city snapshots; 0 disables scheduled detail. |
 | DiagnosticsMemoryInterval | 10 | 0–10000 | Process virtual-memory sample once on matching turns; 0 disables. |
 | DiagnosticsPlayer | -1 | -1–63 | Player ID filter; -1 includes all. Session/configuration/memory records are global. |
-| DiagnosticsMaxFileKB | 4096 | 64–65536 | Maximum approximate size per rolling segment, including record overhead. |
-| DiagnosticsMaxFiles | 8 | 1–32 | Segments retained per loaded session; reuse overwrites the oldest segment. |
-| DiagnosticsMaxRowsPerTurn | 4096 | 32–65536 | Global event-row budget, followed by one TRUNCATED marker. Configuration headers are separate. |
+| DiagnosticsMaxFileKB | 32768 | 64–65536 | Maximum approximate size per rolling segment, including record overhead. |
+| DiagnosticsMaxFiles | 32 | 1–32 | Segments retained per loaded session; reuse overwrites the oldest segment. |
+| DiagnosticsMaxRowsPerTurn | 16384 | 32–65536 | Global event-row budget, followed by one TRUNCATED marker. Configuration headers are separate. |
 | DiagnosticsHistogramMaxStack | 32 | 1–256 | Final histogram bucket includes this size and all larger sizes. This does not limit legal stacks. |
 | DiagnosticsLongPlanThreshold | 256 | 0–10000 | Warn before an unusually long tactical history grows further; repeats at multiples. 0 disables. No action is blocked. |
 

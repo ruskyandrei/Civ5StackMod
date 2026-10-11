@@ -388,9 +388,9 @@ Logging only; no effect on the game. Off by default.
 | `AIAssaultObjectiveSummaryInterval` | 5 | Turns between assault objective summary records. |
 | `DiagnosticsLongPlanThreshold` | 256 | Warn when a tactical plan grows past this length. 0 disables. |
 | `DiagnosticsHistogramMaxStack` | 32 | Largest stack size with its own histogram bucket. |
-| `DiagnosticsMaxRowsPerTurn` | 4096 | Records per turn before output is truncated. |
-| `DiagnosticsMaxFileKB` | 4096 | Size of one log segment. |
-| `DiagnosticsMaxFiles` | 8 | Log segments kept per session. |
+| `DiagnosticsMaxRowsPerTurn` | 16384 | Records per turn before output is truncated. |
+| `DiagnosticsMaxFileKB` | 32768 | Size of one log segment. |
+| `DiagnosticsMaxFiles` | 32 | Log segments kept per session. |
 | `DiagnosticsBufferKB` | 64 | Write buffer size. |
 | `DiagnosticsFlushEveryRows` | 256 | Flush after this many records. |
 | `DiagnosticsFlushIntervalMilliseconds` | 1000 | Flush after this much time. 0 disables the timer. |

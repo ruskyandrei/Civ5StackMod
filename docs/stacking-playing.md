@@ -66,7 +66,7 @@ Aircraft keep their normal rebase commands. Cargo travels with an eligible carri
 
 In observer mode or during autoplay, click **Diagnostics** near the top center of the map. The control is available without selecting a unit or opening a stack roster, and hides during normal play. Choose **Off**, **Summary** or **Verbose**; the panel shows the current level and the native logger's status, including the log location or an output error. Escape or Close dismisses the panel.
 
-Logging defaults to Off. Summary records turn diagnostics; Verbose adds detail. This changes logging only and works during normal play or autoplay without injecting a Lua observer. Files use the normal Civ V Logs directory and rotate within configured limits (by default, eight segments of up to 4 MB). Turning logging off keeps files already written.
+Logging defaults to Off. Summary records turn diagnostics; Verbose adds detail. This changes logging only and works during normal play or autoplay without injecting a Lua observer. Files use the normal Civ V Logs directory and rotate within configured limits (by default, 32 segments of up to 32 MB). Turning logging off keeps files already written.
 
 The selection applies to the currently loaded game session. Returning to normal play hides the controls but keeps the chosen logging level. Loading or reopening a game restores the XML `DiagnosticsLevel` default, so check the level after loading. To enable logging during normal play without displaying a button, set that XML default to 1 or 2 before loading. Developer console equivalents are `Game.SetStackingDiagnosticsLevel(0)`, `(1)` or `(2)`, `Game.GetStackingDiagnosticsLevel()` and `Game.GetStackingDiagnosticsStatus()`.
 

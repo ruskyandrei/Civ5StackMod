@@ -221,9 +221,9 @@
     <Row Name="DiagnosticsDetailInterval" Value="10" />
     <Row Name="DiagnosticsMemoryInterval" Value="10" />
     <Row Name="DiagnosticsPlayer" Value="-1" />
-    <Row Name="DiagnosticsMaxFileKB" Value="4096" />
-    <Row Name="DiagnosticsMaxFiles" Value="8" />
-    <Row Name="DiagnosticsMaxRowsPerTurn" Value="4096" />
+    <Row Name="DiagnosticsMaxFileKB" Value="32768" />
+    <Row Name="DiagnosticsMaxFiles" Value="32" />
+    <Row Name="DiagnosticsMaxRowsPerTurn" Value="16384" />
     <Row Name="DiagnosticsHistogramMaxStack" Value="32" />
     <Row Name="DiagnosticsLongPlanThreshold" Value="256" />
     <Row Name="BaseCapacity" Value="2" />
