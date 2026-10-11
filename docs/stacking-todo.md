@@ -1,5 +1,34 @@
 # Stacking development TODO
 
+## Besieged garrisons attack late, alone and only adjacent — 2026-10-11
+
+Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`, T262,
+Japanese Atlanta): five Riflemen in a besieged city, no ranged unit.
+
+Today:
+- In a city in danger of falling, `CvStackingAI::CityRoster` retains up to
+  `AICityMaximumDefenders` (3) land units, melee unlimited. Retained units are
+  excluded from the tactical searches; the rest join normal tactical moves
+  (and may leave the city).
+- Retained defenders only get `TacticalAIHelpers::PerformOpportunityAttack`
+  (no movement) from `PlotGarrisonMoves`, which runs in
+  `AssignGlobalHighPrioMoves`, before ranged fire and the coordinated
+  mid-priority combat moves. Each attacks an adjacent unit alone (no focus
+  fire, flank planning or finishing wounded units), then skips its turn.
+- Cities do not shoot in this mod, so a city holding only melee units has no
+  defensive fire; the roster wants 2 ranged defenders when threatened but
+  takes melee when none are present.
+
+- [ ] Let retained defenders take part in the tactical search for attacks,
+  provided they end the turn in the city (a melee attack from a city does
+  not advance). At least, run their opportunity attacks after the ranged and
+  coordinated moves, so they can finish wounded units.
+- [ ] Allow a sortie when the odds are clearly good: e.g. a mobile unit hits a
+  nearby artillery stack and returns the same turn, or a kill that leaves the
+  city still held by enough defenders.
+- [ ] A threatened city holding only melee units buys (or gets priority for) a
+  ranged defender, so it has defensive fire.
+
 ## Overseas cities captured by navies are not held — 2026-10-11
 
 Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`, about
