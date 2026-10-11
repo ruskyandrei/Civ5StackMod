@@ -1,6 +1,6 @@
 # Civ5StackMod
 
-A fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V that replaces one-unit-per-tile with **limited unit stacking**, and teaches the AI to fight with stacks. The current base is **VP 5.4.6** plus later upstream changes; development is on `master`. Upstream history, credits and licensing are preserved.
+A fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V that replaces one-unit-per-tile with **limited unit stacking**, and teaches the AI to fight with stacks. The current base is **VP 5.4.7**; development is on `master`. Upstream history, credits and licensing are preserved.
 
 ## Summary
 
@@ -15,7 +15,7 @@ This is an early pre-release. Multiplayer, the 43-civ variant and the no-EUI var
 
 ## Install
 
-Download the package from the [Releases page](https://github.com/ruskyandrei/Civ5StackMod/releases), extract it and run `Install.cmd`. It is a complete modified copy of Vox Populi (EUI version) and replaces a normal VP installation; existing files are moved to a backup folder. Requires Civilization V with both expansions on Windows. Start a new game with (1) Community Patch, (2) Vox Populi, (3a) VP - EUI Compatibility Files and (4a) Squads for VP enabled.
+Download the package from the [Releases page](https://github.com/ruskyandrei/Civ5StackMod/releases), extract it and run `Install.cmd`. What changed in each release is in the [changelog](CHANGELOG.md). It is a complete modified copy of Vox Populi (EUI version) and replaces a normal VP installation; existing files are moved to a backup folder. Requires Civilization V with both expansions on Windows. Start a new game with (1) Community Patch, (2) Vox Populi, (3a) VP - EUI Compatibility Files and (4a) Squads for VP enabled.
 
 ## How it works
 
