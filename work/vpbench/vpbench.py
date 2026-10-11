@@ -243,6 +243,10 @@ def autoplay(b, args, save, info, loaded):
     try:
         # Stacking DLL only: -1 means the API is absent (vanilla). Benchmarks run with diagnostics off.
         assert info.get('diagnostics', -1) <= 0, 'Stacking diagnostics are enabled; set DiagnosticsLevel to 0'
+        if args.diagnostics > 0:
+            # Behaviour runs only: timing is not comparable with diagnostics on.
+            level = b.call('InGame', f'Game.SetStackingDiagnosticsLevel({args.diagnostics});return Game.GetStackingDiagnosticsLevel()', 'diagnostics-level')
+            b.log('diagnostics_enabled', level=level)
         start_turn = info['turn']
         turns = target - start_turn
         assert turns > 0
@@ -328,9 +332,11 @@ def main():
     n.add_argument('--target-turn', type=int, default=0, help='Autoplay the new game to this turn in the same session')
     n.add_argument('--final-save-name', default='VPBench final')
     n.add_argument('--poll-seconds', type=float, default=5); n.add_argument('--maximum-seconds', type=int, default=21600)
+    n.add_argument('--diagnostics', type=int, default=0, help='Stacking diagnostics level during autoplay (behaviour runs; timings not comparable)')
     r = sub.add_parser('run'); r.add_argument('--run', required=True); r.add_argument('--dll-sha', required=True); r.add_argument('--save', required=True)
     r.add_argument('--target-turn', type=int, default=250); r.add_argument('--final-save-name', required=True)
     r.add_argument('--poll-seconds', type=float, default=5); r.add_argument('--maximum-seconds', type=int, default=21600)
+    r.add_argument('--diagnostics', type=int, default=0, help='Stacking diagnostics level during autoplay (behaviour runs; timings not comparable)')
     args = p.parse_args()
     return newgame(args) if args.command == 'newgame' else run(args)
 
