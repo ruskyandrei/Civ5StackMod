@@ -179,6 +179,18 @@ class Bench:
         Path(self.guards['Signal']).write_text('finished\n', encoding='utf-8')
         self.log('quit', gameExited=gone)
 
+    def release(self):
+        """Leave the game open for the user: stop the guard and the tuner service only."""
+        try: tuner.call_service(SESSION, 'stop', {}, 10)
+        except Exception: pass
+        time.sleep(2)
+        if Path(SESSION).exists():
+            subprocess.run(['taskkill', '/PID', str(self.guards['Service']), '/F'], capture_output=True)
+            time.sleep(1)
+            if Path(SESSION).exists(): Path(SESSION).unlink()
+        Path(self.guards['Signal']).write_text('finished\n', encoding='utf-8')
+        self.log('released', game=self.guards['Game'])
+
     def save(self, name):
         path = SAVES / (name + '.Civ5Save')
         if path.exists(): raise ValueError(f'Save already exists: {path}')
@@ -194,17 +206,18 @@ class Bench:
 
 def newgame(args):
     b = Bench(args.run)
-    b.launch(args.dll_sha, args.maximum_seconds if args.target_turn > 0 else 1800)
+    # The launch guard is capped at 12 hours; the run deadline itself is not.
+    b.launch(args.dll_sha, min(43200, args.maximum_seconds) if args.target_turn > 0 else 1800)
     try:
         # The game difficulty is the human slot's handicap; AI slots keep the AI default.
-        setup = b.call('ModsSinglePlayer', NEWGAME.replace('HANDICAP_PRINCE', args.handicap), 'pregame-setup')
+        setup = b.call('ModsSinglePlayer', NEWGAME.replace('HANDICAP_PRINCE', args.handicap).replace('WORLDSIZE_STANDARD', args.world_size), 'pregame-setup')
         write(b.run / 'pregame.json', setup)
         b.call('ModsSinglePlayer', START, 'start-game')
         b.log('start_requested')
         b.wait_loaded()
         info = b.call('InGame', SETUP, 'setup-info')
         write(b.run / 'setup.json', info)
-        assert info['turn'] == 0 and info['world'] == 'WORLDSIZE_STANDARD' and info['speed'] == 'GAMESPEED_STANDARD', info
+        assert info['turn'] == 0 and info['world'] == args.world_size and info['speed'] == 'GAMESPEED_STANDARD', info
         b.call('LoadScreen', CONTINUE, 'continue')
         time.sleep(5)
         path = b.save(args.save_name)
@@ -213,14 +226,14 @@ def newgame(args):
             # Autoplay the new game in the same session instead of relaunching to load it.
             return autoplay(b, args, path, info, loaded=False)
     finally:
-        b.quit()
+        b.release() if args.keep_open else b.quit()
     return 0
 
 
 def run(args):
     b = Bench(args.run)
     save = Path(args.save).resolve(strict=True)
-    b.launch(args.dll_sha, args.maximum_seconds)
+    b.launch(args.dll_sha, min(43200, args.maximum_seconds))
     try:
         path = tuner.lua_string(str(save).replace('\\', '/'))
         b.call('ModsSinglePlayer', 'local path=' + path + ";assert(PreGame.GetFileHeader(path),'Unreadable save');Events.PlayerChoseToLoadGame(path);return 'requested'", 'request-load')
@@ -233,7 +246,7 @@ def run(args):
         b.log('failed', error=str(error))
         return 1
     finally:
-        b.quit()
+        b.release() if args.keep_open else b.quit()
 
 
 def autoplay(b, args, save, info, loaded):
@@ -333,10 +346,13 @@ def main():
     n.add_argument('--final-save-name', default='VPBench final')
     n.add_argument('--poll-seconds', type=float, default=5); n.add_argument('--maximum-seconds', type=int, default=21600)
     n.add_argument('--diagnostics', type=int, default=0, help='Stacking diagnostics level during autoplay (behaviour runs; timings not comparable)')
+    n.add_argument('--world-size', default='WORLDSIZE_STANDARD', help='e.g. WORLDSIZE_LARGE (Continents map, default players and city-states for the size)')
+    n.add_argument('--keep-open', action='store_true', help='Leave the game running when the run ends (victory, stop or error)')
     r = sub.add_parser('run'); r.add_argument('--run', required=True); r.add_argument('--dll-sha', required=True); r.add_argument('--save', required=True)
     r.add_argument('--target-turn', type=int, default=250); r.add_argument('--final-save-name', required=True)
     r.add_argument('--poll-seconds', type=float, default=5); r.add_argument('--maximum-seconds', type=int, default=21600)
     r.add_argument('--diagnostics', type=int, default=0, help='Stacking diagnostics level during autoplay (behaviour runs; timings not comparable)')
+    r.add_argument('--keep-open', action='store_true', help='Leave the game running when the run ends (victory, stop or error)')
     args = p.parse_args()
     return newgame(args) if args.command == 'newgame' else run(args)
 
