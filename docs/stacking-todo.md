@@ -1,5 +1,37 @@
 # Stacking development TODO
 
+## Overseas cities captured by navies are not held — 2026-10-11
+
+Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`, about
+T254, the former American coast): an AI with a large navy takes distant
+coastal cities but rarely keeps them, because no land units follow.
+
+Causes:
+- `AI_OPERATION_CITY_ATTACK_NAVAL` is ships only, and VP lets melee ships
+  capture coastal cities. Only the combined operation carries troops.
+- `CvStackingAI::TryReinforceRearUnit` paths with `MOVEFLAG_NO_EMBARK`, so no
+  land unit on the home landmass can be sent to a city across the sea.
+- A captured city is in resistance and produces nothing for several turns.
+- Stacking-specific: cities do not shoot (`DisableCityRangedAttacks`), so a
+  city held only by ships has no defensive fire and is easily retaken.
+- VP's `AI_OPERATION_RAPID_RESPONSE` / `AI_OPERATION_CITY_DEFENSE` start only
+  once the city is threatened (and, for city defense, in an enemy-dominated
+  zone).
+
+- [ ] Overseas reinforcement: for city-defense demands to a city on another
+  landmass, path with `MOVEFLAG_SAFE_EMBARK_ONLY` (as `StageUnit` does)
+  instead of `MOVEFLAG_NO_EMBARK`, only while the player has naval control
+  of the waters around the city (no strong enemy navy nearby).
+- [ ] Defender for a captured city without a land unit: on another landmass,
+  put a land defender at the front of its production queue and buy it with
+  gold as soon as resistance ends.
+- [ ] Prefer the combined operation for cities on another landmass: against a
+  major civ's city, choose `AI_OPERATION_CITY_ATTACK_COMBINED` over
+  `AI_OPERATION_CITY_ATTACK_NAVAL` when spare land units exist, or hold the
+  naval capture until a land unit is within a turn or two.
+- [ ] Measure: cities captured by sea and lost again within about 10 turns,
+  before and after (checkpoints record owner and acquired turn per city).
+
 ## Conquered cities razed, then resettled on the same tile — 2026-10-11
 
 Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`): Japan
