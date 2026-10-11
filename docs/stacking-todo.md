@@ -1,5 +1,34 @@
 # Stacking development TODO
 
+## Siege positions: cover and river crossings — 2026-10-11
+
+Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`, T51,
+Warsaw): a melee stack waited south of the river on open ground, so every
+attack on the city crossed the river (-20%), while forest tiles north of the
+city went unused.
+
+Today the river penalty only counts for attacks made this turn: the tactical
+damage forecast includes `RIVER_ATTACK_MODIFIER`. Where melee units wait
+during a siege ignores it. Terrain cover is valued only through danger (near
+zero against a weak garrison, since cities do not shoot) plus a flat
+`defenseModifier/5` in `ScoreCombatUnitTurnEnd`. `StageUnit` and the capturer
+tiles in `AttackApproach` (CvStackingOffensiveAI.cpp) sort by distance only.
+
+- [ ] Tactical final positions for melee units next to the position's target
+  city: a penalty when attacking the city from that tile would cross a river
+  (new `AISiegeRiverPenalty`, about 8; skip units with
+  `isRiverCrossingNoPenalty`), and a cover bonus scaled by the tile's
+  defence modifier (new `AISiegeCoverPercent`, forest/jungle/hills worth
+  about 8-12 instead of 5).
+- [ ] The same two terms in the tile sorts of `StageUnit` and `AttackApproach`
+  (about one tile of distance each), so stacks wait in cover and approach
+  from the side the river does not protect.
+- [ ] Ranged units keep the current logic apart from the cover bonus (ranged
+  attacks have no river penalty). Where every approach crosses a river the
+  penalty is uniform and drops out.
+- [ ] Check that it composes with the blockade scoring (cover tiles next to
+  the city also blockade), then A/B with `vpbench --diagnostics 1`.
+
 ## DLL102 campaign follow-up — 2026-10-01
 
 The user stopped this campaign around267 because Babylon repeatedly took over a
