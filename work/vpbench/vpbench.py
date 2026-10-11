@@ -55,10 +55,12 @@ for owner=0,63 do local p=Players[owner]
   out.players[#out.players+1]={owner=owner,civilization=civ and civ.Type or '',minor=p:IsMinorCiv(),human=p:IsHuman(),handicap=GameInfo.HandicapInfos[p:GetHandicapType()].Type} end end
 return out
 '''
-TURN = "return {turn=Game.GetGameTurn(),autoplay=Game.GetAIAutoPlay(),pause=Game.GetPausePlayer()}"
+TURN = "return {turn=Game.GetGameTurn(),autoplay=Game.GetAIAutoPlay(),pause=Game.GetPausePlayer(),winner=Game.GetWinner()}"
+# Winning team and victory type once the game is won (winner -1 before).
+VICTORY = "local v=Game.GetVictory();local info=v and v>=0 and GameInfo.Victories[v];return {winner=Game.GetWinner(),victory=info and info.Type or '',turn=Game.GetGameTurn()}"
 CHECKPOINT = r'''
 local active=Game.GetActivePlayer()
-local out={turn=Game.GetGameTurn(),activePlayer=active,autoplay=Game.GetAIAutoPlay(),observer=Players[active]:IsObserver(),human=Players[active]:IsHuman(),pausePlayer=Game.GetPausePlayer(),replayCount=Game.GetNumReplayMessages(),players={},cities={},wars={},livingMajors={}}
+local out={turn=Game.GetGameTurn(),activePlayer=active,autoplay=Game.GetAIAutoPlay(),observer=Players[active]:IsObserver(),human=Players[active]:IsHuman(),pausePlayer=Game.GetPausePlayer(),replayCount=Game.GetNumReplayMessages(),winner=Game.GetWinner(),players={},cities={},wars={},livingMajors={}}
 for owner=0,63 do
  local p=Players[owner]
  if p and p:IsAlive() and not p:IsObserver() then
@@ -273,7 +275,7 @@ def autoplay(b, args, save, info, loaded):
         b.log('autoplay_started', turn=start_turn, target=target)
         turn_seen = {start_turn: 0.0}
         last_turn = start_turn; last_checkpoint_turn = start_turn; last_checkpoint_time = started; last_progress = started
-        return_player = 0; final = first
+        return_player = 0; final = first; victory = None
         deadline = started + args.maximum_seconds
         while True:
             time.sleep(args.poll_seconds)
@@ -285,6 +287,13 @@ def autoplay(b, args, save, info, loaded):
                 if b.process() is None: raise RuntimeError(f'Game process is gone at turn {last_turn} (crash or guard stop)')
                 raise
             turn = state['turn']
+            if state.get('winner', -1) >= 0:
+                # A victory ends autoplay; the game is complete, not stopped early.
+                for t in range(last_turn + 1, turn + 1): turn_seen[t] = round(now - started, 1)
+                last_turn = max(last_turn, turn)
+                victory = b.call('InGame', VICTORY, 'victory')
+                b.log('victory', turn=victory['turn'], winner=victory['winner'], victory=victory['victory'], seconds=round(now - started))
+                break
             if turn != last_turn:
                 for t in range(last_turn + 1, turn + 1): turn_seen[t] = round(now - started, 1)
                 last_turn = turn; last_progress = now
@@ -300,6 +309,10 @@ def autoplay(b, args, save, info, loaded):
                 if final['turn'] % 10 == 0 or final['turn'] - start_turn < 3:
                     b.log('checkpoint', turn=final['turn'], seconds=round(now - started), cities=len(final['cities']), wars=len(final['wars']))
                 majors = final['livingMajors']
+                if final.get('winner', -1) >= 0:
+                    victory = b.call('InGame', VICTORY, 'victory')
+                    b.log('victory', turn=victory['turn'], winner=victory['winner'], victory=victory['victory'], seconds=round(now - started))
+                    break
                 if state['autoplay'] == 0 and not final['observer']: raise RuntimeError(f"Autoplay stopped early at turn {final['turn']}")
                 if return_player not in majors:
                     if not majors: raise RuntimeError('No living major')
@@ -307,7 +320,7 @@ def autoplay(b, args, save, info, loaded):
                     b.call('InGame', f'assert(Players[Game.GetActivePlayer()]:IsObserver());if Game.GetAIAutoPlay()=={remaining} then Game.SetAIAutoPlay({remaining + 1},{return_player}) end;Game.SetAIAutoPlay({remaining},{return_player});return Game.GetAIAutoPlay()', 'replace-return-player')
                     b.log('return_player_changed', player=return_player)
         elapsed = time.monotonic() - started
-        b.log('target_reached', turn=last_turn, seconds=round(elapsed, 1))
+        if not victory: b.log('target_reached', turn=last_turn, seconds=round(elapsed, 1))
         proc = b.process()
         final = b.call('InGame', f'if Game.GetAIAutoPlay()>0 or Players[Game.GetActivePlayer()]:IsObserver() then if Game.GetAIAutoPlay()==0 then Game.SetAIAutoPlay(1,{return_player}) end;Game.SetAIAutoPlay(0,{return_player}) end;' + CHECKPOINT, 'final-checkpoint')
         write(b.run / 'checkpoints' / f"turn-{final['turn']:04d}-final.json", dict(utc=utc(), seconds=round(elapsed, 1), data=final))
@@ -321,6 +334,8 @@ def autoplay(b, args, save, info, loaded):
         status = dict(state='completed', startedUTC=started_utc, startTurn=start_turn, endTurn=last_turn, turns=last_turn - start_turn,
                       wallSeconds=round(elapsed, 1), secondsPerTurn=round(elapsed / (last_turn - start_turn), 2), process=proc,
                       pollSeconds=args.poll_seconds, dllSHA256=args.dll_sha, save=str(save), replayMessages=len(messages))
+        if victory: status.update(endReason='victory', winner=victory['winner'], victory=victory['victory'])
+        else: status['endReason'] = 'target_turn'
         write(b.run / 'turn-seen.json', turn_seen)
         try:
             saved = b.save(args.final_save_name)
