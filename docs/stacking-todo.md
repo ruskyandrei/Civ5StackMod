@@ -1,5 +1,41 @@
 # Stacking development TODO
 
+## Conquered cities razed, then resettled on the same tile — 2026-10-11
+
+Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`): Japan
+captured India's Varanasi (size 16, T179) and Agra (size 15, T183), annexed
+both, razed them over about 13 turns, and founded Sapporo (T196) and Hakodate
+(T202) at size 9 on the same tiles. VP code, not stacking-specific.
+
+Cause (VP `CvPlayerAI::AI_conquerCity`, `AI_considerRaze`):
+- On capture Japan was at 60% approval, above `AI_MOSTLY_HAPPY_THRESHOLD`
+  (40), so both high-value cities were annexed with no estimate of their
+  effect. Approval then fell to about 30%, below `VERY_UNHAPPY_THRESHOLD`
+  (35, rebels possible).
+- `AI_considerRaze` then razes annexed occupied cities each turn while below
+  that line. A razing city counts its whole population as unhappiness
+  (`GetUnhappinessAggregated`), so approval stayed near 28% until both were
+  gone, recovered to 58%, and settlers took the best empty sites: those tiles.
+  Resettling itself is fine.
+- A puppet counts only population/4 (plus specialists) and is never a raze
+  candidate; VP's `AI_considerAnnex` annexes puppets later when happy.
+
+- [ ] Puppet instead of annexing when the city would push the empire below the
+  happiness line: in `AI_conquerCity`, project approval with the captured
+  city's population added to unhappiness (`GetUnhappinessFromCitizenNeeds`,
+  the same ratio `AI_considerRaze` uses) and puppet when the projection is
+  under `AI_MOSTLY_HAPPY_THRESHOLD`. Let `AI_considerAnnex` annex it later.
+- [ ] Do not raze a conquered city whose tile is a good settling site for its
+  owner (site evaluator value at or above the player's current settling
+  threshold) unless approval is below `SUPER_UNHAPPY_THRESHOLD` (20) or the
+  city is endangered; prefer rushing its courthouse.
+- [ ] Stop razing (`unraze`) when approval recovers to about 45% while the
+  city still has meaningful population; today only wonder cities are
+  unrazed.
+- [ ] Measure: count raze decisions and resettled razed tiles per game (new
+  diagnostics row or checkpoint comparison of plots whose city's founding
+  turn changes).
+
 ## Siege positions: cover and river crossings — 2026-10-11
 
 Seen in the Deity large-map autoplay (`vpbench-20261011-deity-large`, T51,
