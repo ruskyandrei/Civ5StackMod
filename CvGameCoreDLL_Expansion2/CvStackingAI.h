@@ -6,6 +6,7 @@ class CvCity;
 class CvPlot;
 class CvArmyAI;
 class CvAIOperation;
+class CvPlayer;
 
 // AI policy and bounded, reconstructible planning state. No serialized fields.
 namespace CvStackingAI
@@ -29,6 +30,18 @@ namespace CvStackingAI
     };
     int CompositionScore(const CvUnit* unit, const CvPlot* plot);
     int MedicPromotionPercent(const CvUnit* unit);
+    // Siege tile preference near an enemy city: defensive terrain is worth more,
+    // and a melee tile next to the city that would attack it across a river less.
+    int SiegeTileScore(const CvUnit* unit, const CvPlot* plot, const CvPlot* cityPlot);
+    // Conquest: puppet a city whose annexation would drop approval below the
+    // happiness line; keep developed conquered cities from being razed unless
+    // revolt is imminent; stop razing once approval recovers.
+    bool ConquestWouldMakeUnhappy(CvPlayer& player, const CvCity* city);
+    bool KeepFromRazing(CvPlayer& player, CvCity* city);
+    void UnrazeRecoveredCities(CvPlayer& player);
+    // Buys a land unit of this role in the city with gold, within the AI's budget.
+    bool BuyCityUnit(CvCity* city, UnitAITypes role);
+    void CityDefensePurchases(CvPlayer& player);
     bool Enabled(PlayerTypes player);
     void Reset();
     CityDefense AssessCity(const CvCity* city);

@@ -132,6 +132,7 @@ static int openingForecastTurn=-1;
     std::map<Key,int> assemblyHolds;
     std::map<Key,int> fireRefusals; // unit -> turn of its last logged FIRE_REFUSAL
     std::map<Key,int> focusRanked; // (owner,domain) -> turn of its last focus ranking
+    int redirectTurn[MAX_PLAYERS]; // last support redirect turn + 1; 0 = never
     int currentTurn=-1, synced[MAX_PLAYERS], captureQueries[MAX_PLAYERS], extraBatches[MAX_PLAYERS], assaultQueries[MAX_PLAYERS];
     void AdvanceProductionGeneration(PlayerTypes owner);
     bool shuttingDown=false;
@@ -866,7 +867,8 @@ static int openingForecastTurn=-1;
                 !unit->canMoveInto(*p,CvUnit::MOVEFLAG_DESTINATION) ||
                 !unit->canEverRangeStrikeAt(target->getX(),target->getY(),p,false)) continue;
             // A tile costs ten per step; completing a mixed stack is worth about one step.
-            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p)*10-CvStackingAI::CompositionScore(unit,p),p->GetPlotIndex()));
+            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p)*10-CvStackingAI::CompositionScore(unit,p)-
+                CvStackingAI::SiegeTileScore(unit,p,target),p->GetPlotIndex()));
         }
         std::sort(candidates.begin(),candidates.end());
         for(size_t i=0;i<candidates.size() && i<(size_t)Setting("AIAssaultFiringPositionCandidates",6);++i)
@@ -1429,8 +1431,10 @@ namespace CvStackingOffensiveAI
             CvPlot* p=iterateRingPlots(stage,i);
             if(!p || !p->isVisible(player.getTeam()) || !unit->isNativeDomain(p) ||
                 !unit->canMoveInto(*p,CvUnit::MOVEFLAG_DESTINATION)) continue;
-            // A tile costs ten per step; completing a mixed stack is worth about one step.
-            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p)*10-CvStackingAI::CompositionScore(unit,p),p->GetPlotIndex()));
+            // A tile costs ten per step; completing a mixed stack, or cover near
+            // the city, is worth about one step.
+            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p)*10-CvStackingAI::CompositionScore(unit,p)-
+                CvStackingAI::SiegeTileScore(unit,p,cityTarget),p->GetPlotIndex()));
         }
         std::sort(candidates.begin(),candidates.end());
         for(size_t i=0;i<candidates.size() && i<(size_t)Setting("AIAssaultStagePlacementCandidates",8);++i)
@@ -1832,7 +1836,7 @@ namespace CvStackingOffensiveAI
     void Reset()
     {
         ResetOpeningReadiness(); ResetProductionPolicy();
-        objectives.clear(); commitments.clear(); failures.clear(); focusRanked.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); fireRefusals.clear(); currentTurn=-1; shuttingDown=false;
+        objectives.clear(); commitments.clear(); failures.clear(); memset(redirectTurn,0,sizeof(redirectTurn)); focusRanked.clear(); marches.clear(); captureRetries.clear(); production.clear(); stalledProduction.clear(); assemblyHolds.clear(); fireRefusals.clear(); currentTurn=-1; shuttingDown=false;
         if(continuityGeneration==0xffffffffUL) continuityGenerationExhausted=true; else ++continuityGeneration;
     }
     void Shutdown()
@@ -2418,6 +2422,83 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
             CvStackingDiagnostics::Record(1,owner,"OPERATION_GATE","target=%d operation=%d reason=support_group_wanted strength=%d enemy=%d percent=%d important=%d",
                 target->GetPlotIndex(),op->GetID(),strength,enemy,percent,important);
         return wanted;
+    }
+    // City importance for redirecting attack groups: economic value relative to
+    // the median city, plus capitals, wonders, holy cities and recently lost cities.
+    int CityImportance(PlayerTypes owner,CvCity* city)
+    {
+        int value=city->getEconomicValue(owner)*100/max(1,GC.getGame().getMedianEconomicValue());
+        if(city->IsOriginalMajorCapital() || city->isCapital()) value+=100;
+        value+=min(3,city->getNumWorldWonders())*50;
+        if(city->GetCityReligions()->IsHolyCityAnyReligion()) value+=50;
+        if(RecentlyLost(owner,city)) value+=100;
+        return max(1,value);
+    }
+    void TryRedirectToSupport(PlayerTypes owner)
+    {
+        if(owner<0 || owner>=MAX_PLAYERS || !Enabled(owner) || Setting("AISupportRedirectEnabled",1)==0) return;
+        Sync(owner);
+        if(redirectTurn[owner]>0 && currentTurn-(redirectTurn[owner]-1)<Setting("AISupportRedirectCooldownTurns",5)) return;
+        CvPlayer& player=GET_PLAYER(owner);
+        std::vector<ObjectiveKey> keys;
+        for(std::map<ObjectiveKey,Objective>::const_iterator i=objectives.begin();i!=objectives.end();++i)
+            if(i->first.owner==owner) keys.push_back(i->first);
+        // The most important objective at war that wants a second group.
+        ObjectiveKey target; int targetImportance=0;
+        for(size_t i=0;i<keys.size();++i)
+        {
+            CvPlot* p=GC.getMap().plotByIndexUnchecked(keys[i].target);
+            if(!p || !p->isCity() || !player.IsAtWarWith(p->getOwner()) || !SupportOperationWanted(owner,p,keys[i].domain==DOMAIN_SEA)) continue;
+            const int importance=CityImportance(owner,p->getPlotCity());
+            if(importance>targetImportance) { targetImportance=importance; target=keys[i]; }
+        }
+        if(targetImportance<=0) return;
+        std::map<ObjectiveKey,Objective>::const_iterator t=objectives.find(target);
+        if(t==objectives.end()) return;
+        CvPlot* targetPlot=GC.getMap().plotByIndexUnchecked(target.target);
+        const int primary=t->second.operation;
+        // A donor is another city attack still forming, close enough, and aimed at
+        // a city clearly less important than the target by the margin.
+        const int margin=Setting("AISupportRedirectImportancePercent",50),maxTurns=Setting("AISupportRedirectMaximumTurns",8);
+        int donor=-1,donorTarget=-1,donorImportance=INT_MAX,donorTurns=0;
+        for(size_t i=0;i<keys.size();++i)
+        {
+            if(keys[i]==target || keys[i].domain!=target.domain) continue;
+            std::map<ObjectiveKey,Objective>::const_iterator o=objectives.find(keys[i]);
+            CvAIOperation* op=o!=objectives.end()?player.getAIOperation(o->second.operation):NULL;
+            if(!Live(op) || !IsCityAttack(op) || OwnsOperation(t->second,op->GetID()) ||
+                (op->GetOperationState()!=AI_OPERATION_STATE_RECRUITING_UNITS && op->GetOperationState()!=AI_OPERATION_STATE_GATHERING_FORCES)) continue;
+            CvArmyAI* army=op->GetArmy(0);
+            CvPlot* center=army && army->GetNumSlotsFilled()>0?army->GetCenterOfMass():NULL;
+            CvPlot* donorPlot=GC.getMap().plotByIndexUnchecked(keys[i].target);
+            if(!center || !donorPlot || !donorPlot->isCity() ||
+                (target.domain==DOMAIN_LAND && center->getLandmass()!=targetPlot->getLandmass())) continue;
+            int moves=INT_MAX;
+            for(CvUnit* u=army->GetFirstUnit();u;u=army->GetNextUnit(u))
+                if(Usable(u)) moves=min(moves,max(1,u->baseMoves(false)));
+            if(moves==INT_MAX) continue;
+            const int turns=plotDistance(*center,*targetPlot)/moves;
+            const int importance=CityImportance(owner,donorPlot->getPlotCity());
+            if(turns>maxTurns || (long long)targetImportance*100<(long long)importance*(100+margin) || importance>=donorImportance) continue;
+            donor=op->GetID(); donorTarget=keys[i].target; donorImportance=importance; donorTurns=turns;
+        }
+        if(donor<0) return;
+        // End the donor without a retry cooldown and commit its units to the target.
+        CvAIOperation* op=player.getAIOperation(donor);
+        CvArmyAI* army=op->GetArmy(0);
+        std::vector<int> ids;
+        for(CvUnit* u=army->GetFirstUnit();u;u=army->GetNextUnit(u))
+            if(Usable(u)) ids.push_back(u->GetID());
+        op->SetToAbort(AI_ABORT_CANCELLED);
+        army->ReleaseAllUnits();
+        for(size_t i=0;i<ids.size();++i)
+        {
+            CvUnit* u=player.getUnit(ids[i]);
+            if(Usable(u)) RecordTransfer(u,target.target,primary,plotDistance(*u->plot(),*targetPlot)/max(1,u->baseMoves(false)));
+        }
+        redirectTurn[owner]=currentTurn+1;
+        CvStackingDiagnostics::Record(1,owner,"OFFENSIVE_SUPPORT","target=%d operation=%d donor=%d donorTarget=%d units=%d importance=%d donorImportance=%d turns=%d action=group_redirected",
+            target.target,primary,donor,donorTarget,(int)ids.size(),targetImportance,donorImportance,donorTurns);
     }
     static int meleeAttacks[MAX_PLAYERS]={0},flankedAttacks[MAX_PLAYERS]={0};
     void NoteMeleeAttack(PlayerTypes owner,bool flanked)

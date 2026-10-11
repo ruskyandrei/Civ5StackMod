@@ -266,6 +266,30 @@
     <Row Name="AISupportOperationEnabled" Value="1" />
     <Row Name="AISupportOperationStrengthPercent" Value="150" />
     <Row Name="AISupportOperationImportantPercent" Value="250" />
+    <!-- A city wanting a second group may take over a forming attack on a clearly less important city. -->
+    <Row Name="AISupportRedirectEnabled" Value="1" />
+    <Row Name="AISupportRedirectImportancePercent" Value="50" />
+    <Row Name="AISupportRedirectMaximumTurns" Value="8" />
+    <Row Name="AISupportRedirectCooldownTurns" Value="5" />
+    <!-- Siege tiles: defensive terrain preferred, melee avoid attacking the city across a river. -->
+    <Row Name="AISiegeCoverPercent" Value="40" />
+    <Row Name="AISiegeRiverPenalty" Value="8" />
+    <!-- Conquest: puppet cities that would make the empire unhappy, keep developed cities from razing. -->
+    <Row Name="AIConquestPuppetEnabled" Value="1" />
+    <Row Name="AIRazeKeepMinimumPopulation" Value="6" />
+    <Row Name="AIUnrazeApprovalPercent" Value="45" />
+    <Row Name="AIUnrazeMinimumPopulation" Value="3" />
+    <!-- Overseas cities: land reinforcements by sea, defenders bought for naval captures. -->
+    <Row Name="AIOverseasReinforcementEnabled" Value="1" />
+    <Row Name="AIOverseasSafeWaterRadius" Value="5" />
+    <Row Name="AIOverseasNavalApproachPercent" Value="60" />
+    <Row Name="AICapturedCityDefenderPurchase" Value="1" />
+    <Row Name="AICapturedCityDefenderTurns" Value="15" />
+    <Row Name="AICityMeleeOnlyRangedPurchase" Value="1" />
+    <!-- Besieged garrisons attack after the coordinated moves and may sortie. -->
+    <Row Name="AIGarrisonLateAttacks" Value="1" />
+    <Row Name="AIGarrisonSortieEnabled" Value="1" />
+    <Row Name="AIGarrisonSortieMinimumDefenders" Value="2" />
     <Row Name="UIStackEnabled" Value="1" />
     <Row Name="UIStackMoveMinimumUnits" Value="2" />
     <!-- UI only: key held with right-click to move the selected unit's whole stack. 0 Alt, 1 Shift, 2 Ctrl. -->

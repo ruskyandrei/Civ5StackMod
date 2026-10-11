@@ -410,6 +410,7 @@ private:
 //	unify these?
 ///------------------------------
 	void PlotGarrisonMoves(int iNumTurnsAway);
+	void ExecuteLateGarrisonAttacks();
 	void PlotBastionMoves(int iNumTurnsAway);
 	void PlotGuardImprovementMoves(int iNumTurnsAway);
 //--------------------------------
@@ -505,6 +506,7 @@ private:
 
 	CvTacticalAnalysisMap m_tacticalMap;
 	std::list<int> m_CurrentTurnUnits;
+	std::vector<int> m_lateGarrisonAttackers; // retained city defenders; attack after the coordinated moves
 	std::vector<CvTacticalUnit> m_CurrentAirSweepUnits;
 	CTacticalUnitArray m_CurrentMoveUnits;
 	std::vector<CvTacticalCity> m_CurrentMoveCities;

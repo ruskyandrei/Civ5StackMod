@@ -118,6 +118,9 @@ namespace CvStackingOffensiveAI
     // A second operation may join an objective whose city is too strong for the
     // first group, or important enough for a larger margin.
     bool SupportOperationWanted(PlayerTypes owner, CvPlot* target, bool naval);
+    // When an objective wants a second group, end a forming attack on a clearly
+    // less important city nearby and send its units there as reinforcements.
+    void TryRedirectToSupport(PlayerTypes owner);
     // Diagnostics only: a per-turn AI_FEATURES row per player (stack mix,
     // medics, blockaded objectives, support groups, flanked melee attacks).
     void NoteMeleeAttack(PlayerTypes owner, bool flanked);

@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingAI.h"
+#include "CvStackingRules.h"
 #include "CvStackingOffensiveAI.h"
 #include "CvStackingDiagnostics.h"
 #include "ICvDLLUserInterface.h"
@@ -504,6 +505,8 @@ void CvMilitaryAI::DoTurn()
 	{
 		UpdateOperations();
 		CvStackingOffensiveAI::ReviewObjectives(m_pPlayer->GetID());
+		CvStackingOffensiveAI::TryRedirectToSupport(m_pPlayer->GetID());
+		CvStackingAI::CityDefensePurchases(*m_pPlayer);
 		CvStackingOffensiveAI::RecordFeatureSummary(m_pPlayer->GetID());
 		if (!m_pPlayer->isHuman(ISHUMAN_AI_ECONOMY))
 		{
@@ -1084,6 +1087,15 @@ void MilitaryAIHelpers::SetBestTargetApproach(CvAttackTarget& target, PlayerType
 	int iLandScore = EvaluateTargetApproach(target,ePlayer,ARMY_TYPE_LAND);
 	int iNavalScore = EvaluateTargetApproach(target,ePlayer,ARMY_TYPE_NAVAL);
 	int iCombinedScore = EvaluateTargetApproach(target,ePlayer,ARMY_TYPE_COMBINED);
+
+	// Stacking AI: ships alone cannot hold a major civ's city across the sea, so
+	// prefer bringing troops while spare land units exist.
+	CvPlot* pApproachTarget = target.GetTargetPlot();
+	CvPlot* pApproachMuster = target.GetMusterPlot();
+	if (iCombinedScore > 30 && iNavalScore > 0 && pApproachTarget && pApproachMuster && CvStackingAI::Enabled(ePlayer) &&
+		pApproachTarget->getLandmass() != pApproachMuster->getLandmass() && GET_PLAYER(pApproachTarget->getOwner()).isMajorCiv() &&
+		CvStackingAI::CanStartAnotherOperation(ePlayer, DOMAIN_LAND))
+		iNavalScore = iNavalScore * CvStacking::GetInt("AIOverseasNavalApproachPercent", 60) / 100;
 
 	//we want a minimum score of 30!
 	if (iLandScore >= iNavalScore && iLandScore >= iCombinedScore && iLandScore>30)

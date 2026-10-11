@@ -7,8 +7,10 @@ LOG_PREFIX is the session prefix in the Civ V Logs folder, e.g.
 Reports, per bucket of turns and summed over AI majors and city-states:
 land/sea stack mix (mixed, all-ranged, all-melee stacks of two or more),
 medics and medics sharing a tile, melee attacks on units and the share
-flanked, objectives and those with a full blockade or a support group, and
-the support-group gate/join/abort events.
+flanked, objectives and those with a full blockade or a support group, the
+support-group gate/join/abort/redirect events, conquest decisions (puppet,
+kept from razing, unrazed, courthouses bought), city unit purchases and
+garrison sorties.
 """
 import argparse, glob, os, re, sys
 from collections import defaultdict
@@ -56,6 +58,15 @@ def main():
                     events['support_group_aborted'] += 1
                 elif category == 'OPERATION_GATE' and 'reason=support_group_wanted' in rest:
                     events['support_group_wanted_checks'] += 1
+                elif category == 'OFFENSIVE_SUPPORT' and 'action=group_redirected' in rest:
+                    events['support_group_redirected'] += 1
+                elif category == 'CONQUEST':
+                    m2 = re.search(r'action=(\w+)', rest)
+                    events['conquest_' + (m2.group(1) if m2 else '?')] += 1
+                elif category == 'CITY_PURCHASE':
+                    events['city_purchases'] += 1
+                elif category == 'GARRISON_SORTIE':
+                    events['garrison_sorties'] += 1
                 elif category == 'CITY_CAPTURE':
                     events['city_captures'] += 1
     print('segments=%d lastTurn=%d' % (len(files), last_turn))
@@ -85,6 +96,11 @@ def main():
     print('player-turns with a fully blockaded target city: %d' % len(blockade_turns))
     print('support groups: %d joined on %d (player, target) pairs, %d aborted, %d gate checks wanting one' % (
         events['support_group_joined'], len(support_targets), events['support_group_aborted'], events['support_group_wanted_checks']))
+    print('support groups redirected from less important attacks: %d' % events['support_group_redirected'])
+    print('conquest: %d puppeted (unhappy), %d puppeted instead of razed, %d unrazed, %d courthouses bought' % (
+        events['conquest_puppet_unhappy'], events['conquest_puppet_not_razed'], events['conquest_unraze'],
+        events['conquest_bought_courthouse']))
+    print('city defender purchases: %d, garrison sorties: %d' % (events['city_purchases'], events['garrison_sorties']))
     print('city captures logged: %d' % events['city_captures'])
 
 

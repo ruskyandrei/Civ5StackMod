@@ -161,6 +161,8 @@ to 3.9.
 | `AIFlankPositionBonus` | 5 | Bonus for a melee unit moving next to an enemy stack, per friendly unit (up to 3) that can still attack it this turn, for up to two stacks. Their attack forecasts then include the flank. |
 | `AISiegeBlockadeTileBonus` | 3 | Bonus per tile next to the target city that a unit newly blockades (stands on it, or next to it on the same landmass). |
 | `AISiegeBlockadeCompleteBonus` | 30 | Bonus for completing the blockade of every passable tile around the target city, which stops its healing. |
+| `AISiegeCoverPercent` | 40 | Bonus, in percent of the tile's defence modifier, for a land unit ending its move within four tiles of an enemy city it is at war with (forest or hills: about 10). Also used when choosing staging tiles and firing positions. |
+| `AISiegeRiverPenalty` | 8 | Penalty for a melee unit ending next to that city where attacking it would cross a river. Units that ignore river penalties are exempt. |
 
 ### 3.3 City defence
 
@@ -189,6 +191,12 @@ to 3.9.
 | `AIGarrisonReplacementPercent` | 20 | Improvement needed to swap an adequate garrison. |
 | `AIRearCityPlotScore` | 6 | Preference for parking healthy surplus troops in rear cities. |
 | `AIRearCityHealthyPercent` | 70 | HP above which that preference is reduced. |
+| `AICapturedCityDefenderPurchase` | 1 | Buy a ranged land defender with gold for a city on another landmass, captured within `AICapturedCityDefenderTurns`, that holds no land unit, as soon as its resistance ends. At most one city purchase per turn. |
+| `AICapturedCityDefenderTurns` | 15 | Turns after capture during which that purchase is considered. |
+| `AICityMeleeOnlyRangedPurchase` | 1 | Buy a ranged defender for a threatened city whose land defenders are all melee (cities do not shoot, so it has no defensive fire). |
+| `AIGarrisonLateAttacks` | 1 | Defenders retained in a threatened city attack after the coordinated tactical moves instead of before them, so they can finish units the others wounded. |
+| `AIGarrisonSortieEnabled` | 1 | Such a melee defender with at least 75% HP may leave the city to make its attack (and advance after a kill). |
+| `AIGarrisonSortieMinimumDefenders` | 2 | Other land defenders that must stay in the city for a sortie. |
 
 ### 3.4 Reinforcements and formation assembly
 
@@ -217,7 +225,23 @@ to 3.9.
 | `AISupportOperationEnabled` | 1 | A second operation may join a focused objective once the first has formed. Both armies count as one force for readiness, and either can carry on if the other is lost. It uses one of the `AIOffensiveOperationsPerDomain` slots. |
 | `AISupportOperationStrengthPercent` | 150 | A second group is wanted while the first army's strength is below this share of the city's visible defence. |
 | `AISupportOperationImportantPercent` | 250 | The same threshold for capitals, original capitals and cities with world wonders. |
+| `AISupportRedirectEnabled` | 1 | When a city wants a second group, a city attack still recruiting or gathering against another city in the same domain (and, on land, landmass) may be cancelled and its units sent to the more important target. |
+| `AISupportRedirectImportancePercent` | 50 | How much more important the target must be than the donor's city. City importance is its economic value relative to the player's median city, plus bonuses for capitals, wonders, holy cities and recently lost cities. 50 means at least 1.5 times as important. |
+| `AISupportRedirectMaximumTurns` | 8 | Longest estimated trip from the donor army to the target. |
+| `AISupportRedirectCooldownTurns` | 5 | Turns between redirects for one player. |
+| `AIOverseasReinforcementEnabled` | 1 | Reserve units may embark (safe tiles only) to defend the player's cities on another landmass while no visible enemy warship is within `AIOverseasSafeWaterRadius` of the city. |
+| `AIOverseasSafeWaterRadius` | 5 | Radius checked for enemy warships. |
+| `AIOverseasNavalApproachPercent` | 60 | Naval-only attack score, in percent, against a major civ's city on another landmass when a combined attack is also viable and another land operation can start, so the combined operation (which carries troops) wins more often. 100 keeps VP's choice. |
 | `AICityAssaultMinimumSiege` | 1 | Siege units wanted near a land siege. |
+
+### 3.4a Conquered cities
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `AIConquestPuppetEnabled` | 1 | VP only: the AI puppets a conquered city it would otherwise annex when the projected approval with the city's population added would drop below the AI's "mostly happy" line (40%). It can annex the puppet later. |
+| `AIRazeKeepMinimumPopulation` | 6 | A conquered city of at least this population is not razed unless the empire is super unhappy (below 20%) or the city is endangered; the AI buys its courthouse when it can. 0 disables. |
+| `AIUnrazeApprovalPercent` | 45 | A city being razed is kept (unrazed) once approval recovers to this value. |
+| `AIUnrazeMinimumPopulation` | 3 | Population a razing city needs to be unrazed. |
 
 ### 3.5 War opening
 

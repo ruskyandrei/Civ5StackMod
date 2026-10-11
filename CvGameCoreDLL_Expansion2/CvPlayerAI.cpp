@@ -10,6 +10,7 @@
 #include "CvStackingDiagnostics.h"
 #include "CvPlayerAI.h"
 #include "CvStackingOffensiveAI.h"
+#include "CvStackingAI.h"
 #include "CvRandom.h"
 #include "CvGlobals.h"
 #include "CvGameCoreUtils.h"
@@ -435,6 +436,15 @@ void CvPlayerAI::AI_conquerCity(CvCity* pCity, bool bGift, bool bAllowSphereRemo
 			return;
 		}
 
+		// Stacking AI: annexing would drop approval below the line (and into razing
+		// it later), so puppet it now; AI_considerAnnex annexes it when happy.
+		if (CvStackingAI::ConquestWouldMakeUnhappy(*this, pCity))
+		{
+			CvStackingDiagnostics::Record(1, GetID(), "CONQUEST", "city=%d population=%d action=puppet_unhappy", pCity->GetID(), pCity->getPopulation());
+			pCity->DoCreatePuppet();
+			return;
+		}
+
 		if (bCanAnnex)
 		{
 			// If we have a unique courthouse, use it!
@@ -515,6 +525,13 @@ void CvPlayerAI::AI_conquerCity(CvCity* pCity, bool bGift, bool bAllowSphereRemo
 		}
 
 		// Insufficient value or too unhappy? Burn, baby, burn!
+		// Stacking AI: a developed city is kept as a puppet unless revolt is imminent.
+		if (bCanRaze && CvStackingAI::KeepFromRazing(*this, pCity))
+		{
+			CvStackingDiagnostics::Record(1, GetID(), "CONQUEST", "city=%d population=%d action=puppet_not_razed", pCity->GetID(), pCity->getPopulation());
+			pCity->DoCreatePuppet();
+			return;
+		}
 		if (bCanRaze)
 		{
 			pCity->doTask(TASK_RAZE);
@@ -876,6 +893,9 @@ void CvPlayerAI::AI_considerRaze()
 	if (iNumCities <= 1 || GetPlayerTraits()->IsNoAnnexing())
 		return;
 
+	// Stacking AI: stop razing cities once approval has recovered.
+	CvStackingAI::UnrazeRecoveredCities(*this);
+
 	bool bCanRevoltIdeology = GetCulture()->GetPublicOpinionUnhappiness() > 0;
 	bool bCanRevolt = IsEmpireSuperUnhappy() || (IsEmpireVeryUnhappy() && (MOD_BALANCE_VP || bCanRevoltIdeology));
 	if (!bCanRevolt)
@@ -928,8 +948,12 @@ void CvPlayerAI::AI_considerRaze()
 			continue;
 
 		// City is in danger of being captured? Raze with higher priority to deny our opponents the ability to capture it.
-		if (pLoopCity->IsInDangerFromPlayers(vPlayersAtWarWith))
+		const bool bEndangered = pLoopCity->IsInDangerFromPlayers(vPlayersAtWarWith);
+		if (bEndangered)
 			EndangeredCities.push_back(pLoopCity);
+		// Stacking AI: keep developed cities (buying their courthouse) unless endangered or revolt is imminent.
+		else if (CvStackingAI::KeepFromRazing(*this, pLoopCity))
+			continue;
 
 		ValidCities.push_back(pLoopCity);
 	}

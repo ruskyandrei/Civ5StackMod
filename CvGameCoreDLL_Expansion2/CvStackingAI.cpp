@@ -13,6 +13,8 @@
 #include "CvArmyAI.h"
 #include "CvAIOperation.h"
 #include "CvMilitaryAI.h"
+#include "CvEconomicAI.h"
+#include "CvBuildingClasses.h"
 #include "CvDangerPlots.h"
 #include "CvTacticalAI.h"
 #include "CvTypes.h"
@@ -165,6 +167,51 @@ namespace
     }
 }
 
+namespace
+{
+    bool HasLandDefender(const CvCity* city)
+    {
+        for(int i=0;i<city->plot()->getNumUnits();++i)
+        {
+            const CvUnit* u=city->plot()->getUnitByIndex(i);
+            if(u && u->getOwner()==city->getOwner() && u->getDomainType()==DOMAIN_LAND && u->IsCombatUnit() && !u->isDelayedDeath()) return true;
+        }
+        return false;
+    }
+    // No visible enemy warship near the city: embarked troops can cross.
+    bool SafeWaters(PlayerTypes owner,const CvPlot* plot)
+    {
+        CvPlayer& player=GET_PLAYER(owner);
+        const int radius=Setting("AIOverseasSafeWaterRadius",5);
+        for(int i=0;i<1+3*radius*(radius+1);++i)
+        {
+            const CvPlot* p=iterateRingPlots(plot,i);
+            if(!p || !p->isWater() || !p->isVisible(player.getTeam())) continue;
+            for(int j=0;j<p->getNumUnits();++j)
+            {
+                const CvUnit* u=p->getUnitByIndex(j);
+                if(u && u->getDomainType()==DOMAIN_SEA && u->IsCombatUnit() && player.IsAtWarWith(u->getOwner()) &&
+                    !u->isInvisible(player.getTeam(),false)) return false;
+            }
+        }
+        return true;
+    }
+    bool OverseasLandDemand(const CvUnit* unit,const CvCity* city)
+    {
+        return Setting("AIOverseasReinforcementEnabled",1)!=0 && unit->getDomainType()==DOMAIN_LAND && city->isCoastal() &&
+            city->plot()->getLandmass()!=unit->plot()->getLandmass() && !HasLandDefender(city) && SafeWaters(city->getOwner(),city->plot());
+    }
+    // City defense across the sea may embark when the waters are safe; other
+    // transfers stay on their landmass as before.
+    int ReinforcementFlags(const CvUnit* unit,const CvPlot* target,bool defense)
+    {
+        const bool embark=defense && Setting("AIOverseasReinforcementEnabled",1)!=0 && unit->getDomainType()==DOMAIN_LAND && target->isCity() &&
+            target->getLandmass()!=unit->plot()->getLandmass() && SafeWaters(unit->getOwner(),target);
+        return CvUnit::MOVEFLAG_APPROX_TARGET_RING2|CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN|CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER|
+            (embark?CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY:CvUnit::MOVEFLAG_NO_EMBARK);
+    }
+}
+
 namespace CvStackingAI
 {
     void StackMix::Add(const CvUnit* unit, const CvUnit* member, int memberDamage)
@@ -227,6 +274,102 @@ namespace CvStackingAI
         }
         return CvStackingAIPolicy::MedicPromotionPercent(medics,max(1,units),Setting("AIMedicUnitsPerMedic",6),
             Setting("AIMedicWantedPercent",150),Setting("AIMedicSurplusPercent",25));
+    }
+    // VP approval from citizen needs, as AI_considerRaze computes it.
+    static int ProjectedApproval(CvPlayer& player, int extraUnhappiness)
+    {
+        const int happy=player.GetHappinessFromCitizenNeeds(), unhappy=player.GetUnhappinessFromCitizenNeeds()+extraUnhappiness;
+        return happy<=0 ? 0 : min(200,happy*100/max(1,unhappy))/2;
+    }
+    bool ConquestWouldMakeUnhappy(CvPlayer& player, const CvCity* city)
+    {
+        if (!MOD_BALANCE_VP || !city || !Enabled(player.GetID()) || Setting("AIConquestPuppetEnabled",1)==0) return false;
+        return ProjectedApproval(player,city->getPopulation()) < GD_INT_GET(AI_MOSTLY_HAPPY_THRESHOLD);
+    }
+    // A developed city is worth more than a fresh one on the same tile; buy its
+    // courthouse instead when affordable.
+    bool KeepFromRazing(CvPlayer& player, CvCity* city)
+    {
+        if (!city || !Enabled(player.GetID()) || player.IsEmpireSuperUnhappy() ||
+            city->getPopulation()<Setting("AIRazeKeepMinimumPopulation",6)) return false;
+        if (city->IsOccupied() && !city->IsNoOccupiedUnhappiness() && !city->IsResistance())
+        {
+            for (int i=0; i<GC.getNumBuildingInfos(); ++i)
+            {
+                const BuildingTypes building=(BuildingTypes)i;
+                CvBuildingEntry* info=GC.getBuildingInfo(building);
+                if (!info || !info->IsNoOccupiedUnhappiness() || !city->canConstruct(building)) continue;
+                const int cost=city->GetPurchaseCost(building);
+                if (city->IsCanPurchase(true,true,NO_UNIT,building,NO_PROJECT,YIELD_GOLD) &&
+                    player.GetEconomicAI()->CanWithdrawMoneyForPurchase(PURCHASE_TYPE_BUILDING,cost,GD_INT_GET(AI_GOLD_PRIORITY_UNIT)) &&
+                    city->PurchaseBuilding(building,YIELD_GOLD))
+                    CvStackingDiagnostics::Record(1,player.GetID(),"CONQUEST","city=%d action=bought_courthouse cost=%d",city->GetID(),cost);
+                break;
+            }
+        }
+        return true;
+    }
+    void UnrazeRecoveredCities(CvPlayer& player)
+    {
+        if (!MOD_BALANCE_VP || !Enabled(player.GetID()) || ProjectedApproval(player,0)<Setting("AIUnrazeApprovalPercent",45)) return;
+        int loop=0;
+        for (CvCity* city=player.firstCity(&loop); city; city=player.nextCity(&loop))
+            if (city->IsRazing() && city->getPopulation()>=Setting("AIUnrazeMinimumPopulation",3))
+            {
+                CvStackingDiagnostics::Record(1,player.GetID(),"CONQUEST","city=%d population=%d action=unraze",city->GetID(),city->getPopulation());
+                player.unraze(city);
+            }
+    }
+    // At most one defensive purchase per player and turn:
+    // - a city captured across the sea within the last turns with no land unit;
+    // - a threatened city whose land defenders are all melee (cities do not
+    //   shoot, so it has no defensive fire).
+    void CityDefensePurchases(CvPlayer& player)
+    {
+        if (!Enabled(player.GetID())) return;
+        const CvCity* capital=player.getCapitalCity();
+        const int turn=GC.getGame().getGameTurn();
+        int loop=0;
+        for (CvCity* city=player.firstCity(&loop); city; city=player.nextCity(&loop))
+        {
+            if (city->IsResistance() || city->IsPuppet() || city->IsRazing()) continue;
+            if (Setting("AICapturedCityDefenderPurchase",1)!=0 && city->getOriginalOwner()!=player.GetID() &&
+                turn-city->getGameTurnAcquired()<=Setting("AICapturedCityDefenderTurns",15) && !HasLandDefender(city) &&
+                (!capital || capital->plot()->getLandmass()!=city->plot()->getLandmass()) && BuyCityUnit(city,UNITAI_RANGED))
+                return;
+            if (Setting("AICityMeleeOnlyRangedPurchase",1)==0) continue;
+            int melee=0, ranged=0;
+            for (int i=0; i<city->plot()->getNumUnits(); ++i)
+            {
+                const CvUnit* u=city->plot()->getUnitByIndex(i);
+                if (!Eligible(u,player.GetID(),DOMAIN_LAND)) continue;
+                if (RangedDefender(u)) ++ranged; else ++melee;
+            }
+            if (melee==0 || ranged>0 || melee>=CvStacking::GetCapacity(player.GetID(),DOMAIN_LAND,true)) continue;
+            const CityDefense a=AssessCity(city);
+            if ((a.immediate>0 || a.enemyStrength>0) && BuyCityUnit(city,UNITAI_RANGED))
+                return;
+        }
+    }
+    bool BuyCityUnit(CvCity* city, UnitAITypes role)
+    {
+        if (!city || !Enabled(city->getOwner()) || city->IsResistance() || city->IsPuppet()) return false;
+        const CvUnit* unit=GET_PLAYER(city->getOwner()).GetMilitaryAI()->BuyEmergencyUnit(role,city);
+        if (unit) CvStackingDiagnostics::Record(1,city->getOwner(),"CITY_PURCHASE","city=%d unit=%d role=%d",city->GetID(),unit->GetID(),role);
+        return unit!=NULL;
+    }
+    int SiegeTileScore(const CvUnit* unit, const CvPlot* plot, const CvPlot* cityPlot)
+    {
+        // Cheap geometry first: tactical searches call this for every destination.
+        if (!unit || !plot || !cityPlot || plotDistance(*plot,*cityPlot)>4 || !cityPlot->isCity() || !unit->IsCombatUnit() ||
+            unit->getDomainType()!=DOMAIN_LAND || !unit->isNativeDomain(plot) ||
+            !GET_PLAYER(unit->getOwner()).IsAtWarWith(cityPlot->getOwner()) || !Enabled(unit->getOwner()))
+            return 0;
+        int score = plot->defenseModifier(unit->getTeam(),false,false)*Setting("AISiegeCoverPercent",40)/100;
+        if (!unit->IsCanAttackRanged() && !unit->isRiverCrossingNoPenalty() && plot->isAdjacent(cityPlot) &&
+            plot->isRiverCrossing(directionXY(plot,cityPlot)))
+            score -= Setting("AISiegeRiverPenalty",8);
+        return score;
     }
     int CompositionScore(const CvUnit* unit, const CvPlot* plot)
     {
@@ -552,6 +695,10 @@ namespace CvStackingAI
             const bool rangedNeed=unit->getDomainType()==DOMAIN_LAND && RangedDefender(unit) && WantsRangedDefender(city);
             if(threat>localStrength || rangedNeed)
                 demands.push_back(Demand(city->plot()->GetPlotIndex(),Setting("AIReinforcementDefensePriority",300)+(rangedNeed?Setting("AICityRangedTransferPriority",80):0),max(UnitStrength(unit),threat-localStrength),-1,unit->getDomainType()));
+            // A city across the sea with no land unit (e.g. taken by ships) gets one
+            // while the waters around it are safe.
+            else if(OverseasLandDemand(unit,city))
+                demands.push_back(Demand(city->plot()->GetPlotIndex(),Setting("AIReinforcementDefensePriority",300),UnitStrength(unit),-1,DOMAIN_LAND));
         }
         if(demands.empty() && CvStackingOffensiveAI::JoinArrived(unit)) return true;
         std::vector<CvStackingOffensiveAI::Demand> offensive;
@@ -571,7 +718,7 @@ namespace CvStackingAI
                 max(1,(int)army->GetNumFormationEntries()-(int)army->GetNumSlotsFilled())*UnitStrength(unit),op->GetID(),unit->getDomainType()));
         }
         std::stable_sort(demands.begin(),demands.end());
-        int bestScore=INT_MIN; CvPlot* best=NULL; int bestOperation=-1,bestETA=INT_MAX,bestObjective=-1;
+        int bestScore=INT_MIN; CvPlot* best=NULL; int bestOperation=-1,bestETA=INT_MAX,bestObjective=-1,bestFlags=0;
         const Key key(player.GetID(),unit->GetID());
         const std::map<Key,Transfer>::const_iterator commitment=transfers.find(key);
         const int horizon=Setting("AIReinforcementMaximumTurns",12);
@@ -581,7 +728,7 @@ namespace CvStackingAI
             if(!target || plotDistance(*unit->plot(),*target)<=2 || RecruitmentBlocked(unit,target)) continue;
             if(pathQueries[player.GetID()]>=Setting("AIReinforcementPathQueriesPerTurn",32)) break;
             ++pathQueries[player.GetID()];
-            const int flags=CvUnit::MOVEFLAG_APPROX_TARGET_RING2|CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN|CvUnit::MOVEFLAG_NO_EMBARK|CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER;
+            const int flags=ReinforcementFlags(unit,target,d.operation==-1 && d.objective<0);
             const int eta=unit->TurnsToReachTarget(target,flags,horizon);
             if(eta==INT_MAX || eta>horizon)
             {
@@ -596,10 +743,10 @@ namespace CvStackingAI
             if(inbound>=d.strength) continue;
             const int score=CvStackingAIPolicy::ScoreDemand(d.priority,max(0,d.strength-inbound),eta,Setting("AIReinforcementTravelWeight",15),
                 commitment!=transfers.end() && commitment->second.target==d.plot,Setting("AIReassignmentContinuityBonus",40));
-            if(score>bestScore) { bestScore=score; best=target; bestOperation=d.operation; bestETA=eta; bestObjective=d.objective; }
+            if(score>bestScore) { bestScore=score; best=target; bestOperation=d.operation; bestETA=eta; bestObjective=d.objective; bestFlags=flags; }
         }
         if(!best) return CvStackingOffensiveAI::HoldReserve(unit);
-        const int flags=CvUnit::MOVEFLAG_APPROX_TARGET_RING2|CvUnit::MOVEFLAG_APPROX_TARGET_NATIVE_DOMAIN|CvUnit::MOVEFLAG_NO_EMBARK|CvUnit::MOVEFLAG_AI_ABORT_IN_DANGER;
+        const int flags=bestFlags;
         if(!unit->GeneratePath(best,flags,horizon))
         {
             CvStackingDiagnostics::Record(2,player.GetID(),"REINFORCEMENT","unit=%d goal=%d reason=path_changed",unit->GetID(),best->GetPlotIndex());

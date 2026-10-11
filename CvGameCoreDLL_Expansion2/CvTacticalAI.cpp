@@ -817,6 +817,9 @@ void CvTacticalAI::ProcessDominanceZones()
 		AssignGlobalLowPrioMoves();
 	}
 
+	// retained city defenders strike once the coordinated moves have weakened the besiegers
+	ExecuteLateGarrisonAttacks();
+
 	//failsafe
 	ReviewUnassignedUnits();
 }
@@ -1765,6 +1768,43 @@ void CvTacticalAI::PlotBarbarianCampDefense()
 	}
 }
 
+/// Retained city defenders attack after the coordinated attacks. A healthy melee
+/// defender may leave the city to finish a target when enough defenders stay behind.
+void CvTacticalAI::ExecuteLateGarrisonAttacks()
+{
+	vector<int> attackers;
+	attackers.swap(m_lateGarrisonAttackers);
+	const bool sortieEnabled = CvStacking::GetInt("AIGarrisonSortieEnabled",1) != 0;
+	const int stayMinimum = CvStacking::GetInt("AIGarrisonSortieMinimumDefenders",2);
+	for (size_t i = 0; i < attackers.size(); ++i)
+	{
+		CvUnit* defender = m_pPlayer->getUnit(attackers[i]);
+		if (!defender || defender->isDelayedDeath() || !defender->plot() || !defender->plot()->isCity())
+			continue;
+		const CvPlot* city = defender->plot();
+		int others = 0;
+		for (int j = 0; j < city->getNumUnits(); ++j)
+		{
+			const CvUnit* other = city->getUnitByIndex(j);
+			if (other && other != defender && other->getOwner() == m_pPlayer->GetID() && other->getDomainType() == DOMAIN_LAND &&
+				other->IsCombatUnit() && !other->isDelayedDeath())
+				++others;
+		}
+		const bool sortie = sortieEnabled && others >= stayMinimum && !defender->IsCanAttackRanged() &&
+			defender->GetCurrHitPoints() * 4 >= defender->GetMaxHitPoints() * 3;
+		const int from = city->GetPlotIndex();
+		TacticalAIHelpers::PerformOpportunityAttack(defender, sortie);
+		defender = m_pPlayer->getUnit(attackers[i]);
+		if (!defender || defender->isDelayedDeath() || !defender->plot())
+			continue;
+		if (defender->plot()->GetPlotIndex() != from)
+			CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"GARRISON_SORTIE","unit=%d city=%d after=%d hp=%d",
+				attackers[i],from,defender->plot()->GetPlotIndex(),defender->GetCurrHitPoints());
+		else if (defender->canMove())
+			defender->PushMission(CvTypes::getMISSION_SKIP());
+	}
+}
+
 /// Make a defensive move to garrison a city
 void CvTacticalAI::PlotGarrisonMoves(int iNumTurnsAway)
 {
@@ -1811,10 +1851,15 @@ void CvTacticalAI::PlotGarrisonMoves(int iNumTurnsAway)
 			{
 				CvUnit* defender=m_pPlayer->getUnit(retained[i]);
 				if (!defender || !CvStackingAI::RetainCityUnit(defender)) continue;
-				TacticalAIHelpers::PerformOpportunityAttack(defender,false);
-				defender=m_pPlayer->getUnit(retained[i]);
-				if (!defender || defender->isDelayedDeath()) continue;
-				defender->PushMission(CvTypes::getMISSION_SKIP());
+				if (CvStacking::GetInt("AIGarrisonLateAttacks",1)!=0)
+					m_lateGarrisonAttackers.push_back(defender->GetID());
+				else
+				{
+					TacticalAIHelpers::PerformOpportunityAttack(defender,false);
+					defender=m_pPlayer->getUnit(retained[i]);
+					if (!defender || defender->isDelayedDeath()) continue;
+					defender->PushMission(CvTypes::getMISSION_SKIP());
+				}
 				CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CITY_RETAIN","city=%d plot=%d unit=%d domain=%d role=%d ranged=%d siege=%d garrison=%d hp=%d reason=defense_requirement",
 					pCity->GetID(),pPlot->GetPlotIndex(),defender->GetID(),defender->getDomainType(),defender->AI_getUnitAIType(),
 					defender->IsCanAttackRanged(),CvStackingOffensiveAI::IsSiegeUnit(defender),defender->IsGarrisoned(),defender->GetCurrHitPoints());
@@ -11629,6 +11674,9 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
   iDangerScore += ScoreStackPosition(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition, &destinationStack);
   destinationStack.Release();
   iDangerScore += ScoreCityBlockadePosition(pUnit, pTestPlot, assumedPosition);
+  // Where units wait during a siege: cover, and no river between melee and the city.
+  if (evalMode != EM_INTERMEDIATE)
+   iDangerScore += CvStackingAI::SiegeTileScore(pUnit, pTestPlot, assumedPosition.getTarget());
   // Flanks only help attacks made later this turn; final positions do not keep it.
   if (evalMode == EM_INTERMEDIATE && bMoving && assumedPosition.haveEnemies())
    iDangerScore += ScoreFlankPosition(unit, testPlot, assumedPosition);

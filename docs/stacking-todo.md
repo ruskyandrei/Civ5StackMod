@@ -19,15 +19,22 @@ Today:
   defensive fire; the roster wants 2 ranged defenders when threatened but
   takes melee when none are present.
 
-- [ ] Let retained defenders take part in the tactical search for attacks,
+- [x] Let retained defenders take part in the tactical search for attacks,
   provided they end the turn in the city (a melee attack from a city does
   not advance). At least, run their opportunity attacks after the ranged and
   coordinated moves, so they can finish wounded units.
-- [ ] Allow a sortie when the odds are clearly good: e.g. a mobile unit hits a
+  Done (2026-10-11) as the minimum: `ExecuteLateGarrisonAttacks` runs them
+  after all other tactical moves (`AIGarrisonLateAttacks`). Joining the
+  tactical search itself is still open.
+- [x] Allow a sortie when the odds are clearly good: e.g. a mobile unit hits a
   nearby artillery stack and returns the same turn, or a kill that leaves the
   city still held by enough defenders.
-- [ ] A threatened city holding only melee units buys (or gets priority for) a
+  Done (2026-10-11): a melee defender at 75% HP or more may attack with
+  movement while `AIGarrisonSortieMinimumDefenders` (2) stay (logged as
+  `GARRISON_SORTIE`). Hit-and-return is not planned.
+- [x] A threatened city holding only melee units buys (or gets priority for) a
   ranged defender, so it has defensive fire.
+  Done (2026-10-11): `CityDefensePurchases`, `AICityMeleeOnlyRangedPurchase`.
 
 ## Overseas cities captured by navies are not held — 2026-10-11
 
@@ -47,17 +54,24 @@ Causes:
   once the city is threatened (and, for city defense, in an enemy-dominated
   zone).
 
-- [ ] Overseas reinforcement: for city-defense demands to a city on another
+- [x] Overseas reinforcement: for city-defense demands to a city on another
   landmass, path with `MOVEFLAG_SAFE_EMBARK_ONLY` (as `StageUnit` does)
   instead of `MOVEFLAG_NO_EMBARK`, only while the player has naval control
   of the waters around the city (no strong enemy navy nearby).
-- [ ] Defender for a captured city without a land unit: on another landmass,
+  Done (2026-10-11): `AIOverseasReinforcementEnabled`; safe means no visible
+  enemy warship within `AIOverseasSafeWaterRadius` (5). A coastal city on
+  another landmass with no land unit also raises a defense demand.
+- [x] Defender for a captured city without a land unit: on another landmass,
   put a land defender at the front of its production queue and buy it with
   gold as soon as resistance ends.
-- [ ] Prefer the combined operation for cities on another landmass: against a
+  Done (2026-10-11) as a gold purchase only (`AICapturedCityDefenderPurchase`,
+  within `AICapturedCityDefenderTurns` of capture; logged as `CITY_PURCHASE`).
+- [x] Prefer the combined operation for cities on another landmass: against a
   major civ's city, choose `AI_OPERATION_CITY_ATTACK_COMBINED` over
   `AI_OPERATION_CITY_ATTACK_NAVAL` when spare land units exist, or hold the
   naval capture until a land unit is within a turn or two.
+  Done (2026-10-11): `SetBestTargetApproach` scales the naval score by
+  `AIOverseasNavalApproachPercent` (60) in that case.
 - [ ] Measure: cities captured by sea and lost again within about 10 turns,
   before and after (checkpoints record owner and acquired turn per city).
 
@@ -81,21 +95,27 @@ Cause (VP `CvPlayerAI::AI_conquerCity`, `AI_considerRaze`):
 - A puppet counts only population/4 (plus specialists) and is never a raze
   candidate; VP's `AI_considerAnnex` annexes puppets later when happy.
 
-- [ ] Puppet instead of annexing when the city would push the empire below the
+- [x] Puppet instead of annexing when the city would push the empire below the
   happiness line: in `AI_conquerCity`, project approval with the captured
   city's population added to unhappiness (`GetUnhappinessFromCitizenNeeds`,
   the same ratio `AI_considerRaze` uses) and puppet when the projection is
   under `AI_MOSTLY_HAPPY_THRESHOLD`. Let `AI_considerAnnex` annex it later.
-- [ ] Do not raze a conquered city whose tile is a good settling site for its
+  Done (2026-10-11): `AIConquestPuppetEnabled`.
+- [x] Do not raze a conquered city whose tile is a good settling site for its
   owner (site evaluator value at or above the player's current settling
   threshold) unless approval is below `SUPER_UNHAPPY_THRESHOLD` (20) or the
   city is endangered; prefer rushing its courthouse.
-- [ ] Stop razing (`unraze`) when approval recovers to about 45% while the
+  Done (2026-10-11) with population instead of the site value: cities of
+  `AIRazeKeepMinimumPopulation` (6) or more are puppeted instead of razed on
+  capture and skipped by `AI_considerRaze`, and their courthouse is bought.
+- [x] Stop razing (`unraze`) when approval recovers to about 45% while the
   city still has meaningful population; today only wonder cities are
   unrazed.
+  Done (2026-10-11): `AIUnrazeApprovalPercent`, `AIUnrazeMinimumPopulation`.
 - [ ] Measure: count raze decisions and resettled razed tiles per game (new
   diagnostics row or checkpoint comparison of plots whose city's founding
-  turn changes).
+  turn changes). `CONQUEST` rows now log puppet, kept-from-razing, unraze and
+  courthouse decisions (`work/summarize-ai-features.py` counts them).
 
 ## Siege positions: cover and river crossings — 2026-10-11
 
@@ -111,16 +131,21 @@ zero against a weak garrison, since cities do not shoot) plus a flat
 `defenseModifier/5` in `ScoreCombatUnitTurnEnd`. `StageUnit` and the capturer
 tiles in `AttackApproach` (CvStackingOffensiveAI.cpp) sort by distance only.
 
-- [ ] Tactical final positions for melee units next to the position's target
+- [x] Tactical final positions for melee units next to the position's target
   city: a penalty when attacking the city from that tile would cross a river
   (new `AISiegeRiverPenalty`, about 8; skip units with
   `isRiverCrossingNoPenalty`), and a cover bonus scaled by the tile's
   defence modifier (new `AISiegeCoverPercent`, forest/jungle/hills worth
   about 8-12 instead of 5).
-- [ ] The same two terms in the tile sorts of `StageUnit` and `AttackApproach`
+  Done (2026-10-11): `CvStackingAI::SiegeTileScore` in
+  `ScorePlotForCombatUnitMove` (initial and final positions, within four
+  tiles of the target city; cover applies to ranged units too).
+- [x] The same two terms in the tile sorts of `StageUnit` and `AttackApproach`
   (about one tile of distance each), so stacks wait in cover and approach
   from the side the river does not protect.
-- [ ] Ranged units keep the current logic apart from the cover bonus (ranged
+  Done (2026-10-11) for `StageUnit` and the ranged firing positions of
+  `AttackApproach`; melee capturer paths still take the nearest ring tile.
+- [x] Ranged units keep the current logic apart from the cover bonus (ranged
   attacks have no river penalty). Where every approach crosses a river the
   penalty is uniform and drops out.
 - [ ] Check that it composes with the blockade scoring (cover tiles next to
