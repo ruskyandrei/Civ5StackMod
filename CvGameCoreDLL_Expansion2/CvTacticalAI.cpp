@@ -7,6 +7,7 @@
 	------------------------------------------------------------------------------------------------------- */
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingAI.h"
+#include "CvStackingAIPolicy.h"
 #include "CvStackingOffensiveAI.h"
 #include "CvStackingRules.h"
 #include "CvStackingStrengthCache.h"
@@ -4126,21 +4127,42 @@ void CvTacticalAI::ExecuteRepositionMoves()
 		}
 
 		//find a good spot
-		for (int i = 0; i<iNumPlots; i++)
+		// With stacking, take the acceptable spot that best completes a mixed
+		// stack; the shuffled order still breaks ties.
+		const bool bScoreStacks = CvStackingAI::Enabled(m_pPlayer->GetID());
+		CvPlot* pBestStackPlot = NULL;
+		int iBestStackScore = INT_MIN;
+		for (int i = 0; i<=iNumPlots; i++)
 		{
-			CvPlot* pTestPlot = iterateRingPlots(pTarget, shuffledIndex[i]);
+			CvPlot* pTestPlot = i < iNumPlots ? iterateRingPlots(pTarget, shuffledIndex[i]) : pBestStackPlot;
 			if (!pTestPlot)
 				continue;
 
-			if (pUnit->IsCanAttackRanged())
-				if (pTestPlot->IsAdjacentOwnedByTeamOtherThan(m_pPlayer->getTeam()))
+			if (i < iNumPlots)
+			{
+				if (pUnit->IsCanAttackRanged())
+					if (pTestPlot->IsAdjacentOwnedByTeamOtherThan(m_pPlayer->getTeam()))
+						continue;
+
+				//staging is not fighting ...
+				if (pUnit->GetDanger(pTestPlot) > pUnit->GetCurrHitPoints()/5)
 					continue;
 
-			//staging is not fighting ...
-			if (pUnit->GetDanger(pTestPlot) > pUnit->GetCurrHitPoints()/5)
-				continue;
+				if (!TacticalAIHelpers::IsGoodPlotForStaging(m_pPlayer, pTestPlot, pUnit->getDomainType()))
+					continue;
 
-			if (TacticalAIHelpers::IsGoodPlotForStaging(m_pPlayer, pTestPlot, pUnit->getDomainType()))
+				if (bScoreStacks)
+				{
+					const int iStackScore = CvStackingAI::CompositionScore(pUnit, pTestPlot);
+					if (iStackScore > iBestStackScore)
+					{
+						iBestStackScore = iStackScore;
+						pBestStackPlot = pTestPlot;
+					}
+					continue;
+				}
+			}
+
 			{
 				if(GC.getLogging() && GC.getAILogging() && m_pPlayer->isMajorCiv())
 				{
@@ -9977,35 +9999,201 @@ static bool CanApproachInProtectedStack(const CvUnit* unit, const CvPlot* destin
  return true;
 }
 
-// Geometric encirclement counts occupied passable hexes, never units in a stack.
-// This remains a conservative addition to the live blockade/zone-of-control rules.
+// One own combat unit standing on a plot in the virtual position (fixed
+// friendlies included) that can hold a blockade there or project it onto tile.
+static bool HasVirtualBlockader(const CvTacticalPosition& position, const CvPlot* plot, const CvPlot* tile, const CvUnit* exclude)
+{
+ const CvTacticalPlot* tactical = position.getTactPlot(plot->GetPlotIndex());
+ if (!tactical)
+  return false;
+ const CvTacticalPlot::FixedUnitList& fixedUnits = tactical->getFixedFriendlyUnits();
+ const CvTacticalPlot::UnitList& units = tactical->getUnitsAtPlot();
+ const size_t count = fixedUnits.size() + units.size();
+ for (size_t i = 0; i < count; ++i)
+ {
+  const CvUnit* member;
+  int damage = 0;
+  if (i < fixedUnits.size())
+   member = fixedUnits[i];
+  else
+  {
+   const int id = units[i - fixedUnits.size()].iUnitID;
+   member = GET_PLAYER(position.getPlayer()).getUnit(id);
+   const SUnitStats* stats = position.GetUnitStats(id);
+   if (stats)
+    damage = stats->iSelfDamage;
+  }
+  if (member && member != exclude && member->getOwner() == position.getPlayer() && member->IsCombatUnit() &&
+   !member->isCargo() && !member->isDelayedDeath() && member->IsCanDefend() && member->isNativeDomain(plot) &&
+   (plot == tile || member->isNativeDomain(tile)) && member->GetCurrHitPoints() > damage)
+   return true;
+ }
+ return false;
+}
+
+static int CityBlockadeRange(const CvPlot* tile)
+{
+ return tile->isWater() ? range(/*2 in CP, 1 in VP*/ GD_INT_GET(NAVAL_PLOT_BLOCKADE_RANGE), 0, 3) : (MOD_BALANCE_LAND_UNITS_ADJACENT_BLOCKADE ? 1 : 0);
+}
+
+// CvPlot::isBlockaded for the city's owner, on virtual positions: 1 when an
+// own unit holds the tile or one within the blockade range on the same
+// landmass projects onto it, -1 when a surviving enemy holds it, else 0.
+static int VirtualTileBlockade(const CvTacticalPosition& position, const CvCity* city, const CvPlot* tile, const CvUnit* exclude)
+{
+ const CvTacticalPlot* tactical = position.getTactPlot(tile->GetPlotIndex());
+ if (!tactical)
+  return const_cast<CvPlot*>(tile)->isBlockaded(city->getOwner()) ? 1 : 0;
+ if (HasVirtualBlockader(position, tile, tile, exclude))
+  return 1;
+ const vector<const CvUnit*>& enemies = tactical->getEnemyUnits();
+ for (size_t i = 0; i < enemies.size(); ++i)
+  if (enemies[i]->IsCombatUnit() && enemies[i]->GetCurrHitPoints() > position.GetUnitDamageDealt().GetValue(enemies[i]->GetID()))
+   return -1;
+ const int blockadeRange = CityBlockadeRange(tile);
+ for (int i = RING0_PLOTS; i < RING_PLOTS[blockadeRange]; ++i)
+ {
+  const CvPlot* neighbor = iterateRingPlots(tile, i);
+  if (neighbor && neighbor != tile && neighbor->getLandmass() == tile->getLandmass() && HasVirtualBlockader(position, neighbor, tile, exclude))
+   return 1;
+ }
+ return 0;
+}
+
+// Mirrors CvCity::IsBlockaded: every passable neighbour, land and sea, must be
+// blockaded, either occupied or covered by a unit's blockade range.
 static bool HasVirtualCityEncirclement(const CvTacticalPosition& position, const CvCity* city)
 {
+ if (city->GetSappedTurns() > 0)
+  return true;
  CvPlot** neighbors = GC.getMap().getNeighborsUnchecked(city->plot());
  for (int d = 0; d < NUM_DIRECTION_TYPES; ++d)
  {
   const CvPlot* plot = neighbors[d];
   if (!plot || plot->isImpassable(city->getTeam()))
    continue;
-  if (plot->isCity())
-   return false;
-  VirtualFriendlyStackQuery stack;
-  vector<const CvUnit*>& members = stack.candidates;
-  SUnitIDValueContainer& damage = stack.damage;
-  GetVirtualFriendlyStack(position, plot, NULL, 0, members, damage);
-  bool occupied = false;
-  for (size_t i = 0; i < members.size(); ++i)
-  {
-   const CvUnit* member = members[i];
-   if (member && member->getOwner() == position.getPlayer() && member->IsCombatUnit() && !member->isCargo() &&
-    !member->isDelayedDeath() && member->IsCanDefend() && member->isNativeDomain(plot) &&
-    member->GetCurrHitPoints() > damage.GetValue(member->GetID()))
-   { occupied = true; break; }
-  }
-  if (!occupied)
+  if (plot->isCity() || VirtualTileBlockade(position, city, plot, NULL) <= 0)
    return false;
  }
  return true;
+}
+
+// A blockaded city does not heal and takes extra damage. Credit a position for
+// the city-adjacent tiles it newly blockades, and much more for completing the
+// blockade, against the position's target city only.
+static int ScoreCityBlockadePosition(const CvUnit* unit, const CvPlot* plot, const CvTacticalPosition& position)
+{
+ const int tileBonus = CvStacking::GetIntByKey(CvStacking::HOT_AISiegeBlockadeTileBonus, 3);
+ const int completeBonus = CvStacking::GetIntByKey(CvStacking::HOT_AISiegeBlockadeCompleteBonus, 30);
+ const CvPlot* target = position.getTarget();
+ if ((tileBonus <= 0 && completeBonus <= 0) || !target || !target->isCity() || plotDistance(*plot, *target) > 4)
+  return 0;
+ const CvCity* city = target->getPlotCity();
+ if (!city || city->GetSappedTurns() > 0 || !GET_PLAYER(unit->getOwner()).IsAtWarWith(city->getOwner()) ||
+  !unit->IsCombatUnit() || !unit->IsCanDefend() || unit->isCargo() || !unit->isNativeDomain(plot))
+  return 0;
+ int tiles = 0, before = 0, after = 0;
+ bool possible = true;
+ CvPlot** neighbors = GC.getMap().getNeighborsUnchecked(city->plot());
+ for (int d = 0; d < NUM_DIRECTION_TYPES; ++d)
+ {
+  const CvPlot* tile = neighbors[d];
+  if (!tile || tile->isImpassable(city->getTeam()))
+   continue;
+  ++tiles;
+  if (tile->isCity())
+  { possible = false; continue; }
+  const int state = VirtualTileBlockade(position, city, tile, unit);
+  if (state < 0)
+  { possible = false; continue; }
+  if (state > 0)
+  { ++before; ++after; continue; }
+  if (plot == tile || (plotDistance(*plot, *tile) <= CityBlockadeRange(tile) && plot->getLandmass() == tile->getLandmass() && unit->isNativeDomain(tile)))
+   ++after;
+ }
+ int score = (after - before) * tileBonus;
+ if (possible && tiles > 0 && after == tiles && before < tiles)
+  score += completeBonus;
+ return score;
+}
+
+// A melee unit moving next to an enemy stack adds a flank to every later melee
+// attack on it this turn. Reward the move while friends that can still attack
+// that stack remain; their attack forecasts then include the flank.
+static int ScoreFlankPosition(const SUnitStats& unit, const CvTacticalPlot* testPlot, const CvTacticalPosition& position)
+{
+ const int bonus = CvStacking::GetIntByKey(CvStacking::HOT_AIFlankPositionBonus, 5);
+ const CvUnit* pUnit = unit.pUnit;
+ if (bonus <= 0 || pUnit->IsCanAttackRanged() || !pUnit->IsCanDefend() || pUnit->GetFlankPower() <= 0 || pUnit->isEmbarked())
+  return 0;
+ const DomainTypes domain = pUnit->getDomainType();
+ if (testPlot->getNumAdjacentEnemies(domain == DOMAIN_SEA ? CvTacticalPlot::TD_SEA : CvTacticalPlot::TD_LAND) == 0)
+  return 0;
+ const vector<SUnitStats>& others = position.getAvailableUnits();
+ const int denominator = max(1, (int)GD_INT_GET(MOVE_DENOMINATOR));
+ int score = 0, flanked = 0;
+ CvPlot** neighbors = GC.getMap().getNeighborsUnchecked(testPlot->getPlot());
+ for (int d = 0; d < NUM_DIRECTION_TYPES && flanked < 2; ++d)
+ {
+  const CvPlot* neighbor = neighbors[d];
+  if (!neighbor || neighbor->isCity())
+   continue;
+  const CvTacticalPlot* tactical = position.getTactPlot(neighbor->GetPlotIndex());
+  if (!tactical)
+   continue;
+  const vector<const CvUnit*>& enemies = tactical->getEnemyUnits();
+  bool target = false;
+  for (size_t i = 0; i < enemies.size() && !target; ++i)
+   target = enemies[i]->getDomainType() == domain && !enemies[i]->isEmbarked() &&
+    enemies[i]->GetCurrHitPoints() > position.GetUnitDamageDealt().GetValue(enemies[i]->GetID());
+  if (!target)
+   continue;
+  int attackers = 0;
+  for (size_t i = 0; i < others.size() && attackers < 3; ++i)
+  {
+   const SUnitStats& other = others[i];
+   if (other.iUnitID == unit.iUnitID || other.iAttacksLeft <= 0 || other.iMovesLeft <= 0 || other.pUnit->IsCanAttackRanged() ||
+    other.pUnit->getDomainType() != domain || !other.pUnit->IsCanAttack())
+    continue;
+   const CvPlot* from = GC.getMap().plotByIndexUnchecked(other.iPlotIndex);
+   if (plotDistance(*from, *neighbor) <= max(1, other.iMovesLeft / denominator))
+    ++attackers;
+  }
+  if (attackers > 0)
+  {
+   score += bonus * attackers;
+   ++flanked;
+  }
+ }
+ return score;
+}
+
+// Melee/ranged mix and medic cover of the stack this unit would join, from the
+// virtual position. It needs no danger forecast, so it is scored on safe tiles
+// too, where gathering armies form their stacks.
+static int ScoreVirtualStackComposition(const CvUnit* unit, const CvPlot* plot, int selfDamage, const CvTacticalPosition& position)
+{
+ if (!unit->IsCombatUnit() || unit->getDomainType() == DOMAIN_AIR || unit->isCargo() || !unit->isNativeDomain(plot))
+  return 0;
+ const CvTacticalPlot* tactical = position.getTactPlot(plot->GetPlotIndex());
+ if (!tactical)
+  return 0;
+ const CvTacticalPlot::FixedUnitList& fixedUnits = tactical->getFixedFriendlyUnits();
+ const CvTacticalPlot::UnitList& units = tactical->getUnitsAtPlot();
+ const size_t count = fixedUnits.size() + units.size();
+ CvStackingAI::StackMix mix;
+ for (size_t i = 0; i < count; ++i)
+ {
+  if (i < fixedUnits.size())
+   mix.Add(unit, fixedUnits[i], 0);
+  else
+  {
+   const int id = units[i - fixedUnits.size()].iUnitID;
+   const SUnitStats* stats = position.GetUnitStats(id);
+   mix.Add(unit, GET_PLAYER(position.getPlayer()).getUnit(id), stats ? stats->iSelfDamage : 0);
+  }
+ }
+ return mix.Score(unit, selfDamage);
 }
 
 static int GetUnitDangerForPlot(const CvUnit* pUnit, const CvPlot* pPlot, int iSelfDamage, const CvTacticalPosition& assumedPosition,
@@ -10155,17 +10343,18 @@ static int ScoreStackPosition(const CvUnit* unit, const CvPlot* plot, int selfDa
  CvStackingDiagnostics::PlanSampleScope sample(CvStackingDiagnostics::PLAN_STACK_SCORE); // PLAN_SAMPLE_DIAGNOSTIC_ONLY
  if (!StackPreferencesEnabled())
   return 0;
+ const int composition = ScoreVirtualStackComposition(unit, plot, selfDamage, position);
  int fixedDanger = 0;
  if (GET_PLAYER(unit->getOwner()).GetDangerPlots()->TryGetFixedStackDanger(*plot, unit, fixedDanger))
-  return 0;
+  return composition;
  if (destinationStack)
  {
   const VirtualFriendlyStackBuffer& stack = destinationStack->Get(position, plot, unit, selfDamage);
-  return ScoreStackPositionMembers(unit, plot, position, stack.candidates, stack.damage);
+  return composition + ScoreStackPositionMembers(unit, plot, position, stack.candidates, stack.damage);
  }
  VirtualFriendlyStackQuery stack;
  GetVirtualFriendlyStack(position, plot, unit, selfDamage, stack.candidates, stack.damage);
- return ScoreStackPositionMembers(unit, plot, position, stack.candidates, stack.damage);
+ return composition + ScoreStackPositionMembers(unit, plot, position, stack.candidates, stack.damage);
 }
 
 // what is the rough state looking like after this assignment
@@ -10329,7 +10518,8 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
 		}
 
 		//city blockaded? not 100% accurate, but anyway TODO actual figure out if it's blockaded
-		if (bBlockaded)
+		// Ranged city damage already includes the modifier for a live blockade.
+		if (bBlockaded && !(bRanged && CvStacking::IsEnabled() && pEnemyCity->IsBlockadedWaterAndLand()))
 		{
 			iCityDamageDealt *= max(100 + /*0 in CP, 20 in VP*/ GD_INT_GET(BLOCKADED_CITY_ATTACK_MODIFIER), 0);
 			iCityDamageDealt /= 100;
@@ -10378,7 +10568,9 @@ bool ScoreAttackDamage(const CvTacticalPlot* tactPlot, const CvUnit* pUnit, cons
    {
     iDelta = VirtualFlankPower(assumedPosition, pTestPlot, pEnemyUnit->getDomainType(), true, pUnit)
      - VirtualFlankPower(assumedPosition, pUnitPlot, pUnit->getDomainType(), false, pEnemyUnit);
-    const int modifier = max(0, GD_INT_GET(BONUS_PER_ADJACENT_FRIEND));
+    // CvPlot::GetEffectiveFlankingBonus adds the side's own flank promotions.
+    const int modifier = max(0, GD_INT_GET(BONUS_PER_ADJACENT_FRIEND) +
+     (iDelta >= 0 ? pUnit->GetFlankAttackModifier() : pEnemyUnit->GetFlankAttackModifier()));
     const int ratio = 100 + abs(iDelta) * modifier;
     // A stack can provide far more than six flankers. A linear subtraction
     // would turn retaliation negative and reward fictitious healing.
@@ -11436,6 +11628,10 @@ static STacticalAssignment* ScorePlotForCombatUnitMove(const SUnitStats& unit, c
  {
   iDangerScore += ScoreStackPosition(pUnit, pTestPlot, unit.iSelfDamage + iSelfDamage, assumedPosition, &destinationStack);
   destinationStack.Release();
+  iDangerScore += ScoreCityBlockadePosition(pUnit, pTestPlot, assumedPosition);
+  // Flanks only help attacks made later this turn; final positions do not keep it.
+  if (evalMode == EM_INTERMEDIATE && bMoving && assumedPosition.haveEnemies())
+   iDangerScore += ScoreFlankPosition(unit, testPlot, assumedPosition);
   if (bMoving && !pUnit->IsCanAttackRanged())
    iBonusScore += leavingProtection ? leavingProtection->Get(unit, assumedPosition) : CalculateLeavingStackProtectionScore(unit, assumedPosition);
  }

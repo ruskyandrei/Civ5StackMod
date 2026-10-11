@@ -43,6 +43,14 @@ namespace CvStacking
 		HOT_AIStackConcentrationFreeUnits,
 		HOT_AIStackConcentrationPenalty,
 		HOT_AIStackLeaveProtectorPenalty,
+		HOT_AIStackMixBonus,
+		HOT_AIStackAllRangedPenalty,
+		HOT_AIStackExtraMeleePenalty,
+		HOT_AIMedicStackBonus,
+		HOT_AIMedicHealWeight,
+		HOT_AIFlankPositionBonus,
+		HOT_AISiegeBlockadeTileBonus,
+		HOT_AISiegeBlockadeCompleteBonus,
 		HOT_SETTING_COUNT
 	};
 	// The loaded configuration's hot values, published once loading has finished

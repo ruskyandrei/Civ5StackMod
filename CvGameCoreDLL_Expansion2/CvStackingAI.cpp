@@ -140,7 +140,13 @@ namespace
             for(size_t i=0;i<units.size();++i)if(RangedDefender(units[i])){garrison=units[i];break;}
         retained.push_back(garrison);
         int ranged=RangedDefender(garrison)?1:0,melee=ranged?0:1,strength=DefenderValue(garrison,garrison);
-        for(size_t i=0;i<units.size() && ranged<a.rangedMinimum && retained.size()<(size_t)a.landMaximum;++i)
+        // A city holding two or more defenders keeps one melee protector among
+        // its ranged units when one is on the tile, rather than only ranged.
+        const int minimumMelee=a.landMaximum>=2 ? min(Setting("AICityMinimumMeleeDefenders",1),a.meleeMaximum) : 0;
+        bool meleeAvailable=false;
+        for(size_t i=0;i<units.size() && !meleeAvailable;++i) meleeAvailable=units[i]!=garrison && !RangedDefender(units[i]);
+        const size_t rangedSlots=(size_t)a.landMaximum-(meleeAvailable && melee<minimumMelee ? (size_t)(minimumMelee-melee) : 0);
+        for(size_t i=0;i<units.size() && ranged<a.rangedMinimum && retained.size()<rangedSlots;++i)
             if(units[i]!=garrison && RangedDefender(units[i]))
             { retained.push_back(units[i]);++ranged;strength+=DefenderValue(units[i],garrison); }
         for(size_t i=0;i<units.size() && retained.size()<(size_t)a.landMaximum;++i)
@@ -148,7 +154,11 @@ namespace
             const CvUnit* unit=units[i];
             if(std::find(retained.begin(),retained.end(),unit)!=retained.end()) continue;
             if(!RangedDefender(unit) && melee>=a.meleeMaximum) continue;
-            if(retained.size()>=(size_t)a.landMinimum && strength>=a.landStrength && ranged>=a.rangedMinimum) break;
+            if(retained.size()>=(size_t)a.landMinimum && strength>=a.landStrength && ranged>=a.rangedMinimum)
+            {
+                if(melee>=minimumMelee || retained.size()<2) break;
+                if(RangedDefender(unit)) continue;
+            }
             retained.push_back(unit);strength+=DefenderValue(unit,garrison);
             if(RangedDefender(unit))++ranged;else++melee;
         }
@@ -157,6 +167,77 @@ namespace
 
 namespace CvStackingAI
 {
+    void StackMix::Add(const CvUnit* unit, const CvUnit* member, int memberDamage)
+    {
+        if (!member || member == unit || member->getOwner() != unit->getOwner() || !member->IsCombatUnit() || member->isCargo() ||
+            member->isDelayedDeath() || member->getDomainType() != unit->getDomainType() || member->GetCurrHitPoints() <= memberDamage)
+            return;
+        ++others;
+        // Land and naval stacks alike; a carrier or other unarmed defender protects no one.
+        if (member->IsCanAttackRanged()) ++ranged;
+        else if (member->IsCanDefend() && member->IsCanAttack()) ++melee;
+        otherHeal = max(otherHeal, member->getSameTileHeal());
+        const int ownHeal = unit->getSameTileHeal();
+        if (ownHeal > 0) healable += min(ownHeal, member->getDamage() + memberDamage);
+    }
+    int StackMix::Score(const CvUnit* unit, int selfDamage) const
+    {
+        const bool rangedUnit = unit->IsCanAttackRanged();
+        const bool meleeUnit = !rangedUnit && unit->IsCanDefend() && unit->IsCanAttack();
+        const int allMelee = melee + (meleeUnit ? 1 : 0);
+        int score = !rangedUnit && !meleeUnit ? 0 : CvStackingAIPolicy::CompositionScore(rangedUnit, allMelee, ranged + (rangedUnit ? 1 : 0),
+            CvStacking::GetIntByKey(CvStacking::HOT_AIStackMixBonus, 10),
+            CvStacking::GetIntByKey(CvStacking::HOT_AIStackAllRangedPenalty, 6),
+            CvStacking::GetIntByKey(CvStacking::HOT_AIStackExtraMeleePenalty, 6));
+        // A tile gives each unit only its best medic bonus, so a second medic adds nothing.
+        const int ownHeal = unit->getSameTileHeal();
+        const int weight = CvStacking::GetIntByKey(CvStacking::HOT_AIMedicHealWeight, 1);
+        if (ownHeal > otherHeal && others > 0)
+            score += CvStacking::GetIntByKey(CvStacking::HOT_AIMedicStackBonus, 6) + min(40, healable * weight);
+        else if (otherHeal > ownHeal)
+            score += min(40, min(otherHeal - ownHeal, unit->getDamage() + selfDamage) * weight);
+        return score;
+    }
+    // Scale for a heal-giving promotion on a unit that is not yet a medic: high
+    // while its army (or, outside armies, the player's units of its domain)
+    // has fewer medics than wanted, low once it has enough.
+    int MedicPromotionPercent(const CvUnit* unit)
+    {
+        if (!unit || !Enabled(unit->getOwner()) || unit->getSameTileHeal() > 0 || unit->getAdjacentTileHeal() > 0) return 100;
+        CvPlayer& player=GET_PLAYER(unit->getOwner());
+        int units=0,medics=0;
+        CvArmyAI* army=unit->getArmyID()!=-1 ? player.getArmyAI(unit->getArmyID()) : NULL;
+        if (army)
+        {
+            for (CvUnit* member=army->GetFirstUnit(); member; member=army->GetNextUnit(member))
+            {
+                ++units;
+                if (member->getSameTileHeal()>0 || member->getAdjacentTileHeal()>0) ++medics;
+            }
+        }
+        else
+        {
+            int loop=0;
+            for (const CvUnit* member=player.firstUnit(&loop); member; member=player.nextUnit(&loop))
+            {
+                if (!Eligible(member,player.GetID(),unit->getDomainType())) continue;
+                ++units;
+                if (member->getSameTileHeal()>0 || member->getAdjacentTileHeal()>0) ++medics;
+            }
+        }
+        return CvStackingAIPolicy::MedicPromotionPercent(medics,max(1,units),Setting("AIMedicUnitsPerMedic",6),
+            Setting("AIMedicWantedPercent",150),Setting("AIMedicSurplusPercent",25));
+    }
+    int CompositionScore(const CvUnit* unit, const CvPlot* plot)
+    {
+        if (!unit || !plot || !Enabled(unit->getOwner()) || !unit->IsCombatUnit() || unit->getDomainType() == DOMAIN_AIR ||
+            unit->isCargo() || !unit->isNativeDomain(plot))
+            return 0;
+        StackMix mix;
+        for (int i = 0; i < plot->getNumUnits(); ++i)
+            mix.Add(unit, plot->getUnitByIndex(i), 0);
+        return mix.Score(unit, 0);
+    }
     bool Enabled(PlayerTypes owner)
     {
         return owner!=NO_PLAYER && CvStacking::IsEnabled() && Setting("AIEnabled",1)!=0 &&

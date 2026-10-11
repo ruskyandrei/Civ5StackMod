@@ -47,3 +47,31 @@ namespace CvStackingAIPolicy
         return priority + unmetStrength - travelTurns * travelWeight + (continuing ? continuityBonus : 0);
     }
 }
+
+namespace CvStackingAIPolicy
+{
+    // Melee protectors wanted in a mixed stack: one, and a second from six units.
+    inline int IdealStackMelee(int total)
+    {
+        return total < 6 ? 1 : 1 + (total - 2) / 4;
+    }
+    // Preference of one member for its stack's mix; counts include the member.
+    // One melee protector with ranged units is best; all-ranged or melee-heavy
+    // stacks are discouraged. A unit alone is neutral.
+    inline int CompositionScore(bool ranged, int melee, int rangedCount, int mixBonus, int allRangedPenalty, int extraMeleePenalty)
+    {
+        const int total = melee + rangedCount;
+        if (total < 2) return 0;
+        if (ranged) return melee > 0 ? mixBonus : -allRangedPenalty;
+        if (rangedCount == 0 || melee > IdealStackMelee(total)) return -extraMeleePenalty;
+        return mixBonus;
+    }
+    // Promotion value scale for a heal-giving promotion (Medic), as a percent.
+    // Medic bonuses do not add up, so medics beyond about one per group are wasted.
+    inline int MedicPromotionPercent(int medics, int units, int unitsPerMedic, int wantedPercent, int surplusPercent)
+    {
+        if (unitsPerMedic <= 0) return 100;
+        const int wanted = (units + unitsPerMedic - 1) / unitsPerMedic;
+        return medics < wanted ? wantedPercent : surplusPercent;
+    }
+}

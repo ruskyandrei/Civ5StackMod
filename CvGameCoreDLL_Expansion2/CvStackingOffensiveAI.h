@@ -115,4 +115,11 @@ namespace CvStackingOffensiveAI
     // attack fire at an enemy unit or city from where they stand.
     int FireRemainingRangedShots(PlayerTypes owner);
     bool PrioritizeExisting(PlayerTypes owner, CvPlot* target, bool naval);
+    // A second operation may join an objective whose city is too strong for the
+    // first group, or important enough for a larger margin.
+    bool SupportOperationWanted(PlayerTypes owner, CvPlot* target, bool naval);
+    // Diagnostics only: a per-turn AI_FEATURES row per player (stack mix,
+    // medics, blockaded objectives, support groups, flanked melee attacks).
+    void NoteMeleeAttack(PlayerTypes owner, bool flanked);
+    void RecordFeatureSummary(PlayerTypes owner);
 }

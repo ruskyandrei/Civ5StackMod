@@ -57,11 +57,12 @@ Combat units share a tile up to their owner's capacity, counted separately for l
 
 | Area | Change |
 |---|---|
-| Tactical combat | Simulates stack defenders, flanking and collateral when choosing moves; keeps protector and ranged pairs together and spreads out under artillery threat. |
+| Tactical combat | Simulates stack defenders, flanking and collateral when choosing moves; keeps protector and ranged pairs together and spreads out under artillery threat. Moves melee units beside an enemy stack to flank it before attacking, and surrounds a besieged city so it cannot heal. |
+| Stack mix | Prefers one melee protector with ranged units over all-ranged or all-melee stacks, also when patrolling, staging and holding cities. Keeps medics in stacks without another medic, and promotes about one medic per six units of an army. |
 | City defence | Assigns a garrison plus ranged defenders by role, sized to the visible threat; releases surplus units from safe rear cities. |
 | War opening | Declares a city-attack war only once the army is staged near the target. |
 | Assaults | Gathers a coherent wave with the required siege, stages it out of danger, bombards while gathering and reserves a unit for the capture. |
-| Objectives | Sends reinforcements and production to its two most promising city objectives per domain, and keeps a recently lost city as a recapture target. |
+| Objectives | Sends reinforcements and production to its two most promising city objectives per domain, and keeps a recently lost city as a recapture target. A city too strong for one army, or a capital, can draw a second attack group that joins the first. |
 | Idle fire | Ranged and siege units that would otherwise stand idle fire at a target in range at the end of the turn. |
 | Performance | Caches exact combat-strength and danger forecasts inside each tactical search, with bounded per-turn path budgets. |
 | Fixes | Corrects several VP tactical-AI and crash bugs found along the way, including a city-capture crash. |

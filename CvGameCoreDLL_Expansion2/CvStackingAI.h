@@ -18,6 +18,17 @@ namespace CvStackingAI
         CityDefense() : immediate(0), nearby(0), enemyStrength(0), seaStrength(0), collateral(0), cavalry(0),
             landMinimum(0), landMaximum(0), landStrength(0), seaMaximum(0), rangedMinimum(0), meleeMaximum(0) {}
     };
+    // Melee/ranged mix and medic cover of the stack one unit would be part of.
+    // Score() adds the unit itself; Add() ignores members that do not count.
+    struct StackMix
+    {
+        int melee, ranged, others, otherHeal, healable;
+        StackMix() : melee(0), ranged(0), others(0), otherHeal(0), healable(0) {}
+        void Add(const CvUnit* unit, const CvUnit* member, int memberDamage);
+        int Score(const CvUnit* unit, int selfDamage) const;
+    };
+    int CompositionScore(const CvUnit* unit, const CvPlot* plot);
+    int MedicPromotionPercent(const CvUnit* unit);
     bool Enabled(PlayerTypes player);
     void Reset();
     CityDefense AssessCity(const CvCity* city);

@@ -504,6 +504,7 @@ void CvMilitaryAI::DoTurn()
 	{
 		UpdateOperations();
 		CvStackingOffensiveAI::ReviewObjectives(m_pPlayer->GetID());
+		CvStackingOffensiveAI::RecordFeatureSummary(m_pPlayer->GetID());
 		if (!m_pPlayer->isHuman(ISHUMAN_AI_ECONOMY))
 		{
 			MakeEmergencyPurchases();
@@ -1038,13 +1039,15 @@ bool CvMilitaryAI::RequestCityAttack(PlayerTypes eIntendedTarget, int iNumUnitsW
 
 		//don't duplicate operations
 		CvAIOperation* pCurrentOp = m_pPlayer->getFirstAIOperationOfType(opType, eTargetPlayer, pTargetPlot);
+		// A strong or important city may get a second group once the first has formed.
+		const bool bSupportGroup = pCurrentOp && CvStackingOffensiveAI::SupportOperationWanted(m_pPlayer->GetID(),pTargetPlot,opType!=AI_OPERATION_CITY_ATTACK_LAND);
 		if (CvStackingAI::Enabled(m_pPlayer->GetID()) && pCurrentOp && pCurrentOp->GetArmy(0) &&
-			(pCurrentOp->GetOperationState()==AI_OPERATION_STATE_RECRUITING_UNITS || pCurrentOp->GetOperationState()==AI_OPERATION_STATE_GATHERING_FORCES))
+			(pCurrentOp->GetOperationState()==AI_OPERATION_STATE_RECRUITING_UNITS || (pCurrentOp->GetOperationState()==AI_OPERATION_STATE_GATHERING_FORCES && !bSupportGroup)))
 		{
 			CvStackingDiagnostics::Record(2,m_pPlayer->GetID(),"OPERATION_GATE","target=%d operation=%d reason=existing_assembly",pTargetPlot->GetPlotIndex(),pCurrentOp->GetID());
 			continue;
 		}
-		if (bCareful && pCurrentOp != NULL && pCurrentOp->GetArmy(0))
+		if (bCareful && pCurrentOp != NULL && pCurrentOp->GetArmy(0) && !bSupportGroup)
 		{
 			//wait until the previous army has at least left our territory, don't commit all our units to one target
 			CvPlot* pCOM = pCurrentOp->GetArmy(0)->GetCenterOfMass();

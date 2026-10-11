@@ -150,12 +150,24 @@ to 3.9.
 | `AIStackConcentrationFreeUnits` | 2 | Units in a stack before that penalty starts. |
 | `AIStackPairRecruitBonus` | 25 | Bonus for keeping protector and ranged pairs together. |
 | `AIStackPairRecruitRange` | 1 | Distance in tiles for such a pair. |
+| `AIStackMixBonus` | 10 | Bonus for a stack of one melee protector with ranged units (a second melee from six units). Also applies on safe tiles and when choosing patrol, reposition and staging tiles. |
+| `AIStackAllRangedPenalty` | 6 | Penalty for each ranged unit in a stack of two or more with no melee protector. |
+| `AIStackExtraMeleePenalty` | 6 | Penalty for a melee unit in an all-melee stack, or beyond the melee a mixed stack needs. |
+| `AIMedicStackBonus` | 6 | Bonus for a medic in a stack that has no medic as good. A tile gives each unit only its best medic bonus, so a second medic adds nothing. |
+| `AIMedicHealWeight` | 1 | Score per hit point a medic would heal in its stack, or a wounded unit would gain from a medic's stack (each capped at 40). |
+| `AIMedicUnitsPerMedic` | 6 | Units per medic wanted in an army (or, outside armies, among the player's units of that domain). 0 leaves VP's promotion values unchanged. |
+| `AIMedicWantedPercent` | 150 | Value of a Medic promotion, in percent of VP's, while fewer medics than wanted exist. |
+| `AIMedicSurplusPercent` | 25 | Value of a Medic promotion once enough medics exist. |
+| `AIFlankPositionBonus` | 5 | Bonus for a melee unit moving next to an enemy stack, per friendly unit (up to 3) that can still attack it this turn, for up to two stacks. Their attack forecasts then include the flank. |
+| `AISiegeBlockadeTileBonus` | 3 | Bonus per tile next to the target city that a unit newly blockades (stands on it, or next to it on the same landmass). |
+| `AISiegeBlockadeCompleteBonus` | 30 | Bonus for completing the blockade of every passable tile around the target city, which stops its healing. |
 
 ### 3.3 City defence
 
 | Option | Default | Meaning |
 |---|---:|---|
 | `AICitySafeDefenders` | 1 | Land defenders in a safe city. |
+| `AICityMinimumMeleeDefenders` | 1 | A city holding two or more land defenders keeps this many melee units among them when one is on the tile, instead of only ranged units. |
 | `AICityMaximumDefenders` | 3 | Maximum land defenders reserved on a city tile. |
 | `AICityEmergencyDefenders` | 2 | Minimum when the city is besieged or about to fall. |
 | `AICityMaximumNavalDefenders` | 2 | Ships held at a city under naval pressure. |
@@ -202,6 +214,9 @@ to 3.9.
 | `AIPatrolCurrentZoneBonus` | 20 | Preference for staying in the current zone. |
 | `AIOffensiveOperationsPerDomain` | 2 | Concurrent offensive operations on land and at sea. |
 | `AIOffensiveReserveMinimumUnits` | 4 | Free healthy units needed before a new operation starts. |
+| `AISupportOperationEnabled` | 1 | A second operation may join a focused objective once the first has formed. Both armies count as one force for readiness, and either can carry on if the other is lost. It uses one of the `AIOffensiveOperationsPerDomain` slots. |
+| `AISupportOperationStrengthPercent` | 150 | A second group is wanted while the first army's strength is below this share of the city's visible defence. |
+| `AISupportOperationImportantPercent` | 250 | The same threshold for capitals, original capitals and cities with world wonders. |
 | `AICityAssaultMinimumSiege` | 1 | Siege units wanted near a land siege. |
 
 ### 3.5 War opening

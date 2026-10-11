@@ -3855,6 +3855,10 @@ CvUnitCombat::ATTACK_RESULT CvUnitCombat::Attack(CvUnit& kAttacker, CvPlot& targ
 	kAttacker.SetAutomateType(NO_AUTOMATE);
 	pDefender->SetAutomateType(NO_AUTOMATE);
 
+	// Diagnostics only: how many melee attacks on units had a flanking bonus.
+	if (!targetPlot.isCity() && CvStackingDiagnostics::Enabled(1, kAttacker.getOwner()))
+		CvStackingOffensiveAI::NoteMeleeAttack(kAttacker.getOwner(), kAttacker.plot()->GetEffectiveFlankingBonus(&kAttacker, pDefender, &targetPlot) > 0);
+
 	if(kAttacker.getOwner() == GC.getGame().getActivePlayer())
 	{
 		GC.getGame().SetEverAttackedTutorial(true);

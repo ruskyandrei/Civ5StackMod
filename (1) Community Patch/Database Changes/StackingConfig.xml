@@ -245,6 +245,27 @@
     <Row Name="AIStackCollateralWeight" Value="100" />
     <Row Name="AIStackConcentrationPenalty" Value="10" />
     <Row Name="AIStackPairRecruitBonus" Value="25" />
+    <!-- Stack mix: one melee protector with ranged units is preferred over
+         all-ranged or melee-heavy stacks, also on safe tiles. -->
+    <Row Name="AIStackMixBonus" Value="10" />
+    <Row Name="AIStackAllRangedPenalty" Value="6" />
+    <Row Name="AIStackExtraMeleePenalty" Value="6" />
+    <Row Name="AICityMinimumMeleeDefenders" Value="1" />
+    <!-- Medics: a medic prefers a stack without another medic, wounded units
+         prefer a medic's stack; promotion value depends on medics per army. -->
+    <Row Name="AIMedicStackBonus" Value="6" />
+    <Row Name="AIMedicHealWeight" Value="1" />
+    <Row Name="AIMedicUnitsPerMedic" Value="6" />
+    <Row Name="AIMedicWantedPercent" Value="150" />
+    <Row Name="AIMedicSurplusPercent" Value="25" />
+    <!-- Flanking and city blockade (no healing) in tactical moves. -->
+    <Row Name="AIFlankPositionBonus" Value="5" />
+    <Row Name="AISiegeBlockadeTileBonus" Value="3" />
+    <Row Name="AISiegeBlockadeCompleteBonus" Value="30" />
+    <!-- A second attack group on a city too strong for the first, or a capital/wonder city. -->
+    <Row Name="AISupportOperationEnabled" Value="1" />
+    <Row Name="AISupportOperationStrengthPercent" Value="150" />
+    <Row Name="AISupportOperationImportantPercent" Value="250" />
     <Row Name="UIStackEnabled" Value="1" />
     <Row Name="UIStackMoveMinimumUnits" Value="2" />
     <!-- UI only: key held with right-click to move the selected unit's whole stack. 0 Alt, 1 Shift, 2 Ctrl. -->

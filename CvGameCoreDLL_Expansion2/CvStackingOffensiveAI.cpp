@@ -64,7 +64,7 @@ enum AssaultFailure
 
     struct Objective
     {
-        int enemy, operation, staging, refreshed, created, coreUnits, coreStrength, captureTurn, captureID, noCaptureSince;
+        int enemy, operation, support, staging, refreshed, created, coreUnits, coreStrength, captureTurn, captureID, noCaptureSince;
         int captureOwner, captureEta, captureProgress, capturePlot, captureDistance;
         CvStackingOffensiveAI::AssaultPlan assault;
         int assaultTurn, phaseSince, phaseLogged;
@@ -77,7 +77,7 @@ enum AssaultFailure
         bool captureKnown, focused;
         int focusScore;
         std::vector<AssaultWaveUnit> waveRows;bool waveComplete,wavePathUnknown;
-        Objective():enemy(-1),operation(-1),staging(-1),refreshed(-1),created(-1),coreUnits(0),coreStrength(0),
+        Objective():enemy(-1),operation(-1),support(-1),staging(-1),refreshed(-1),created(-1),coreUnits(0),coreStrength(0),
             captureTurn(-1),captureID(-1),noCaptureSince(-1),captureOwner(-1),captureEta(INT_MAX),captureProgress(-1),capturePlot(-1),captureDistance(INT_MAX),
             assaultTurn(-1),phaseSince(-1),phaseLogged(-1),staffTurn(-1),staffUnits(0),staffSiege(0),staffRanged(0),staffCapture(0),
             productionTurn(-1),productionUnits(0),productionSiege(0),productionRanged(0),productionCapture(0),productionQueued(0),productionGeneration(0),
@@ -140,6 +140,14 @@ static int openingForecastTurn=-1;
     int Setting(const char* name,int value) { return CvStacking::GetInt(name,value); }
     bool Live(CvAIOperation* op)
     { return op && op->GetOperationState()!=AI_OPERATION_STATE_ABORTED && op->GetOperationState()!=AI_OPERATION_STATE_SUCCESSFUL_FINISH; }
+    // The objective's primary operation, or the second group supporting it.
+    bool OwnsOperation(const Objective& o,int id)
+    { return id>=0 && (id==o.operation || id==o.support); }
+    bool OwnsArmy(PlayerTypes owner,const Objective& o,int army)
+    {
+        const CvArmyAI* found=army>=0?GET_PLAYER(owner).getArmyAI(army):NULL;
+        return found && OwnsOperation(o,found->GetOperationID());
+    }
     bool Usable(const CvUnit* u)
     { return u && u->plot() && u->GetCurrHitPoints()>0 && u->IsCombatUnit() && !u->IsStackingUnit() && !u->isCargo() && !u->isDelayedDeath() && u->getDomainType()!=DOMAIN_AIR; }
     // CvArmyAI::GetDomainType reports DOMAIN_SEA for a combined army, whose
@@ -387,7 +395,7 @@ static int openingForecastTurn=-1;
         if(!Usable(u) || u->getDomainType()!=key.domain) return false;
         CvPlayer& player=GET_PLAYER((PlayerTypes)key.owner);
         CvArmyAI* army=player.getArmyAI(u->getArmyID());
-        if(army) return army->GetOperationID()==o.operation;
+        if(army) return OwnsOperation(o,army->GetOperationID());
         std::map<Key,Commitment>::const_iterator c=commitments.find(Key(key.owner,u->GetID()));
         if(c!=commitments.end()) return c->second.goal==key;
         if(u->shouldHeal(false) || CvStackingAI::RetainCityUnit(u)) return false;
@@ -713,7 +721,7 @@ static int openingForecastTurn=-1;
     {
         const CvUnitEntry* entry=queue.unit==NO_UNIT?NULL:GC.getUnitInfo((UnitTypes)queue.unit);
         if(!entry||entry->GetDomainType()!=key.domain)return false;
-        if(queue.operation>=0)return queue.operation==objective.operation;
+        if(queue.operation>=0)return OwnsOperation(objective,queue.operation);
         std::map<Key,ProductionClaim>::const_iterator claim=production.find(city);
         return claim!=production.end()&&claim->second.unit==queue.unit&&claim->second.goal==key;
     }
@@ -857,7 +865,8 @@ static int openingForecastTurn=-1;
             if(!p || !p->isVisible(GET_PLAYER(owner).getTeam()) || !unit->isNativeDomain(p) ||
                 !unit->canMoveInto(*p,CvUnit::MOVEFLAG_DESTINATION) ||
                 !unit->canEverRangeStrikeAt(target->getX(),target->getY(),p,false)) continue;
-            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p),p->GetPlotIndex()));
+            // A tile costs ten per step; completing a mixed stack is worth about one step.
+            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p)*10-CvStackingAI::CompositionScore(unit,p),p->GetPlotIndex()));
         }
         std::sort(candidates.begin(),candidates.end());
         for(size_t i=0;i<candidates.size() && i<(size_t)Setting("AIAssaultFiringPositionCandidates",6);++i)
@@ -1420,7 +1429,8 @@ namespace CvStackingOffensiveAI
             CvPlot* p=iterateRingPlots(stage,i);
             if(!p || !p->isVisible(player.getTeam()) || !unit->isNativeDomain(p) ||
                 !unit->canMoveInto(*p,CvUnit::MOVEFLAG_DESTINATION)) continue;
-            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p),p->GetPlotIndex()));
+            // A tile costs ten per step; completing a mixed stack is worth about one step.
+            candidates.push_back(std::make_pair(plotDistance(*unit->plot(),*p)*10-CvStackingAI::CompositionScore(unit,p),p->GetPlotIndex()));
         }
         std::sort(candidates.begin(),candidates.end());
         for(size_t i=0;i<candidates.size() && i<(size_t)Setting("AIAssaultStagePlacementCandidates",8);++i)
@@ -1560,7 +1570,7 @@ namespace CvStackingOffensiveAI
         {
             std::map<ObjectiveKey,Objective>::iterator found=objectives.find(stale[i]);
             if(found==objectives.end()) continue;
-            const int operation=found->second.operation,enemy=found->second.enemy;
+            const int operation=found->second.operation,support=found->second.support,enemy=found->second.enemy;
             CvStackingDiagnostics::Record(1,owner,"ASSAULT_REASSESS","target=%d domain=%d action=abandon reason=no_force_or_city_progress idle=%d",stale[i].target,stale[i].domain,currentTurn-found->second.lastUsefulTurn);
             for(std::map<Key,Commitment>::iterator c=commitments.begin();c!=commitments.end();)
                 if(c->second.goal==stale[i])
@@ -1572,6 +1582,8 @@ namespace CvStackingOffensiveAI
             objectives.erase(found);
             CvAIOperation* op=GET_PLAYER(owner).getAIOperation(operation);
             if(Live(op)) op->SetToAbort(AI_ABORT_TIMED_OUT);
+            CvAIOperation* second=GET_PLAYER(owner).getAIOperation(support);
+            if(Live(second)) second->SetToAbort(AI_ABORT_TIMED_OUT);
             const int cooldown=Setting("AIOperationRouteRetryTurns",6);
             if(cooldown>0)
             { Failure& f=failures[stale[i]];f.until=currentTurn+cooldown-1;f.enemy=enemy; }
@@ -1802,7 +1814,12 @@ namespace CvStackingOffensiveAI
             // Keep roles/domains distinct even when a combined fleet releases land troops.
             Objective* o=Touch(op->GetOwner(),target,u->getDomainType());
             if(!o) continue;
-            o->operation=op->GetID();
+            // A support group handing off first leaves the live primary in charge.
+            if(!OwnsOperation(*o,op->GetID()))
+            {
+                if(Live(GET_PLAYER(op->GetOwner()).getAIOperation(o->operation))) o->support=op->GetID();
+                else o->operation=op->GetID();
+            }
             Commitment& c=commitments[Key(op->GetOwner(),u->GetID())];
             c.goal=ObjectiveKey(op->GetOwner(),target->GetPlotIndex(),u->getDomainType());
             c.turn=c.lastProgress=currentTurn; c.plot=u->plot()->GetPlotIndex();
@@ -1844,10 +1861,26 @@ namespace CvStackingOffensiveAI
             const DomainTypes domain=combined&&pass==1?DOMAIN_LAND:army->GetDomainType();
             Objective* o=Touch(op->GetOwner(),target,domain);
             if(!o) continue;
-            // Prefer the oldest still-active operation, preventing duplicate force credit.
+            // Prefer the oldest still-active operation as the primary. One later
+            // operation joins as its support group; its army adds to the core.
             CvAIOperation* old=GET_PLAYER(op->GetOwner()).getAIOperation(o->operation);
-            if(Live(old) && old->GetID()!=op->GetID() && old->GetTurnStarted()<=op->GetTurnStarted()) continue;
+            if(Live(old) && old->GetID()!=op->GetID() && old->GetTurnStarted()<=op->GetTurnStarted())
+            {
+                CvAIOperation* second=GET_PLAYER(op->GetOwner()).getAIOperation(o->support);
+                if(Live(second) && second->GetID()!=op->GetID()) continue;
+                if(o->support!=op->GetID())
+                    CvStackingDiagnostics::Record(1,op->GetOwner(),"OFFENSIVE_SUPPORT","target=%d operation=%d primary=%d action=support_group_joined",target->GetPlotIndex(),op->GetID(),old->GetID());
+                o->support=op->GetID();
+                int count=0,strength=0;
+                CvArmyAI* armies[2]={old->GetArmy(0),army};
+                for(int a=0;a<2;++a)
+                    for(CvUnit* u=armies[a]?armies[a]->GetFirstUnit():NULL;u;u=armies[a]->GetNextUnit(u))
+                        if(Usable(u) && u->getDomainType()==domain) { ++count; strength+=CvStackingAI::UnitStrength(u); }
+                o->coreUnits=max(o->coreUnits,count); o->coreStrength=max(o->coreStrength,strength);
+                continue;
+            }
             o->operation=op->GetID();
+            if(o->support==op->GetID()) o->support=-1;
             CvPlot* stage=army->GetArmyAIState()==ARMYAISTATE_MOVING_TO_DESTINATION?army->GetCenterOfMass(true):op->GetMusterPlot();
             // Land reinforcements gather at the muster city, not the fleet's water tile.
             const bool troops=combined && domain==DOMAIN_LAND;
@@ -2042,6 +2075,18 @@ namespace CvStackingOffensiveAI
     {
         if(!IsCityAttack(op) || !Enabled(op->GetOwner()) || !CityTarget(op)) return;
         Refresh();
+        // With two groups on one objective, losing either leaves the other in charge.
+        bool sibling=false;
+        for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();++i)
+        {
+            if(i->first.owner!=op->GetOwner() || !OwnsOperation(i->second,op->GetID())) continue;
+            const int other=i->second.operation==op->GetID()?i->second.support:i->second.operation;
+            if(other==op->GetID() || !Live(GET_PLAYER(op->GetOwner()).getAIOperation(other))) continue;
+            sibling=true;
+            i->second.operation=other; i->second.support=-1;
+            CvStackingDiagnostics::Record(1,op->GetOwner(),"OFFENSIVE_SUPPORT","target=%d operation=%d remaining=%d action=group_aborted reason=%d",i->first.target,op->GetID(),other,reason);
+        }
+        if(sibling) return;
         if(reason==AI_ABORT_LOST_PATH || reason==AI_ABORT_TIMED_OUT)
         {
             const int turns=Setting("AIOperationRouteRetryTurns",6);
@@ -2054,7 +2099,8 @@ namespace CvStackingOffensiveAI
         }
         // Abort cancels its support objective; successful handoff follows a separate path.
         for(std::map<ObjectiveKey,Objective>::iterator i=objectives.begin();i!=objectives.end();)
-            if(i->first.owner==op->GetOwner() && i->second.operation==op->GetID()) objectives.erase(i++); else ++i;
+            if(i->first.owner==op->GetOwner() && i->second.operation==op->GetID()) objectives.erase(i++);
+            else { if(i->first.owner==op->GetOwner() && i->second.support==op->GetID()) i->second.support=-1; ++i; }
     }
     CvPlot* RepairRoute(const CvAIOperation* op,CvArmyAI* army,CvPlot* from,CvPlot* waypoint)
     {
@@ -2112,7 +2158,7 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
         if(!target->isVisible(GET_PLAYER(owner).getTeam()))return false;
         ObserveOperation(op);const AssaultPlan shared=AssessAssault(owner,target->getPlotCity(),army->GetDomainType());
         std::map<ObjectiveKey,Objective>::iterator found=objectives.find(ObjectiveKey(owner,target->GetPlotIndex(),army->GetDomainType()));
-        if(found==objectives.end()||found->second.operation!=op->GetID()||!found->second.waveComplete)return false;
+        if(found==objectives.end()||!OwnsOperation(found->second,op->GetID())||!found->second.waveComplete)return false;
         Objective& o=found->second;
         // A combined army's troops are assessed by its land objective; the
         // wave combines them with the fleet.
@@ -2121,7 +2167,7 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
         {
             AssessAssault(owner,target->getPlotCity(),DOMAIN_LAND);
             troops=objectives.find(ObjectiveKey(owner,target->GetPlotIndex(),DOMAIN_LAND));
-            if(troops==objectives.end()||troops->second.operation!=op->GetID()||!troops->second.waveComplete)return false;
+            if(troops==objectives.end()||!OwnsOperation(troops->second,op->GetID())||!troops->second.waveComplete)return false;
         }
         std::vector<AssaultWaveUnit> eligibleRows;int omitted=0;
         try
@@ -2134,7 +2180,7 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
                 for(size_t i=0;i<rows.size();++i)
                 {
                     const AssaultWaveUnit& row=rows[i];
-                    if(row.army!=-1&&row.army!=army->GetID())continue;
+                    if(row.army!=-1&&row.army!=army->GetID()&&!OwnsArmy(owner,source->second,row.army))continue; // a support group's army joins the wave
                     if(!WaveRecordStillValid(owner,target,row) ||
                         (row.army==-1&&!Matches(GET_PLAYER(owner).getUnit(row.unit),source->first,source->second)))
                     {++omitted;continue;}
@@ -2165,7 +2211,7 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
             EssentialSiege(owner,target->getPlotCity(),AssaultDomain(army)),Setting("AIAssemblyMinimumRanged",2),
             shared.enemyStrength,Setting("AIAssemblyStrengthPercent",150),max(1,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()),
             eligibleCapture,Setting("AIAssaultFirstWaveMaximumTurns",1),
-            Setting("AIAssaultWaveArrivalSpreadTurns",1),army->GetID(),Setting("AIAssemblyMinimumCombatUnits",4));
+            Setting("AIAssaultWaveArrivalSpreadTurns",1),army->GetID(),o.support==op->GetID()?1:Setting("AIAssemblyMinimumCombatUnits",4));
         bool complete=false;const int healing=target->getPlotCity()->GetAssaultHealingForecast(owner,wave.damage,&complete);
         ready=WaveCanSustain(wave,max(1,target->getPlotCity()->GetMaxHitPoints()-target->getPlotCity()->getDamage()),
             healing,Setting("AIAssaultDamageHorizon",4),complete);
@@ -2344,7 +2390,77 @@ void ResetOpeningReadiness(){openingForecasts.clear();openingForecastTurn=-1;}
         std::map<ObjectiveKey,Objective>::const_iterator i=objectives.find(key);
         if(i==objectives.end()) return false;
         CvAIOperation* op=GET_PLAYER(owner).getAIOperation(i->second.operation);
+        if(Live(op) && SupportOperationWanted(owner,target,naval)) return false;
         // Retained objectives use rear transfers; don't spawn a fresh parallel army every turn.
         return Live(op) || currentTurn-i->second.refreshed<=Setting("AIOffensiveSupportMemoryTurns",12);
+    }
+    bool SupportOperationWanted(PlayerTypes owner,CvPlot* target,bool naval)
+    {
+        if(!Enabled(owner) || !target || !target->isCity() || Setting("AISupportOperationEnabled",1)==0) return false;
+        Sync(owner);
+        std::map<ObjectiveKey,Objective>::const_iterator i=objectives.find(ObjectiveKey(owner,target->GetPlotIndex(),naval?DOMAIN_SEA:DOMAIN_LAND));
+        if(i==objectives.end() || !Focused(i->second)) return false;
+        const Objective& o=i->second;
+        CvPlayer& player=GET_PLAYER(owner);
+        CvAIOperation* op=player.getAIOperation(o.operation);
+        // One support group at a time, and only once the first group has formed.
+        if(!Live(op) || Live(player.getAIOperation(o.support)) || op->GetOperationState()==AI_OPERATION_STATE_RECRUITING_UNITS ||
+            !op->GetArmy(0) || target->getOwner()!=o.enemy) return false;
+        int strength=0;
+        for(CvUnit* u=op->GetArmy(0)->GetFirstUnit();u;u=op->GetArmy(0)->GetNextUnit(u))
+            if(Usable(u)) strength+=CvStackingAI::UnitStrength(u);
+        const CvCity* city=target->getPlotCity();
+        const bool important=city->isCapital() || city->IsOriginalMajorCapital() || city->getNumWorldWonders()>0;
+        const int percent=important?Setting("AISupportOperationImportantPercent",250):Setting("AISupportOperationStrengthPercent",150);
+        const int enemy=EnemyStrength(owner,target);
+        const bool wanted=enemy>0 && (long long)strength*100<(long long)enemy*percent;
+        if(wanted)
+            CvStackingDiagnostics::Record(1,owner,"OPERATION_GATE","target=%d operation=%d reason=support_group_wanted strength=%d enemy=%d percent=%d important=%d",
+                target->GetPlotIndex(),op->GetID(),strength,enemy,percent,important);
+        return wanted;
+    }
+    static int meleeAttacks[MAX_PLAYERS]={0},flankedAttacks[MAX_PLAYERS]={0};
+    void NoteMeleeAttack(PlayerTypes owner,bool flanked)
+    {
+        if(owner<0 || owner>=MAX_PLAYERS) return;
+        ++meleeAttacks[owner]; if(flanked) ++flankedAttacks[owner];
+    }
+    void RecordFeatureSummary(PlayerTypes owner)
+    {
+        if(owner<0 || owner>=MAX_PLAYERS || !Enabled(owner) || !CvStackingDiagnostics::Enabled(1,owner)) return;
+        CvPlayer& player=GET_PLAYER(owner);
+        int mixed[2]={0,0},allRanged[2]={0,0},allMelee[2]={0,0},medics=0,medicsStacked=0;
+        std::set<int> seen;
+        int loop=0;
+        for(const CvUnit* u=player.firstUnit(&loop);u;u=player.nextUnit(&loop))
+        {
+            if(!Usable(u) || !u->isNativeDomain(u->plot())) continue;
+            const DomainTypes domain=u->getDomainType();
+            const CvPlot* plot=u->plot();
+            int melee=0,ranged=0,others=0;
+            for(int i=0;i<plot->getNumUnits();++i)
+            {
+                const CvUnit* m=plot->getUnitByIndex(i);
+                if(!Usable(m) || m->getOwner()!=owner || m->getDomainType()!=domain) continue;
+                if(m!=u) ++others;
+                if(m->IsCanAttackRanged()) ++ranged; else if(m->IsCanDefend() && m->IsCanAttack()) ++melee;
+            }
+            if(u->getSameTileHeal()>0) { ++medics; if(others>0) ++medicsStacked; }
+            if(!seen.insert(plot->GetPlotIndex()*2+(domain==DOMAIN_SEA?1:0)).second || melee+ranged<2) continue;
+            const int d=domain==DOMAIN_SEA?1:0;
+            if(melee==0) ++allRanged[d]; else if(ranged==0) ++allMelee[d]; else ++mixed[d];
+        }
+        int objectiveCount=0,blockaded=0,supported=0;
+        for(std::map<ObjectiveKey,Objective>::const_iterator i=objectives.begin();i!=objectives.end();++i)
+        {
+            if(i->first.owner!=owner) continue;
+            ++objectiveCount;
+            const CvPlot* p=GC.getMap().plotByIndexUnchecked(i->first.target);
+            if(p && p->isCity() && player.IsAtWarWith(p->getOwner()) && p->getPlotCity()->IsBlockadedWaterAndLand()) ++blockaded;
+            if(Live(player.getAIOperation(i->second.support))) ++supported;
+        }
+        CvStackingDiagnostics::Record(1,owner,"AI_FEATURES","landMixed=%d landAllRanged=%d landAllMelee=%d seaMixed=%d seaAllRanged=%d seaAllMelee=%d medics=%d medicsStacked=%d objectives=%d blockadedTargets=%d supportGroups=%d meleeAttacks=%d flankedAttacks=%d",
+            mixed[0],allRanged[0],allMelee[0],mixed[1],allRanged[1],allMelee[1],medics,medicsStacked,objectiveCount,blockaded,supported,meleeAttacks[owner],flankedAttacks[owner]);
+        meleeAttacks[owner]=flankedAttacks[owner]=0;
     }
 }

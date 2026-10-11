@@ -33136,6 +33136,8 @@ int CvUnit::AI_promotionValue(PromotionTypes ePromotion)
 		if (bWarTimePromotion)
 			iExtra *= 1.5;
 		iExtra *= 0.7 + 0.3* getDamage() / max(1,GetMaxHitPoints());
+		// Medic bonuses take the best on a tile, so extra medics are wasted under stacking.
+		iExtra = iExtra * CvStackingAI::MedicPromotionPercent(this) / 100;
 		iValue += iExtra;
 	}
 	
@@ -33148,6 +33150,7 @@ int CvUnit::AI_promotionValue(PromotionTypes ePromotion)
 		iExtra *= 1.8;
 		if (bWarTimePromotion)
 			iExtra *= 1.5;
+		iExtra = iExtra * CvStackingAI::MedicPromotionPercent(this) / 100;
 		iValue += iExtra;
 		
 	}

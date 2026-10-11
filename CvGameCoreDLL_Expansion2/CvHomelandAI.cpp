@@ -1752,6 +1752,10 @@ void CvHomelandAI::ExecutePatrolMoves()
 		{
 			//try not to create a unit carpet without any space to move
 			int iMaxDistance = pUnit->IsCanAttackRanged() ? 3 : 4;
+			// With stacking, prefer the closest tile whose stack the unit completes
+			// (one melee protector with ranged units) over simply the first one.
+			const bool bScoreStacks = CvStackingAI::Enabled(m_pPlayer->GetID());
+			int iBestPlotScore = INT_MIN;
 			for (int iJ = RING1_PLOTS; iJ < RING_PLOTS[iMaxDistance]; iJ++)
 			{
 				CvPlot* pLoopPlot = iterateRingPlots(pBestCity, iJ);
@@ -1771,8 +1775,19 @@ void CvHomelandAI::ExecutePatrolMoves()
 					continue;
 
 				//if we get here it's good enough
-				pBestPlot = pLoopPlot;
-				break;
+				if (!bScoreStacks)
+				{
+					pBestPlot = pLoopPlot;
+					break;
+				}
+				int iPlotScore = CvStackingAI::CompositionScore(pUnit, pLoopPlot) - 4 * plotDistance(*pLoopPlot, *pBestCity);
+				if (pLoopPlot == pUnit->plot())
+					iPlotScore += 5;
+				if (iPlotScore > iBestPlotScore)
+				{
+					iBestPlotScore = iPlotScore;
+					pBestPlot = pLoopPlot;
+				}
 			}
 		}
 

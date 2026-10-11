@@ -10,7 +10,7 @@ The public string `GetInt(const char*,int)` body remains unchanged. Dynamic call
 | Capacity | `BaseCapacity`, `MaximumCapacity`, `LandCapacityBonus`, `SeaCapacityBonus`, `CityCapacityBonus`, `MinorCapacityBonus`, `BarbarianCapacityBonus`, `BarbarianTechnologyCapacity` |
 | Collateral | `CollateralPercent`, `CollateralHPFloorPercent`, `CollateralMinimumDamage` |
 | City protection | `CityProtectionMaximumPercent`, `CityProtectionScalesWithHP` |
-| Tactical scoring | `AIStackCollateralWeight`, `AIStackProtectionWeight`, `AIStackJoinBonus`, `AIStackAntiFlankBonus`, `AIStackConcentrationFreeUnits`, `AIStackConcentrationPenalty`, `AIStackLeaveProtectorPenalty` |
+| Tactical scoring | `AIStackCollateralWeight`, `AIStackProtectionWeight`, `AIStackJoinBonus`, `AIStackAntiFlankBonus`, `AIStackConcentrationFreeUnits`, `AIStackConcentrationPenalty`, `AIStackLeaveProtectorPenalty`, `AIStackMixBonus`, `AIStackAllRangedPenalty`, `AIStackExtraMeleePenalty`, `AIMedicStackBonus`, `AIMedicHealWeight`, `AIFlankPositionBonus`, `AISiegeBlockadeTileBonus`, `AISiegeBlockadeCompleteBonus` |
 
 The original database loader populates and clamps the string map first. It finalizes the indexed arrays only after its existing last log call. Reentrant queries during schema checks, row processing and logging therefore delegate once to the original string getter and observe its exact partial state. Missing-schema completion records absent settings, preserving each typed caller's fallback. A missing database remains retryable. Invalid enum keys follow the original null-name/fallback path. Reset clears readiness and every value/presence cell, and the next load rebuilds them from XML.
 
