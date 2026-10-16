@@ -4,7 +4,7 @@
 
 ![AI armies moving in stacks around a coastal city, with the stack tooltip for a Zulu Spearman, Composite Bowman and Catapult](docs/images/ai-stacks.jpg)
 
-A fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V that replaces one-unit-per-tile with **limited unit stacking**, and teaches the AI to fight with stacks. The current base is **VP 5.4.7**; development is on `master`. Upstream history, credits and licensing are preserved.
+A fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Civilization V that replaces one-unit-per-tile with **limited unit stacking**, and teaches the AI to fight with stacks. The current base is **VP 5.4.8**; development is on `master`. Upstream history, credits and licensing are preserved.
 
 ## Summary
 
