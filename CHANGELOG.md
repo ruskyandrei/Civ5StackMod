@@ -5,6 +5,14 @@ All releases of Civ5StackMod, newest first. Downloads are on the
 Vox Populi changes are not listed here; each version names the Vox Populi
 release it is based on.
 
+## 0.3.3 — 2026-10-16
+
+- Now based on Vox Populi 5.4.8. See the
+  [Vox Populi 5.4.8 release notes](https://github.com/LoneGazebo/Community-Patch-DLL/releases/tag/Release-5.4.8)
+  for what changed there.
+
+Stacking rules, the stacking AI and the interface are unchanged from 0.3.2.
+
 ## 0.3.2 — 2026-10-11
 
 Based on Vox Populi 5.4.7.
