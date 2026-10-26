@@ -928,10 +928,13 @@ bool CvTacticalAI::TryCityCaptureWithUnit(CvUnit* unit,CvPlot* target)
 	CvStackingOffensiveAI::ReleaseAssemblyHold(unit);
 	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_ORDER","target=%d unit=%d from=%d approach=%d hp=%d damage=%d retaliation=%d",target->GetPlotIndex(),unit->GetID(),unit->plot()->GetPlotIndex(),approach->GetPlotIndex(),remaining,damage,retaliation);
 	const int unitID=unit->GetID();
+	const PlayerTypes enemy=target->getOwner();
 	const int turns=ExecuteMoveToPlot(unit,target,false,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION|CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY);
 	// A route estimate or a blocker workaround does not establish that the city
 	// changed hands. The mission can delete its unit; inspect the stable plot.
-	const bool captured=target->getOwner()==m_pPlayer->GetID();
+	// A capture that liberates or razes the city also replaces or deletes the
+	// CvCity, so callers holding the old pointer must see it as taken.
+	const bool captured=!target->isCity() || target->getOwner()!=enemy;
 	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_RESULT","target=%d unit=%d captured=%d turnsRemaining=%d ownerAfter=%d",target->GetPlotIndex(),unitID,captured,turns,target->getOwner());
 	if(captured) UnitProcessed(unitID);
 	return captured;
