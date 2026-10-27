@@ -8,6 +8,7 @@
 
 #include "CvGameCoreDLLPCH.h"
 #include "CvStackingRules.h"
+#include "CvStackingStrengthCache.h"
 #include "CvDangerPlots.h"
 #include "CvPlot.h"
 #include "CvCity.h"
@@ -11560,8 +11561,13 @@ static void DirtyStackDangerForVisibility(const CvPlot* plot, TeamTypes team)
    const bool visible = plot->isVisible(team) && !unit->isInvisible(team, false);
    relevant = visible || observer.GetDangerPlots()->IsKnownAttacker(unit);
   }
+  // No danger rebuild: changeVisibilityCount adds newly visible attackers through
+  // AddKnownAttacker, and attackers that left sight stay known for the turn, as in VP.
   if (relevant)
-   observer.SetDangerPlotsDirty();
+  {
+   CvStackingStrengthCache::Invalidate();
+   return;
+  }
  }
 }
 

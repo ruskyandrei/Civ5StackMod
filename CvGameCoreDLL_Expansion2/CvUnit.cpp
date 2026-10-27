@@ -90,10 +90,13 @@ static vector<PlayerTypes> StackDangerObservers(const CvUnit* unit)
  return result;
 }
 
+// A dirty danger map is rebuilt in full on the observer's next danger query, which made
+// every move cost a rebuild. Danger lookups already skip dead attackers and newly seen ones
+// are added by AddKnownAttacker, so only the strength cache is invalidated here.
 static void DirtyStackDangerObservers(const vector<PlayerTypes>& observers)
 {
- for (size_t i = 0; i < observers.size(); ++i)
-  GET_PLAYER(observers[i]).SetDangerPlotsDirty();
+ if (!observers.empty())
+  CvStackingStrengthCache::Invalidate();
 }
 
 namespace FSerialization
