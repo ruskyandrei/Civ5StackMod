@@ -5,6 +5,19 @@ All releases of Civ5StackMod, newest first. Downloads are on the
 Vox Populi changes are not listed here; each version names the Vox Populi
 release it is based on.
 
+## 0.3.4 — 2026-10-27
+
+Based on Vox Populi 5.4.8.
+
+### Fixes
+- The game no longer crashes when an AI unit captures a city and liberates or
+  razes it, for example when it frees a city-state.
+- The game no longer crashes when it picks the defender of a stack that still
+  holds a unit at 0 hit points waiting to be removed.
+
+Stacking rules, the stacking AI and the interface are otherwise unchanged from
+0.3.3.
+
 ## 0.3.3 — 2026-10-16
 
 - Now based on Vox Populi 5.4.8. See the
