@@ -1,6 +1,6 @@
 # Building and testing the stacking DLL locally
 
-This checkout extends Vox Populi Release 5.4.6 in its existing gamecore DLL. Use the native Microsoft Visual C++ 2008 SP1 x86 toolchain already extracted under `work/toolchain`. Earlier Clang experiments produced a DLL that failed to initialize in this installation; they are retained for investigation and are not the tested build route.
+This checkout extends Vox Populi Release 5.4.6 in its existing gamecore DLL. Use the native Microsoft Visual C++ 2008 SP1 x86 toolchain already extracted under `work/toolchain`. A clang build like upstream's release build also works (see [Clang build](#clang-build)); it is faster but not yet the tested release route.
 
 ## Build
 
@@ -22,6 +22,23 @@ Before a build intended to identify a new Git checkpoint, run the repository's `
 Each build receives a new `work/msvc-output/Release/<timestamp>` or Debug directory. It contains the DLL and matching PDB, per-step logs, compiler commands, source/header/library input hashes and `build-result.json`. Only `status: success` confirms a successful build. The wrapper rejects source inputs changed during compilation. `work/latest-msvc-build-path.txt` points to the latest successful artifact; it does not identify the currently installed DLL.
 
 Prerequisite locations are recorded in the build result and wrapper: native VC9 SP1 tools under `work/toolchain/sdk/admin/vc9`, resource/manifest tools under `admin/win32tools`, VC9 headers/libraries under `sdk/vc9`, and Windows SDK7 headers/libraries under `sdk/windows`. These extracted tools and large build outputs remain local, outside Git.
+
+## Clang build
+
+Upstream releases are clang builds (`-msse3 /Ox -flto`, linked by lld). `work/build-vp-clang.py` reproduces them with the portable clang/lld 19 under `work/toolchain/llvm` and the same VC9 and SDK7 headers and libraries:
+
+```powershell
+python work\build-vp-clang.py --check
+python work\build-vp-clang.py --jobs 6
+```
+
+- It takes the source list and flags from `build_vp_clang_sdk.py` and runs `update_commit_id.bat` first (`--keep-commit-id` keeps an existing `commit_id.inc`).
+- `--source` builds another checkout, such as an upstream worktree; worktrees use the main checkout's `work/toolchain`.
+- `--jobs` caps both the compiler processes and the linker threads. Compilation takes about 30 s; the link-time optimisation takes about 3 minutes on one core. `--no-lto` skips it.
+- Each build goes to `work/clang-output/Release/<timestamp>` with the DLL, PDB, `build.log`, `commands.jsonl` and `build-result.json`. `work/latest-clang-build-path.txt` points to the newest.
+- The VC9 and SDK headers must come after clang's own headers (through `INCLUDE`, as in upstream's VS2008 prompt), never through `-external:I`. Otherwise VC9's `va_start` macro is used, clang 19 inlines `CvString::format`, its variable arguments are lost, and the DLL fails to load (error 1114). [docs/clang-build-20261027.md](../docs/clang-build-20261027.md) has the details and measurements.
+
+Stage and deploy a clang DLL like a VC9 one.
 
 ## Stage and deploy
 
