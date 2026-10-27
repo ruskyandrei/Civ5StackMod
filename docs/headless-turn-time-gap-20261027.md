@@ -243,6 +243,40 @@ source is `work/test-runs/vpbench-20261001-comparison.txt`, written on 1 October
   Whether stack-danger forecasts relied on the mid-turn rebuilds needs an AI A/B in the host before adopting it.
   `docs/ai-improvement-plan.md` "Testing with the headless host" has the recipe.
 
+**Two-game A/B.** One full game of continental-drift-p05 (seeds 900005/910005) in each build: the 0.3.4 DLL and the
+P1 DLL for every player. Both played side by side in efficiency mode, to victory, with the stats probes. The 0.3.4
+game replays the stats pilot exactly (identical through turn 360).
+
+| | 0.3.4 | P1 |
+|---|---:|---:|
+| Result | Maya, space race, turn 369 | Brazil, culture, turn 308 |
+| Wall time | 3,032 s | 1,137 s |
+| Turns 1-308 | 1,595 s | 1,137 s (-29%) |
+| War declarations / peace treaties | 125 / 334 | 68 / 240 |
+| Cities captured | 47 | 40 |
+| Majors eliminated | 1 (Huns) | 3 (France, Maya, Assyria) |
+
+Seconds per turn by segment (P1 / 0.3.4):
+
+| | T1-50 | T51-100 | T101-150 | T151-200 | T201-250 | T251-300 |
+|---|---:|---:|---:|---:|---:|---:|
+| 0.3.4 | 0.71 | 1.47 | 2.85 | 5.08 | 7.49 | 11.97 |
+| P1 | 0.69 | 1.22 | 2.14 | 3.84 | 6.73 | 6.69 |
+| ratio | 0.98 | 0.83 | 0.75 | 0.76 | 0.90 | 0.56 |
+| military units at the segment end, 0.3.4 / P1 | 79 / 80 | 136 / 137 | 201 / 202 | 316 / 279 | 431 / 327 | 524 / 480 |
+| major wars at the segment end, 0.3.4 / P1 | 0 / 2 | 6 / 8 | 4 / 14 | 10 / 12 | 14 / 12 | 20 / 12 |
+
+- **Speed.** Turns 101 to 200 are the fair comparison: the P1 game had as many units and more wars there, and was
+  24 to 25% faster, the same as the controlled measurement from one save (section 1.3). The 44% saving in turns
+  251 to 300 also reflects a calmer P1 game, with fewer units and wars.
+- **Outcome.** The games differ from turn 10, because danger values feed early moves too, and end differently. One
+  pair cannot say whether P1 plays better or worse: with every player changed, any difference is mostly a different
+  game.
+  - The P1 game had about half the war declarations but more eliminations.
+  - Whether that is systematic needs more seeds, or a head-to-head game where only some majors run P1.
+  - Branch `perf-gap-p1-ab` (commit `998bcde87`) has a per-player gate for that: `Game.SetStackingAIImprovedMask`,
+    the host's `--improved-mask`. With mask 0 it replays 0.3.4 exactly (checked to turn 60). It was not run here.
+
 ### 5.2 Compiler variants
 
 - **Clang (blocked).**
