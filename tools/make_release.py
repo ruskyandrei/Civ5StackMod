@@ -2,9 +2,10 @@
 
   python tools/make_release.py --version 0.1.0
 
-Requires a clean working tree whose HEAD is the staged commit. Writes
-work/release/Civ5StackMod-<version>.zip, a separate symbols zip with the PDB,
-and SHA256SUMS.txt. Nothing is published.
+Requires a clean working tree whose HEAD is the staged commit, and a staged DLL
+that work/build-vp-clang.py built with link-time optimisation from that commit
+in a clean tree. Writes work/release/Civ5StackMod-<version>.zip, a separate
+symbols zip with the PDB, and SHA256SUMS.txt. Nothing is published.
 """
 import argparse, hashlib, json, re, shutil, subprocess, sys, zipfile
 from pathlib import Path
@@ -27,6 +28,28 @@ def sha256(path):
     return h.hexdigest().upper()
 
 
+def check_dll_build(manifest, head):
+    """Releases ship the clang LTO build of HEAD, like upstream's (docs/clang-build-20261027.md)."""
+    dll = Path(manifest['dll']['source'])
+    result_path = dll.parent / 'build-result.json'
+    if not result_path.is_file():
+        sys.exit(f'No build-result.json beside the staged DLL {dll}. Build it with work/build-vp-clang.py and stage again.')
+    result = json.loads(result_path.read_text(encoding='utf-8'))
+    version = re.search(r'-g([0-9a-f]+) (\w+)"', result.get('commit_id', ''))
+    problems = []
+    if result.get('status') != 'success': problems.append('the build did not succeed')
+    if Path(result.get('wrapper', '')).name != 'build-vp-clang.py': problems.append('it is not a work/build-vp-clang.py build')
+    if result.get('config') != 'release' or not result.get('lto'): problems.append('it is not a release build with -flto')
+    if result.get('git_head', {}).get('stdout', '').strip() != head: problems.append('it was built from another commit')
+    if result.get('git_status', {}).get('stdout', '').strip(): problems.append('its tree had uncommitted changes')
+    if not version or not head.startswith(version.group(1)) or version.group(2) != 'Clean':
+        problems.append('its commit_id.inc does not name HEAD as Clean')
+    if result.get('dll', {}).get('sha256', '').upper() != manifest['dll']['sha256'].upper():
+        problems.append('the staged DLL differs from the one it built')
+    if problems: sys.exit(f'The staged DLL cannot be released ({result_path.parent}): ' + '; '.join(problems) + '.')
+    return result_path.parent, result['clang_version']['stdout'].splitlines()[0]
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', required=True)
@@ -39,6 +62,7 @@ def main():
     if manifest['source_commit'] != head: sys.exit(f"Staging was made from {manifest['source_commit'][:9]}, HEAD is {head[:9]}. Rebuild and stage first.")
     for entry in manifest['files']:
         if sha256(STAGE / entry['staged_path']) != entry['sha256']: sys.exit('Staged file changed: ' + entry['staged_path'])
+    build, compiler = check_dll_build(manifest, head)
     upstream = git('merge-base', 'HEAD', args.upstream)
     name = f'Civ5StackMod-{args.version}'
     OUT.mkdir(parents=True, exist_ok=True)
@@ -65,7 +89,8 @@ def main():
     sums = ''.join(f'{sha256(path)}  {path.name}\n' for path in (package, symbols))
     (OUT / (name + '-SHA256SUMS.txt')).write_text(sums, encoding='utf-8')
     print(json.dumps({'package': str(package), 'megabytes': round(package.stat().st_size / 2 ** 20, 1), 'files': count,
-                      'commit': head, 'upstream': upstream, 'dll_sha256': manifest['dll']['sha256']}, indent=1))
+                      'commit': head, 'upstream': upstream, 'dll_sha256': manifest['dll']['sha256'],
+                      'dll_build': str(build), 'compiler': compiler}, indent=1))
 
 
 if __name__ == '__main__': main()

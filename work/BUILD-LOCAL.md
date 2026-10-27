@@ -1,6 +1,6 @@
 # Building and testing the stacking DLL locally
 
-This checkout extends Vox Populi Release 5.4.6 in its existing gamecore DLL. Use the native Microsoft Visual C++ 2008 SP1 x86 toolchain already extracted under `work/toolchain`. A clang build like upstream's release build also works (see [Clang build](#clang-build)); it is faster but not yet the tested release route.
+This checkout extends Vox Populi Release 5.4.6 in its existing gamecore DLL. Release DLLs are clang builds like upstream's (see [Clang build](#clang-build) and [Release build](#release-build)). The native Microsoft Visual C++ 2008 SP1 x86 toolchain extracted under `work/toolchain` remains available for native fixtures, profiling builds and comparisons.
 
 ## Build
 
@@ -25,7 +25,7 @@ Prerequisite locations are recorded in the build result and wrapper: native VC9 
 
 ## Clang build
 
-Upstream releases are clang builds (`-msse3 /Ox -flto`, linked by lld). `work/build-vp-clang.py` reproduces them with the portable clang/lld 19 under `work/toolchain/llvm` and the same VC9 and SDK7 headers and libraries:
+Upstream releases and StackMod releases are clang builds (`-msse3 /Ox -flto`, linked by lld). `work/build-vp-clang.py` reproduces upstream's with the portable clang/lld 19 under `work/toolchain/llvm` and the same VC9 and SDK7 headers and libraries:
 
 ```powershell
 python work\build-vp-clang.py --check
@@ -39,6 +39,16 @@ python work\build-vp-clang.py --jobs 6
 - The VC9 and SDK headers must come after clang's own headers (through `INCLUDE`, as in upstream's VS2008 prompt), never through `-external:I`. Otherwise VC9's `va_start` macro is used, clang 19 inlines `CvString::format`, its variable arguments are lost, and the DLL fails to load (error 1114). [docs/clang-build-20261027.md](../docs/clang-build-20261027.md) has the details and measurements.
 
 Stage and deploy a clang DLL like a VC9 one.
+
+## Release build
+
+1. Commit everything, add the version's `CHANGELOG.md` section and tag the release commit (`git tag -a vX`) in a clean checkout.
+2. Build with `python work\build-vp-clang.py --jobs 6`. It regenerates `commit_id.inc`, so the DLL's version string reads `vX-0-g<hash> Clean`.
+3. Stage that build: `python work\stage_vp.py --dll <build>\CvGameCore_Expansion2.dll --pdb <build>\CvGameCore_Expansion2.pdb`, then `python work\stage_vp.py --verify`.
+4. Smoke-test the staged payload in the headless host before publishing.
+5. Package with `python tools\make_release.py --version X`.
+   - It refuses a staged DLL unless `work/build-vp-clang.py` built it with `-flto` from HEAD, in a clean tree, with `commit_id.inc` naming HEAD as Clean.
+   - It refuses VC9 builds as well.
 
 ## Stage and deploy
 

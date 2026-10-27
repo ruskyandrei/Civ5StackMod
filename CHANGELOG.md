@@ -5,6 +5,15 @@ All releases of Civ5StackMod, newest first. Downloads are on the
 Vox Populi changes are not listed here; each version names the Vox Populi
 release it is based on.
 
+## Unreleased
+
+### Performance
+- The game DLL is now built with clang and link-time optimisation, as Vox
+  Populi's own releases are, instead of Visual C++ 2008. The AI's work in
+  late-game turns takes about a third less time; the game's own rendering and
+  waiting between turns are unchanged. Games otherwise play the same, apart
+  from tiny rounding differences in some calculations.
+
 ## 0.3.4 — 2026-10-27
 
 Based on Vox Populi 5.4.8.

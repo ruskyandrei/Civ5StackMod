@@ -135,10 +135,12 @@ Seconds per turn:
     "Error loading VPUI_loader.lua"), which VC9 runs show too (`work/BASELINE-VERIFIED.md`).
 - **Restore:** the original DLL and PDB were put back afterwards, with their hashes checked.
 
-## Next steps
+## Releases
 
-- Decide whether StackMod releases move to clang:
-  - Same source, 36% faster late turns, and the build matches upstream's release DLL exactly on plain VP.
-  - Changes AI decisions only through floating-point rounding.
-  - Before a release: a longer real-game run, and staging and packaging checks of a clang DLL.
-- For the 600-game stats series, a clang StackMod build makes the compiler the same on both sides.
+- **StackMod releases now ship this build** (decided 27 October 2026), starting with the version after 0.3.4.
+  - The source is the same and late turns are 36% faster.
+  - On plain VP the build matches upstream's release DLL exactly.
+  - AI decisions change only through floating-point rounding.
+- **The release steps** are in `work/BUILD-LOCAL.md`, "Release build". `tools/make_release.py` refuses a staged DLL
+  that is not a clean clang LTO build of HEAD.
+- **For the 600-game stats series**, a clang StackMod build makes the compiler the same on both sides.
