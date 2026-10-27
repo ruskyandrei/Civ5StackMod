@@ -29,6 +29,8 @@ efficiency mode (user, 2026-10-27).
 
 ## Possible next steps (not started)
 
-1. AI A/B of P1 in the host (danger semantics change) before adopting it.
+1. AI quality of P1: a two-game A/B (one seed, `work/perf-gap/runs/ab2-{base,p1}`) is in the write-up (speed
+   -24 to -25% mid-game; games diverge at T10, so no verdict on play). For a verdict: more seeds, or the head-to-head
+   gate on branch `perf-gap-p1-ab` (998bcde87, `--improved-mask`).
 2. Working clang toolchain matching upstream's (older clang, VS2008/SDK7 flags), then time StackMod with clang.
 3. Find the StackMod /LTCG link hang.
