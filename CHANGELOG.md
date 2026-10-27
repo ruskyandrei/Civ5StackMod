@@ -5,7 +5,9 @@ All releases of Civ5StackMod, newest first. Downloads are on the
 Vox Populi changes are not listed here; each version names the Vox Populi
 release it is based on.
 
-## Unreleased
+## 0.3.5 — 2026-10-27
+
+Based on Vox Populi 5.4.8.
 
 ### Performance
 - The game DLL is now built with clang and link-time optimisation, as Vox
@@ -24,6 +26,13 @@ release it is based on.
   the turn after they move out of sight, as Vox Populi's AI does, instead of
   forgetting them at the next update. Games therefore play differently from
   0.3.4.
+
+### Fixes
+- The game DLL no longer triggers a memory access error while it unloads, for
+  example when the game exits. The error was caught, so players did not see
+  it.
+
+Stacking rules and the interface are unchanged from 0.3.4.
 
 ## 0.3.4 — 2026-10-27
 
