@@ -380,8 +380,11 @@ namespace
 	};
 	RulesCache& Cache()
 	{
-		static RulesCache cache;
-		return cache;
+		// Never destroyed: ~CvGlobals runs CvStacking::ResetCache while the DLL
+		// unloads, after a function-local static object would already be gone.
+		// The resets empty it, so only the empty object outlives the DLL.
+		static RulesCache* cache = new RulesCache();
+		return *cache;
 	}
 	bool FlattenRoles(const RoleMap& values, std::vector<int>* flat)
 	{
