@@ -5462,12 +5462,14 @@ int CvUnit::getMeleeCombatDamage(int iStrength, int iOpponentStrength, int& iSel
 			}
 		}
 		// will only the defender be killed? reduce damage taken by the attacker
-		else if (iDamage + iExtraDefenderDamage >= pkOtherUnit->GetCurrHitPoints())
+		// (a zero divisor means a unit already at 0 HP, e.g. one awaiting removal
+		// that the stacking defender choice still asks about)
+		else if (iDamage > 0 && iDamage + iExtraDefenderDamage >= pkOtherUnit->GetCurrHitPoints())
 		{
 			iSelfDamageInflicted = (iSelfDamageInflicted * (pkOtherUnit->GetCurrHitPoints() - iExtraDefenderDamage)) / iDamage;
 		}
 		// will only the attacker be killed? reduce damage taken by the defender
-		else if (iSelfDamageInflicted >= GetCurrHitPoints())
+		else if (iSelfDamageInflicted > 0 && iSelfDamageInflicted >= GetCurrHitPoints())
 		{
 			iDamage = (iDamage * (GetCurrHitPoints() - iExtraSelfDamage)) / iSelfDamageInflicted;
 		}
