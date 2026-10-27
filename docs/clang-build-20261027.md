@@ -2,7 +2,7 @@
 
 Upstream Vox Populi ships a clang build of the gamecore DLL: `-msse3 /Ox -flto`, linked with lld. StackMod releases
 have been VC9 builds (`/Ox`, x87, no whole-program optimisation), which are about 1.5 times slower per late turn
-(`docs/headless-turn-time-gap-20261027.md` on branch `perf-turn-time-gap`). Until now the local clang toolchain
+([docs/headless-turn-time-gap-20261027.md](headless-turn-time-gap-20261027.md)). Until now the local clang toolchain
 produced DLLs that failed to load (error 1114). This note gives the cause, the working recipe, and what a clang
 build of StackMod gains.
 
@@ -104,7 +104,7 @@ Seconds per turn:
 - **What this means against plain VP:** clang VP takes about 3.5 s per turn at turns 251 to 258, from its own
   save. Against that, StackMod's late turns would drop from about 2.7 times plain VP's to about 1.75 times.
   - This is rough: the two saves are different games.
-  - Prototype P1 (`perf-turn-time-gap`, about -24%) would come on top.
+  - The danger-rebuild fix (P1, about -24%, merged into master after this measurement) comes on top.
 
 ### Same game or not
 

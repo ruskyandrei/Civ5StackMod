@@ -13,7 +13,7 @@ A fork of [Vox Populi](https://github.com/LoneGazebo/Community-Patch-DLL) for Ci
 - Cities no longer shoot. They are defended by the ranged units stacked inside them, and fortifications shield those units from siege.
 - The AI builds, moves and attacks with stacks: it garrisons cities by role, gathers assault waves with real siege, bombards before storming, reinforces its best objectives and tries to retake lost cities.
 - Everything is configurable in XML without rebuilding the DLL; see the [list of all XML options](docs/stacking-xml-options.md).
-- AI turns take longer than in plain VP. In the headless host, a late-game turn of 0.3.4 takes about 1.5 to 1.7 times as long as plain VP built the same way, and about 2.8 times as long as upstream's faster clang-built VP DLL. The cause and planned fixes are in [the turn-time investigation](docs/headless-turn-time-gap-20261027.md).
+- AI turns take longer than in plain VP. In the headless host, a late-game AI turn of 0.3.4 took about 2.7 times as long as in plain VP 5.4.8. The development version builds the DLL with clang, as Vox Populi does, and no longer rebuilds danger maps on every move, which brings this to about 1.5 times. See [the turn-time investigation](docs/headless-turn-time-gap-20261027.md).
 
 This is an early pre-release. Multiplayer, the 43-civ variant and the no-EUI variant are untested.
 

@@ -20,9 +20,9 @@ where that time goes, and what would reduce it. The handoff with the original me
     happens about once per moving unit instead of once per turn.
   - At turns 250 to 258 this is a quarter of StackMod's turn: 7.6 of 30.0 Gcycles per turn, against 0.8 in plain VP.
   - It grows with army sizes and wars (moving units times visible enemies), which is why the gap grows.
-- **A prototype that stops those rebuilds makes StackMod 24% faster per late turn** (commit `92a6d310a` on branch
-  `perf-turn-time-gap`). It removes about 60% of StackMod's same-compiler excess. It changes AI decisions, partly
-  towards VP's own danger rules (see section 5.1).
+- **A fix that stops those rebuilds makes StackMod 24% faster per late turn** with VC9, and 16% faster with clang
+  (commit `92a6d310a`, on master after 0.3.4). It removes about 60% of StackMod's same-compiler excess. It changes AI decisions, partly towards VP's own
+  danger rules (see section 5.1).
 - **DLL logging is not the cause.** It costs about 0.3 to 0.5 s per late turn in both variants, which is about 10%
   of plain VP's turn and 3 to 4% of StackMod's. Under 1% of either profile is in logging functions.
 - **The README's "6.1 s against 6.5 s" was a real-game measurement** that hid both factors:
@@ -31,13 +31,13 @@ where that time goes, and what would reduce it. The handoff with the original me
   - It was one game each, and the StackMod game had half as many war declarations.
   - Real-game wall time is floored at about 3.8 s per turn by frame pacing and carries about 6 s of rendering and
     engine waits per late turn.
-  - README line 16 is corrected on this branch.
-- **Ranked fixes** (section 6):
-  1. Stop the danger rebuild churn: large gain, changes AI.
-  2. Build releases with clang and link-time optimisation like upstream: large gain, no source change, but the local
-     clang toolchain currently produces DLLs that fail to load.
-  3. Turn on VC9 whole-program optimisation (`/GL /LTCG`): about 12% gain on plain VP, no source change, but
-     StackMod's LTCG link hangs.
+  - README line 16 is corrected.
+- **Ranked fixes** (section 6). The first two are on master after 0.3.4:
+  1. Stop the danger rebuild churn: -24% with VC9, -16% with clang; changes AI decisions.
+  2. Build releases with clang and link-time optimisation like upstream: -36%, no source change.
+  3. VC9 whole-program optimisation (`/GL /LTCG`) is no longer needed; StackMod's LTCG link hangs anyway.
+- **Together, measured:** master takes 42.1 s for turns 251 to 258, against 77.8 s for 0.3.4: about 1.5 times plain
+  VP's release DLL instead of 2.7 times (section 6).
 
 ## 1. Measurements
 
@@ -279,21 +279,14 @@ Seconds per turn by segment (P1 / 0.3.4):
 
 ### 5.2 Compiler variants
 
-- **Clang (blocked).**
-  - The clang build scripts lacked four stacking sources; fixed in commit `233fc7436`.
-  - With them, a clang 19 build of StackMod compiles and links. It then fails at DLL load (error 1114): an access
-    violation in `CvString::formatv`.
-  - The same local toolchain fails the same way on unchanged upstream VP 5.4.8, so this is the local clang setup
-    (clang 19.1.7 with `-fms-compatibility-version=15.00`, VC9 headers, `work/build-vp-local.py`), not StackMod code.
-  - The build without `-flto` shows the caller: Firaxis's prebuilt `FDebugHelper::LoadSymbols`
-    (`FirePlace\lib\FireWorksWin32.obj`), run from `_DllMainCRTStartup`, calls the clang-compiled
-    `CvString::formatv` and its variable arguments arrive as garbage. That is an ABI mismatch between what this clang
-    emits and the prebuilt Firaxis object.
-  - Without the compatibility flag the link fails on `___std_terminate`; adding a shim links but fails to load the
-    same way.
-  - Upstream's clang build of the same source works (the pinned DLL). Upstream's setup is VS2008/SDK 7 with an older
-    clang (`clang.cpp` mentions clang 14), so matching that version and its flags is the likely fix.
-  - No StackMod clang timing exists yet; plain VP's 1.57x is the estimate.
+- **Clang (solved; see [docs/clang-build-20261027.md](clang-build-20261027.md)).**
+  - The clang build scripts lacked four stacking sources.
+  - With them, the old local clang setup built DLLs that failed to load (error 1114), plain VP's too. The cause was
+    VC9's `va_start` macro, picked up through `-external:I`. Clang 19 inlined `CvString::format` and lost its
+    variable arguments. The Firaxis frame in the crash stack was a stale return address, not the caller.
+  - `work/build-vp-clang.py` now reproduces upstream's release build: plain VP 5.4.8 replays the pinned DLL's game
+    exactly. StackMod 0.3.4 built that way is 36% faster per late turn than its VC9 release DLL, the same factor as
+    on plain VP. Releases after 0.3.4 ship this build.
 - **VC9 whole-program optimisation.** `/GL` with `/LTCG`:
   - Plain VP links in 3 min 15 s and gains 12%.
   - StackMod's link hangs: twice, at about 5 s of linker CPU with no further progress for three minutes. That is the
@@ -306,23 +299,36 @@ Gains are per late turn (turn 250 and after); "behaviour" is the risk of changin
 
 | # | Fix | Expected gain | Behaviour risk | Notes |
 |---:|---|---|---|---|
-| 1 | Stop full danger rebuilds on visibility changes and moves (P1) | -24% measured | Medium: danger semantics move to VP's | Removes about 60% of StackMod's same-compiler excess. Needs an AI A/B. Variants: keep the dirty marks only for deaths or for the moving player's own map, or rebuild lazily once per tactical pass. |
-| 2 | Build releases with clang `-flto -msse3` like upstream | about -35% (VP: 44.5 → 28.4 s) | Low to medium: same source; floating-point differences change some decisions, as between the two VP builds | Needs a working clang toolchain first (section 5.2). Also makes StackMod and plain VP comparable on the compiler. |
-| 3 | VC9 `/GL /LTCG` for releases (drop `--no-ltcg` in `work/build-vp.ps1`) | about -12% (VP measured) | Low: same source and x87 math; optimisation can change evaluation order | StackMod's LTCG link hangs (section 5.2), so this needs that hang solved first. |
+| 1 | Stop full danger rebuilds on visibility changes and moves (P1) | -24% on VC9, -16% on clang (measured) | Medium: danger semantics move to VP's | On master after 0.3.4. Removes about 60% of StackMod's same-compiler excess on VC9. Only a two-game A/B so far (section 5.1). |
+| 2 | Build releases with clang `-flto -msse3` like upstream | -36% (measured) | Low to medium: same source; floating-point differences change some decisions, as between the two VP builds | On master after 0.3.4 ([docs/clang-build-20261027.md](clang-build-20261027.md)). Also makes StackMod and plain VP comparable on the compiler. |
+| 3 | VC9 `/GL /LTCG` for releases | about -12% (VP measured) | Low | Superseded by 2; StackMod's LTCG link hangs anyway (section 5.2). |
 | 4 | Lighter stack-aware tactical search: reuse stack-danger results across sibling positions, fewer scored candidates | up to -15% (the remaining 4.4 Gcycles) | Medium to high | The earlier performance docs list the exact-reuse candidates (`docs/late-game-performance-investigation.md`, `docs/performance-checkpoint-20261001.md`). |
 | 5 | `/arch:SSE2` on VC9 | about -3% | Low to medium | Not worth it alone. |
 | - | DLL logging off | -0.4 s per turn in both | Changes games | Not a StackMod fix; keep both variants in the same mode. |
 
-Fix 1 alone brings late StackMod turns to about 1.2x of plain VP built with VC9, and about 2.1x of the clang
-release DLL, from 2.8x now. With a working clang build (fix 2) as well, StackMod would be about 1.2 to 1.3x of the
-release DLL. These products are estimates from separate measurements.
+**Fixes 1 and 2 together, measured.** Master after both, built with the clang release recipe, against the same
+turn-250 StackMod save (continental-drift-p05), turns 251 to 258. The three clang runs ran side by side; the VC9
+row is from section 1.3.
+
+| Build | Seconds | Relative to 0.3.4 |
+|---|---:|---:|
+| 0.3.4 release (VC9) | 77.8 | 1.00 |
+| 0.3.4 built with clang | 49.9 | 0.64 |
+| Master: clang and P1 | 42.1 | 0.54 |
+| Plain VP 5.4.8 release DLL, from its own turn-250 save | 28.6 | - |
+
+- Late StackMod turns go from about 2.7 times plain VP's to about 1.5 times. The two saves are different games, so
+  the comparison with plain VP is rough.
+- P1 saves less on clang (-16%; -18% over turns 251 to 253) than on VC9 (-24%), presumably because clang speeds up
+  the rebuild code more than the rest.
+- Going by the VC9 profile, most of what remains is StackMod's stack-aware tactical search (fix 4).
 
 For the 600-game stats series, the choice affects only run time, not what is compared, provided both variants keep
 the same logging. The present gap is mostly StackMod's build and danger handling, not unit counts or the host.
 
 ## 7. Reproduction
 
-Everything lives in `work/perf-gap/` (ignored by Git). `RESUME.md` at the repository root lists the layout.
+Everything lives in `work/perf-gap/` (ignored by Git). `work/perf-gap/RESUME.md` lists the layout.
 
 - **Builds:**
   - VC9 release: `work/build-vp-msvc.py --config release --jobs N --embedded-compiler-debug --no-ltcg --pch-memory

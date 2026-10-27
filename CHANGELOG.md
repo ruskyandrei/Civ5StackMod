@@ -13,6 +13,17 @@ release it is based on.
   late-game turns takes about a third less time; the game's own rendering and
   waiting between turns are unchanged. Games otherwise play the same, apart
   from tiny rounding differences in some calculations.
+- The AI no longer recomputes its whole map of threatened tiles each time one
+  of its units spots or loses sight of an enemy, or an enemy unit moves, dies
+  or is promoted. That cost grew with army sizes and wars; late-game AI turns
+  take about a sixth less time on top of the faster build above. Together,
+  late-game AI turns take about half the time they did in 0.3.4.
+
+### AI
+- Within a turn, the AI keeps counting the enemy units it saw at the start of
+  the turn after they move out of sight, as Vox Populi's AI does, instead of
+  forgetting them at the next update. Games therefore play differently from
+  0.3.4.
 
 ## 0.3.4 — 2026-10-27
 
