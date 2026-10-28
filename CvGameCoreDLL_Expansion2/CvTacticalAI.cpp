@@ -929,12 +929,16 @@ bool CvTacticalAI::TryCityCaptureWithUnit(CvUnit* unit,CvPlot* target)
 	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_ORDER","target=%d unit=%d from=%d approach=%d hp=%d damage=%d retaliation=%d",target->GetPlotIndex(),unit->GetID(),unit->plot()->GetPlotIndex(),approach->GetPlotIndex(),remaining,damage,retaliation);
 	const int unitID=unit->GetID();
 	const PlayerTypes enemy=target->getOwner();
+	const int cityID=city->GetID();
 	const int turns=ExecuteMoveToPlot(unit,target,false,CvUnit::MOVEFLAG_ATTACK|CvUnit::MOVEFLAG_DESTINATION|CvUnit::MOVEFLAG_SAFE_EMBARK_ONLY);
 	// A route estimate or a blocker workaround does not establish that the city
 	// changed hands. The mission can delete its unit; inspect the stable plot.
 	// A capture that liberates or razes the city also replaces or deletes the
-	// CvCity, so callers holding the old pointer must see it as taken.
-	const bool captured=!target->isCity() || target->getOwner()!=enemy;
+	// CvCity, so callers holding the old pointer must see it as taken. Liberating
+	// a city-state's only city gives it back to the same owner as a new CvCity
+	// (new ID), so compare the city itself, not only its owner.
+	const CvCity* after=target->getPlotCity();
+	const bool captured=!after || after->getOwner()!=enemy || after->GetID()!=cityID;
 	CvStackingDiagnostics::Record(1,m_pPlayer->GetID(),"CAPTURE_RESULT","target=%d unit=%d captured=%d turnsRemaining=%d ownerAfter=%d",target->GetPlotIndex(),unitID,captured,turns,target->getOwner());
 	if(captured) UnitProcessed(unitID);
 	return captured;
@@ -1065,12 +1069,13 @@ void CvTacticalAI::ExecuteCaptureCityMoves()
 		if(pPlot != NULL && pPlot->isCity())
 		{
 			m_CurrentMoveCities.clear();
-			CvCity* pCity = pPlot->getPlotCity();
 
 			// Safe preparatory fire may have opened a capture while the shared
 			// gathering forecast is still cached. Actual legality wins over it.
 			if(TryReservedCityCapture(pPlot))
 			{ if(pPlot->getOwner()==m_pPlayer->GetID()) DeleteFocusArea(pPlot);continue; }
+			// Read the city only now: a capture attempt can replace the CvCity.
+			CvCity* pCity = pPlot->getPlotCity();
 			if(!CvStackingOffensiveAI::ContinueSiege(m_pPlayer->GetID(),pCity)) continue;
 
 			//first try the land zone
